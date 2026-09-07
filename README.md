@@ -21,19 +21,38 @@ Runs on Railway against a Supabase database.
 
 ## 1. Create the database (Supabase)
 
-1. Create a Supabase project.
-2. **Project Settings → Database → Connection string** and copy two URLs:
-   - **Transaction** pooler, port `6543` → this is `DATABASE_URL`
-   - **Session** / direct, port `5432` → this is `DIRECT_URL`
-3. Append `?pgbouncer=true&connection_limit=1` to the pooled one.
-
-Both are needed: the app talks to the pooler, but `prisma migrate` has to use
-a direct connection because migrations can't run through PgBouncer.
+1. Create a Supabase project. Pick a region near where Railway will run, and
+   save the database password it makes you set — it's part of both URLs below
+   and Supabase won't show it again.
+2. Hit **Connect** at the top of the project dashboard. Copy two strings:
+   - **Transaction pooler**, port `6543` → `DATABASE_URL`
+   - **Session pooler**, port `5432` → `DIRECT_URL`
+3. Add `?pgbouncer=true&connection_limit=5` to the end of the transaction one.
 
 ```
-DATABASE_URL="postgresql://postgres.<ref>:<pw>@aws-0-<region>.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1"
+DATABASE_URL="postgresql://postgres.<ref>:<pw>@aws-0-<region>.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=5"
 DIRECT_URL="postgresql://postgres.<ref>:<pw>@aws-0-<region>.pooler.supabase.com:5432/postgres"
 ```
+
+Why two: the app runs its normal queries through the transaction pooler, which
+is the efficient one but hands out a different connection per statement.
+`prisma migrate` needs a single connection it keeps for the whole migration —
+it takes an advisory lock so two deploys can't migrate at once — so it gets the
+session pooler instead.
+
+Supabase also offers a **Direct connection** (`db.<ref>.supabase.co`). It works
+for `DIRECT_URL` too, but it's IPv6-only without a paid add-on, so the session
+pooler is the safer default.
+
+Two things that reliably go wrong:
+
+- **Special characters in the password.** They must be percent-encoded in the
+  URL — `@` becomes `%40`, `#` becomes `%23`, and so on. Easiest to avoid by
+  letting Supabase generate the password.
+- **`connection_limit`.** `1` is the right answer for serverless, and it's what
+  most Supabase snippets show — but it's wrong here. This app runs as one
+  always-on container, and a limit of 1 makes every request queue behind the
+  last one. Use `5`.
 
 ## 2. Deploy (Railway)
 
