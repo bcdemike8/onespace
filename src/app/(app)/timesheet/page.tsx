@@ -51,6 +51,7 @@ export default async function TimesheetPage({
         date: true,
         taskId: true,
         projectId: true,
+        source: true,
         task: { select: { name: true } },
       },
     }),
@@ -113,17 +114,20 @@ export default async function TimesheetPage({
     const forProject =
       rowsByProject.get(entry.projectId) ?? new Map<string, TimesheetRow>();
 
-    const row =
-      forProject.get(key) ??
-      ({
+    const row: TimesheetRow =
+      forProject.get(key) ?? {
         key: `${entry.projectId}|${key}`,
         taskId: entry.taskId,
         taskName: entry.task?.name ?? "General project time",
         minutes: {},
-      } satisfies TimesheetRow);
+        locked: {},
+      };
 
+    // Only what the grid itself wrote is editable in it; everything else is
+    // shown but held read-only.
+    const bucket = entry.source === "TIMESHEET" ? row.minutes : row.locked;
     const iso = toISODate(entry.date);
-    row.minutes[iso] = (row.minutes[iso] ?? 0) + entry.minutes;
+    bucket[iso] = (bucket[iso] ?? 0) + entry.minutes;
     forProject.set(key, row);
     rowsByProject.set(entry.projectId, forProject);
   }

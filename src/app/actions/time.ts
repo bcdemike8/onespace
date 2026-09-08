@@ -75,6 +75,7 @@ export async function logTimeAction(
       date: dayStart(parsed.data.date),
       minutes,
       notes: parsed.data.notes || null,
+      source: "MANUAL",
       ...rates,
     },
   });
@@ -120,10 +121,12 @@ export async function deleteTimeEntryAction(formData: FormData) {
 // ------------------------------------------------------------ weekly grid
 
 /**
- * Set the total logged against one task on one day — the timesheet grid's
- * only write. The cell is authoritative for the day's total, so when several
- * entries already exist we adjust the newest one by the difference and only
- * fall back to replacing them if that would drive it negative.
+ * Set the hours the *timesheet* holds against one task on one day.
+ *
+ * Time booked from a project page, a stopwatch or an import is left strictly
+ * alone: the grid shows it read-only and this only ever creates, updates or
+ * removes the entry the grid itself owns. So a cell can add to what's already
+ * recorded, and can never silently erase it.
  */
 export async function setTimesheetCellAction(formData: FormData) {
   const user = await requireUser();
@@ -144,36 +147,30 @@ export async function setTimesheetCellAction(formData: FormData) {
     taskId: taskId || null,
     projectId,
     date,
+    source: "TIMESHEET" as const,
   };
 
   const existing = await db.timeEntry.findMany({
     where,
     orderBy: { createdAt: "asc" },
   });
-  const current = existing.reduce((sum, e) => sum + e.minutes, 0);
 
   if (target === 0) {
     if (existing.length) {
-      await db.timeEntry.deleteMany({ where: { id: { in: existing.map((e) => e.id) } } });
+      await db.timeEntry.deleteMany({
+        where: { id: { in: existing.map((e) => e.id) } },
+      });
     }
   } else if (existing.length === 0) {
     const rates = await resolveRates(user.id, projectId);
     await db.timeEntry.create({ data: { ...where, minutes: target, ...rates } });
   } else {
-    const newest = existing[existing.length - 1];
-    const adjusted = newest.minutes + (target - current);
-
-    if (adjusted > 0) {
-      await db.timeEntry.update({
-        where: { id: newest.id },
-        data: { minutes: adjusted },
-      });
-    } else {
-      const rates = await resolveRates(user.id, projectId);
-      await db.timeEntry.deleteMany({
-        where: { id: { in: existing.map((e) => e.id) } },
-      });
-      await db.timeEntry.create({ data: { ...where, minutes: target, ...rates } });
+    // Collapse to a single entry holding the cell's value; the grid is the
+    // authority for its own share of the day.
+    const [keep, ...rest] = existing;
+    await db.timeEntry.update({ where: { id: keep.id }, data: { minutes: target } });
+    if (rest.length) {
+      await db.timeEntry.deleteMany({ where: { id: { in: rest.map((e) => e.id) } } });
     }
   }
 
@@ -223,6 +220,7 @@ async function stopRunningTimer(userId: string): Promise<number> {
         notes: timer.notes,
         startedAt: timer.startedAt,
         endedAt: new Date(),
+        source: "TIMER",
         ...rates,
       },
     }),

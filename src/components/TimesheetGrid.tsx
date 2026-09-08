@@ -9,8 +9,13 @@ export interface TimesheetRow {
   key: string;
   taskId: string | null;
   taskName: string;
-  /** Minutes already logged, keyed by ISO date. */
+  /** Minutes this grid owns and may edit, keyed by ISO date. */
   minutes: Record<string, number>;
+  /**
+   * Minutes booked elsewhere — a project page, the stopwatch, an import.
+   * Shown here so the week reads true, but not editable from the grid.
+   */
+  locked: Record<string, number>;
 }
 
 export interface TimesheetProject {
@@ -59,11 +64,16 @@ export function TimesheetGrid({
     return [...project.rows, ...(extra[project.id] ?? []).filter((r) => !seen.has(r.key))];
   };
 
-  const minutesFor = (row: TimesheetRow, iso: string) => {
+  /** What the grid owns — the editable part of a cell. */
+  const sheetMinutes = (row: TimesheetRow, iso: string) => {
     const key = `${row.key}|${iso}`;
     if (key in draft) return parseDuration(draft[key] || "0") ?? 0;
     return row.minutes[iso] ?? 0;
   };
+
+  /** Everything on that day, editable plus locked — what totals must use. */
+  const minutesFor = (row: TimesheetRow, iso: string) =>
+    sheetMinutes(row, iso) + (row.locked[iso] ?? 0);
 
   const dayTotals = useMemo(
     () =>
@@ -92,6 +102,7 @@ export function TimesheetGrid({
             taskId: taskId || null,
             taskName: task?.name ?? "General project time",
             minutes: {},
+            locked: {},
           },
         ],
       };
@@ -220,8 +231,18 @@ export function TimesheetGrid({
 
                             {days.map((d) => {
                               const key = `${row.key}|${d.iso}`;
+                              const locked = row.locked[d.iso] ?? 0;
+
                               return (
-                                <td key={d.iso} className="p-1 text-center">
+                                <td key={d.iso} className="p-1 text-center align-top">
+                                  {locked > 0 ? (
+                                    <div
+                                      className="mb-0.5 text-xs tnum text-ink-400"
+                                      title="Logged from the project page, a timer or an import — not editable here"
+                                    >
+                                      {formatHours(locked)} logged
+                                    </div>
+                                  ) : null}
                                   <form action={setTimesheetCellAction}>
                                     <input type="hidden" name="projectId" value={project.id} />
                                     <input type="hidden" name="taskId" value={row.taskId ?? ""} />
@@ -230,6 +251,7 @@ export function TimesheetGrid({
                                       defaultValue={cellValue(row.minutes[d.iso] ?? 0)}
                                       disabled={readOnly}
                                       highlight={d.isToday}
+                                      placeholder={locked > 0 ? "+" : undefined}
                                       onDraft={(v) =>
                                         setDraft((prev) => ({ ...prev, [key]: v }))
                                       }
@@ -308,10 +330,14 @@ export function TimesheetGrid({
       </div>
 
       {!readOnly ? (
-        <p className="text-xs text-ink-500">
+        <p className="text-xs leading-relaxed text-ink-500">
           Type hours as <code className="font-mono">1.5</code>,{" "}
           <code className="font-mono">1:30</code> or{" "}
           <code className="font-mono">90m</code>. Cells save when you tab away.
+          <br />
+          Grey figures are time already booked from a project page, a stopwatch
+          or an import — you can add to a day here, but this grid won&apos;t
+          overwrite it.
         </p>
       ) : null}
     </div>
@@ -323,11 +349,13 @@ function CellInput({
   defaultValue,
   disabled,
   highlight,
+  placeholder,
   onDraft,
 }: {
   defaultValue: string;
   disabled?: boolean;
   highlight?: boolean;
+  placeholder?: string;
   onDraft: (value: string) => void;
 }) {
   const ref = useRef<HTMLInputElement>(null);
@@ -353,6 +381,7 @@ function CellInput({
       name="duration"
       defaultValue={defaultValue}
       disabled={disabled}
+      placeholder={placeholder}
       inputMode="decimal"
       autoComplete="off"
       aria-label="Hours"

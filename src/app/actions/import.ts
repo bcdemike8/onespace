@@ -540,6 +540,7 @@ export async function commitEverhourImportAction(
     billable: boolean;
     billRateCents: number;
     costRateCents: number;
+    source: "IMPORT";
   }
 
   const resolved: Resolved[] = [];
@@ -632,6 +633,7 @@ export async function commitEverhourImportAction(
       billable: entry.billable && project.billable,
       billRateCents,
       costRateCents,
+      source: "IMPORT",
     });
   }
 

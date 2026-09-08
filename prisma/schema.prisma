@@ -26,6 +26,17 @@ enum ProjectStatus {
   ARCHIVED
 }
 
+// Where a time entry came from. The timesheet grid may only edit its own
+// entries: time booked from a project page, a stopwatch or an import shows
+// there as read-only, so filling in a week can add to it but never quietly
+// overwrite it.
+enum TimeEntrySource {
+  TIMESHEET
+  MANUAL
+  TIMER
+  IMPORT
+}
+
 enum TaskStatus {
   TODO
   IN_PROGRESS
@@ -259,6 +270,8 @@ model TimeEntry {
 
   billable Boolean @default(true)
 
+  source TimeEntrySource @default(MANUAL)
+
   // Rates are snapshotted at write time so historical reports don't change
   // retroactively when someone gets a raise or a client's rate goes up.
   billRateCents Int @default(0)
@@ -272,6 +285,7 @@ model TimeEntry {
   updatedAt DateTime @updatedAt
 
   @@index([userId, date])
+  @@index([userId, taskId, date])
   @@index([projectId, date])
   @@index([taskId])
   @@index([date])
