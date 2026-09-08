@@ -5,6 +5,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { isAdmin, requireUser } from "@/lib/auth";
 import { resolveRates } from "@/lib/rates";
+import { assertUnlocked, setReopenedFrom } from "@/lib/lock";
 import { dayStart } from "@/lib/dates";
 import { parseDuration } from "@/lib/format";
 
@@ -18,13 +19,16 @@ async function assertCanEditEntry(entryId: string) {
   const user = await requireUser();
   const entry = await db.timeEntry.findUnique({
     where: { id: entryId },
-    select: { userId: true },
+    select: { userId: true, date: true },
   });
   if (!entry) throw new Error("That time entry no longer exists.");
   if (entry.userId !== user.id && !isAdmin(user)) {
     throw new Error("You can only edit your own time.");
   }
-  return user;
+  // The day the entry currently sits on has to be open, or nobody could have
+  // invoiced it safely.
+  await assertUnlocked(entry.date);
+  return { user, entry };
 }
 
 // ------------------------------------------------------------- manual entry
@@ -62,6 +66,13 @@ export async function logTimeAction(
     return { error: "That's more than 24 hours in a single day." };
   }
 
+  const entryDate = dayStart(parsed.data.date);
+  try {
+    await assertUnlocked(entryDate);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "That period is closed." };
+  }
+
   const billableOverride =
     formData.get("billable") === null ? undefined : parsed.data.billable === "on";
 
@@ -72,7 +83,7 @@ export async function logTimeAction(
       userId: user.id,
       taskId: parsed.data.taskId || null,
       projectId: parsed.data.projectId,
-      date: dayStart(parsed.data.date),
+      date: entryDate,
       minutes,
       notes: parsed.data.notes || null,
       source: "MANUAL",
@@ -89,7 +100,11 @@ export async function updateTimeEntryAction(
   formData: FormData,
 ): Promise<ActionState> {
   const id = String(formData.get("id") ?? "");
-  await assertCanEditEntry(id);
+  try {
+    await assertCanEditEntry(id);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "You can't edit that." };
+  }
 
   const minutes = parseDuration(String(formData.get("duration") ?? ""));
   if (minutes === null || minutes <= 0) {
@@ -97,6 +112,14 @@ export async function updateTimeEntryAction(
   }
 
   const dateRaw = String(formData.get("date") ?? "");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateRaw)) {
+    try {
+      await assertUnlocked(dayStart(dateRaw));
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : "That period is closed." };
+    }
+  }
+
   await db.timeEntry.update({
     where: { id },
     data: {
@@ -142,6 +165,8 @@ export async function setTimesheetCellAction(formData: FormData) {
   if (target === null || target < 0 || target > 24 * 60) return;
 
   const date = dayStart(dateRaw);
+  await assertUnlocked(date);
+
   const where = {
     userId: user.id,
     taskId: taskId || null,
@@ -241,4 +266,39 @@ export async function discardTimerAction() {
   const user = await requireUser();
   await db.runningTimer.deleteMany({ where: { userId: user.id } });
   refresh();
+}
+
+// ------------------------------------------------------------ period lock
+
+/**
+ * Reopen closed months, or put the normal rule back.
+ *
+ * There has to be a way out: a month closes automatically, and sooner or later
+ * something genuinely needs correcting after the close. Admin-only, global,
+ * and visible in the banner while it's in force so nobody forgets it's open.
+ */
+export async function setPeriodReopenAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+  if (!isAdmin(user)) return { error: "Administrators only." };
+
+  // The clear button lives in the same form as the date field, so it says so
+  // explicitly rather than relying on an empty value winning.
+  const raw = formData.get("clear")
+    ? ""
+    : String(formData.get("reopenedFrom") ?? "").trim();
+  if (!raw) {
+    await setReopenedFrom(null);
+    refresh();
+    return { ok: true };
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return { error: "Pick a date to reopen from." };
+  }
+
+  await setReopenedFrom(dayStart(raw));
+  refresh();
+  return { ok: true };
 }

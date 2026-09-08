@@ -5,6 +5,7 @@ import { formatRange } from "@/lib/dates";
 import { formatHours, formatMoney } from "@/lib/format";
 import { buildBudgetReport } from "@/lib/reporting";
 import { parseReportParams, reportQueryString } from "@/lib/report-params";
+import { BillingTypeBadge } from "@/components/BillingTypeField";
 import { PageHeader, ProgressBar, Stat } from "@/components/ui";
 import { ReportFilters } from "@/components/ReportFilters";
 
@@ -44,10 +45,10 @@ export default async function BudgetReportPage({
     (acc, r) => ({
       minutes: acc.minutes + r.actualMinutes,
       cost: acc.cost + r.actualCostCents,
-      billable: acc.billable + r.billableCents,
+      revenue: acc.revenue + r.revenueCents,
       budget: acc.budget + (r.budgetCents ?? 0),
     }),
-    { minutes: 0, cost: 0, billable: 0, budget: 0 },
+    { minutes: 0, cost: 0, revenue: 0, budget: 0 },
   );
 
   const atRisk = visible.filter((r) => r.overHours || r.overBudget);
@@ -90,10 +91,10 @@ export default async function BudgetReportPage({
         <Stat label="Hours" value={`${formatHours(totals.minutes)}h`} />
         <Stat label="Cost" value={formatMoney(totals.cost)} />
         <Stat
-          label="Billable value"
-          value={formatMoney(totals.billable)}
-          hint={`${formatMoney(totals.billable - totals.cost)} margin`}
-          tone={totals.billable - totals.cost < 0 ? "bad" : "good"}
+          label="Revenue"
+          value={formatMoney(totals.revenue)}
+          hint={`${formatMoney(totals.revenue - totals.cost)} margin`}
+          tone={totals.revenue - totals.cost < 0 ? "bad" : "good"}
         />
         <Stat
           label="Over budget"
@@ -118,15 +119,12 @@ export default async function BudgetReportPage({
                   <th className="th w-40">Hours budget</th>
                   <th className="th text-right">Cost</th>
                   <th className="th w-40">Cost vs budget</th>
-                  <th className="th text-right">Billable</th>
+                  <th className="th text-right">Revenue</th>
                   <th className="th text-right">Margin</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-ink-100">
-                {visible.map((row) => {
-                  const rowMargin = row.billableCents - row.actualCostCents;
-
-                  return (
+                {visible.map((row) => (
                     <tr key={row.projectId} className="hover:bg-ink-50/60">
                       <td className="td">
                         <Link
@@ -135,9 +133,12 @@ export default async function BudgetReportPage({
                         >
                           {row.projectName}
                         </Link>
-                        <div className="text-xs text-ink-500">
-                          {row.clientName ?? "No client"}
-                          {row.partnerName ? ` · via ${row.partnerName}` : ""}
+                        <div className="flex items-center gap-2 text-xs text-ink-500">
+                          <span>
+                            {row.clientName ?? "No client"}
+                            {row.partnerName ? ` · via ${row.partnerName}` : ""}
+                          </span>
+                          <BillingTypeBadge type={row.billingType} />
                         </div>
                       </td>
 
@@ -176,19 +177,23 @@ export default async function BudgetReportPage({
                       </td>
 
                       <td className="td text-right tnum">
-                        {formatMoney(row.billableCents)}
+                        {formatMoney(row.revenueCents)}
+                        {row.revenueIsFee ? (
+                          <div className="text-xs font-normal text-ink-500">
+                            fixed fee
+                          </div>
+                        ) : null}
                       </td>
 
                       <td
                         className={`td text-right tnum font-medium ${
-                          rowMargin < 0 ? "text-bad-700" : "text-good-700"
+                          row.marginCents < 0 ? "text-bad-700" : "text-good-700"
                         }`}
                       >
-                        {formatMoney(rowMargin)}
+                        {formatMoney(row.marginCents)}
                       </td>
                     </tr>
-                  );
-                })}
+                  ))}
               </tbody>
             </table>
           </div>

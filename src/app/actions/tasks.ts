@@ -20,6 +20,7 @@ const taskSchema = z.object({
   name: z.string().trim().min(1, "Give the task a name."),
   description: z.string().trim().max(4000).optional().nullable(),
   sectionId: z.string().trim().optional().nullable(),
+  parentId: z.string().trim().optional().nullable(),
   assigneeId: z.string().trim().optional().nullable(),
   dueDate: z.string().trim().optional().nullable(),
   estimatedHours: z.string().trim().optional().nullable(),
@@ -45,6 +46,7 @@ export async function createTaskAction(
     name: formData.get("name"),
     description: formData.get("description"),
     sectionId: formData.get("sectionId"),
+    parentId: formData.get("parentId"),
     assigneeId: formData.get("assigneeId"),
     dueDate: formData.get("dueDate"),
     estimatedHours: formData.get("estimatedHours"),
@@ -52,8 +54,28 @@ export async function createTaskAction(
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
   const d = parsed.data;
+
+  // Subtasks live in the parent's section and only nest one level: adding a
+  // subtask to something that is already a subtask attaches it to the same
+  // parent instead of building a tree nobody can read.
+  let parentId: string | null = null;
+  let sectionId = d.sectionId || null;
+  if (d.parentId) {
+    const parent = await db.task.findUnique({
+      where: { id: d.parentId },
+      select: { id: true, parentId: true, sectionId: true, projectId: true },
+    });
+    if (!parent || parent.projectId !== d.projectId) {
+      return { error: "That parent task no longer exists." };
+    }
+    parentId = parent.parentId ?? parent.id;
+    sectionId = parent.sectionId;
+  }
+
   const last = await db.task.findFirst({
-    where: { projectId: d.projectId, sectionId: d.sectionId || null },
+    where: parentId
+      ? { parentId }
+      : { projectId: d.projectId, sectionId, parentId: null },
     orderBy: { orderIndex: "desc" },
     select: { orderIndex: true },
   });
@@ -61,7 +83,8 @@ export async function createTaskAction(
   await db.task.create({
     data: {
       projectId: d.projectId,
-      sectionId: d.sectionId || null,
+      sectionId,
+      parentId,
       name: d.name,
       description: d.description || null,
       assigneeId: d.assigneeId || null,
@@ -138,6 +161,16 @@ export async function toggleTaskDoneAction(formData: FormData) {
     },
   });
 
+  // Finishing a parent finishes what's under it — leaving open subtasks
+  // beneath a ticked parent is just a lie in the open-task count. Reopening
+  // deliberately doesn't reopen them: you may only be redoing one part.
+  if (!done) {
+    await db.task.updateMany({
+      where: { parentId: id, status: { not: "DONE" } },
+      data: { status: "DONE", completedAt: new Date() },
+    });
+  }
+
   refresh(task.projectId);
 }
 
@@ -155,6 +188,13 @@ export async function setTaskStatusAction(formData: FormData) {
     },
     select: { projectId: true },
   });
+
+  if (status === "DONE") {
+    await db.task.updateMany({
+      where: { parentId: id, status: { not: "DONE" } },
+      data: { status: "DONE", completedAt: new Date() },
+    });
+  }
 
   refresh(task.projectId);
 }

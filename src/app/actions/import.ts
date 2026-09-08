@@ -239,34 +239,81 @@ export async function commitAsanaImportAction(
   }
 
   let unassigned = 0;
-  await db.task.createMany({
-    data: tasks.map((t, index) => {
-      const assigneeId =
-        (t.assigneeEmail ? userIdFor.get(t.assigneeEmail.toLowerCase()) : undefined) ??
-        (t.assigneeName ? userIdFor.get(matchKey(t.assigneeName)) : undefined) ??
-        null;
-      if (!assigneeId && (t.assigneeName || t.assigneeEmail)) unassigned += 1;
+  const assigneeFor = (t: (typeof tasks)[number]) => {
+    const id =
+      (t.assigneeEmail ? userIdFor.get(t.assigneeEmail.toLowerCase()) : undefined) ??
+      (t.assigneeName ? userIdFor.get(matchKey(t.assigneeName)) : undefined) ??
+      null;
+    if (!id && (t.assigneeName || t.assigneeEmail)) unassigned += 1;
+    return id;
+  };
 
-      return {
-        projectId: project.id,
-        sectionId: t.sectionName ? (sectionIdByName.get(t.sectionName) ?? null) : null,
-        name: t.name,
-        description: t.notes,
-        assigneeId,
-        dueDate: t.dueDate,
-        estimatedHours: t.estimatedHours,
-        status: t.completed ? ("DONE" as const) : ("TODO" as const),
-        completedAt: t.completed ? new Date() : null,
-        orderIndex: index,
-      };
-    }),
+  const rowFor = (t: (typeof tasks)[number], index: number) => ({
+    projectId: project.id,
+    sectionId: t.sectionName ? (sectionIdByName.get(t.sectionName) ?? null) : null,
+    name: t.name,
+    description: t.notes,
+    assigneeId: assigneeFor(t),
+    dueDate: t.dueDate,
+    estimatedHours: t.estimatedHours,
+    status: t.completed ? ("DONE" as const) : ("TODO" as const),
+    completedAt: t.completed ? new Date() : null,
+    orderIndex: index,
   });
+
+  // Parents go in first so subtasks have something to point at. Asana's export
+  // names the parent rather than giving its id, so the link is made by name —
+  // within one project that's unambiguous in practice, and a subtask whose
+  // parent didn't come across simply stays top-level rather than vanishing.
+  const parents = tasks.filter((t) => !t.isSubtask);
+  const children = tasks.filter((t) => t.isSubtask);
+
+  await db.task.createMany({ data: parents.map(rowFor) });
+
+  let subtasksLinked = 0;
+  let subtasksOrphaned = 0;
+
+  if (children.length > 0) {
+    const createdParents = await db.task.findMany({
+      where: { projectId: project.id, parentId: null },
+      select: { id: true, name: true, sectionId: true },
+    });
+    const parentByName = new Map<string, { id: string; sectionId: string | null }>();
+    for (const p of createdParents) {
+      const key = matchKey(p.name);
+      if (!parentByName.has(key)) parentByName.set(key, p);
+    }
+
+    await db.task.createMany({
+      data: children.map((t, index) => {
+        const parent = t.parentName
+          ? parentByName.get(matchKey(t.parentName))
+          : undefined;
+        if (parent) subtasksLinked += 1;
+        else subtasksOrphaned += 1;
+        return {
+          ...rowFor(t, index),
+          parentId: parent?.id ?? null,
+          // A subtask belongs wherever its parent sits.
+          sectionId: parent ? parent.sectionId : rowFor(t, index).sectionId,
+        };
+      }),
+    });
+  }
 
   const created: Record<string, number> = {
     Tasks: tasks.length,
     Sections: usedSections.length,
+    ...(subtasksLinked > 0 ? { Subtasks: subtasksLinked } : {}),
   };
   const notes: string[] = [];
+  if (subtasksOrphaned > 0) {
+    notes.push(
+      `${subtasksOrphaned} ${subtasksOrphaned === 1 ? "subtask" : "subtasks"} came ` +
+        "in at the top level because the parent task named in the export wasn't " +
+        "in the file (filtered out, or in another project).",
+    );
+  }
   if (unassigned > 0) {
     notes.push(
       `${unassigned} ${unassigned === 1 ? "task" : "tasks"} came in unassigned ` +
@@ -523,7 +570,7 @@ export async function commitEverhourImportAction(
   const userByName = new Map(users.map((u) => [matchKey(u.name), u]));
 
   const projects = await db.project.findMany({
-    select: { id: true, name: true, billable: true, billRateCents: true },
+    select: { id: true, name: true, billingType: true, billRateCents: true },
   });
   const projectByName = new Map(projects.map((p) => [matchKey(p.name), p]));
 
@@ -634,7 +681,7 @@ export async function commitEverhourImportAction(
           // These are historical, so they stay out of the active list.
           status: "COMPLETED",
         },
-        select: { id: true, name: true, billable: true, billRateCents: true },
+        select: { id: true, name: true, billingType: true, billRateCents: true },
       });
       projectByName.set(matchKey(entry.projectName), created);
       project = created;
@@ -667,7 +714,7 @@ export async function commitEverhourImportAction(
       // in the note rather than throwing it away — it's often the only record
       // of what the time was actually spent on.
       notes: entry.notes ?? (taskId ? null : entry.taskName || null),
-      billable: entry.billable && project.billable,
+      billable: entry.billable && project.billingType !== "NON_BILLABLE",
       billRateCents,
       costRateCents,
       source: "IMPORT",

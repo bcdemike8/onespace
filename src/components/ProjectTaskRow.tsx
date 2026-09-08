@@ -7,6 +7,7 @@ import {
   setTaskStatusAction,
   toggleTaskDoneAction,
 } from "@/app/actions/tasks";
+import { AddSubtaskButton } from "@/components/AddSubtaskButton";
 import { AutoSubmitSelect } from "@/components/AutoSubmitSelect";
 import { formatHours } from "@/lib/format";
 import { relativeDueLabel, today } from "@/lib/dates";
@@ -20,6 +21,10 @@ export interface ProjectTaskData {
   estimatedHours: number | null;
   assigneeId: string | null;
   loggedMinutes: number;
+  /** 0 for a top-level task, 1 for a subtask. */
+  depth: number;
+  /** Open subtasks beneath this one, for the parent's summary line. */
+  openSubtasks: number;
 }
 
 const STATUS_OPTIONS = [
@@ -34,10 +39,12 @@ export function ProjectTaskRow({
   task,
   people,
   canDelete,
+  projectId,
 }: {
   task: ProjectTaskData;
   people: { id: string; name: string }[];
   canDelete: boolean;
+  projectId: string;
 }) {
   const done = task.status === "DONE";
   const overdue = !done && task.dueDate && task.dueDate < today();
@@ -47,7 +54,11 @@ export function ProjectTaskRow({
     task.loggedMinutes / 60 > task.estimatedHours;
 
   return (
-    <li className="group flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 hover:bg-ink-50/60">
+    <li
+      className={`group flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5 pr-4 hover:bg-ink-50/60 ${
+        task.depth > 0 ? "border-l-2 border-ink-200 bg-ink-50/40 pl-9" : "pl-4"
+      }`}
+    >
       <form action={toggleTaskDoneAction} className="shrink-0">
         <input type="hidden" name="id" value={task.id} />
         <button
@@ -87,6 +98,11 @@ export function ProjectTaskRow({
             {formatHours(task.loggedMinutes)}h
             {task.estimatedHours ? ` / ${task.estimatedHours}h` : " logged"}
           </span>
+          {task.openSubtasks > 0 ? (
+            <span>
+              · {task.openSubtasks} subtask{task.openSubtasks === 1 ? "" : "s"} open
+            </span>
+          ) : null}
         </div>
       </div>
 
@@ -123,6 +139,10 @@ export function ProjectTaskRow({
               ▶
             </button>
           </form>
+        ) : null}
+
+        {task.depth === 0 ? (
+          <AddSubtaskButton parentId={task.id} projectId={projectId} parentName={task.name} />
         ) : null}
 
         <form action={moveTaskAction}>

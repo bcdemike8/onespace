@@ -1,5 +1,6 @@
 "use client";
 
+import type { BillingType } from "@prisma/client";
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { logTimeAction } from "@/app/actions/time";
 import { SubmitButton } from "@/components/SubmitButton";
@@ -9,6 +10,7 @@ export interface LoggableProject {
   id: string;
   name: string;
   clientName: string | null;
+  billingType: BillingType;
   tasks: { id: string; name: string }[];
 }
 
@@ -22,12 +24,15 @@ export function LogTimeForm({
   defaultDate,
   defaultProjectId,
   defaultTaskId,
+  earliestDate,
   compact = false,
 }: {
   projects: LoggableProject[];
   defaultDate: string;
   defaultProjectId?: string;
   defaultTaskId?: string;
+  /** First open day — anything earlier sits in a closed month. */
+  earliestDate?: string;
   compact?: boolean;
 }) {
   const [state, action] = useActionState(logTimeAction, {});
@@ -35,6 +40,9 @@ export function LogTimeForm({
     defaultProjectId ?? projects[0]?.id ?? "",
   );
   const formRef = useRef<HTMLFormElement>(null);
+
+  const nonBillable =
+    projects.find((p) => p.id === projectId)?.billingType === "NON_BILLABLE";
 
   const tasks = useMemo(
     () => projects.find((p) => p.id === projectId)?.tasks ?? [],
@@ -117,8 +125,14 @@ export function LogTimeForm({
             type="date"
             required
             defaultValue={defaultDate}
+            min={earliestDate}
             className="input"
           />
+          {earliestDate ? (
+            <p className="mt-1 text-xs text-ink-500">
+              Months before this have been closed.
+            </p>
+          ) : null}
         </div>
         <div>
           <label className="label" htmlFor="lt-duration">
@@ -145,15 +159,22 @@ export function LogTimeForm({
       <ErrorNote message={state.error} />
 
       <div className="flex items-center justify-between gap-3">
-        <label className="flex items-center gap-2 text-sm text-ink-600">
-          <input
-            type="checkbox"
-            name="billable"
-            defaultChecked
-            className="h-4 w-4 rounded border-ink-300"
-          />
-          Billable
-        </label>
+        {nonBillable ? (
+          // Nothing to decide: the server would force this off anyway.
+          <span className="text-sm text-ink-500">
+            Non-billable project — this time won&apos;t be invoiced.
+          </span>
+        ) : (
+          <label className="flex items-center gap-2 text-sm text-ink-600">
+            <input
+              type="checkbox"
+              name="billable"
+              defaultChecked
+              className="h-4 w-4 rounded border-ink-300"
+            />
+            Billable
+          </label>
+        )}
         <SubmitButton pendingLabel="Logging…">Log time</SubmitButton>
       </div>
 

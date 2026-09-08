@@ -64,6 +64,7 @@ export async function GET(request: Request) {
         "Client",
         "Partner",
         "Status",
+        "Billing",
         "Hours logged",
         "Hours budget",
         "Hours used %",
@@ -71,6 +72,7 @@ export async function GET(request: Request) {
         "Revenue budget",
         "Budget used %",
         "Billable value",
+        "Revenue",
         "Margin",
       ],
       ...budget
@@ -80,6 +82,7 @@ export async function GET(request: Request) {
           r.clientName ?? "",
           r.partnerName ?? "",
           r.status,
+          r.billingType,
           minutesToHours(r.actualMinutes),
           r.budgetHours ?? "",
           r.hoursUsedPct ?? "",
@@ -87,7 +90,8 @@ export async function GET(request: Request) {
           r.budgetCents ? money(r.budgetCents) : "",
           r.budgetUsedPct ?? "",
           money(r.billableCents),
-          money(r.billableCents - r.actualCostCents),
+          money(r.revenueCents),
+          money(r.marginCents),
         ]),
     ];
     filename = `budget-vs-actual_${params.fromISO}_${params.toISO}.csv`;

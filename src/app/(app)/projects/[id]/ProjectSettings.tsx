@@ -1,11 +1,13 @@
 "use client";
 
+import type { BillingType } from "@prisma/client";
 import { useActionState, useState } from "react";
 import {
   assignAllTasksToOwnerAction,
   deleteProjectAction,
   updateProjectAction,
 } from "@/app/actions/projects";
+import { BillingTypeField } from "@/components/BillingTypeField";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ErrorNote } from "@/components/ui";
 
@@ -22,7 +24,7 @@ export interface ProjectSettingsValues {
   budgetHours: string;
   budgetAmount: string;
   billRate: string;
-  billable: boolean;
+  billingType: BillingType;
 }
 
 export function ProjectSettings({
@@ -234,15 +236,7 @@ export function ProjectSettings({
             </div>
           </div>
 
-          <label className="flex items-center gap-2 text-sm text-ink-700">
-            <input
-              type="checkbox"
-              name="billable"
-              defaultChecked={values.billable}
-              className="h-4 w-4 rounded border-ink-300"
-            />
-            Billable by default
-          </label>
+          <BillingTypeField id="p-billing" defaultValue={values.billingType} />
 
           <ErrorNote message={state.error} />
           {state.ok ? (

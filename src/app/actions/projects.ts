@@ -46,7 +46,7 @@ const projectSchema = z.object({
   budgetHours: optionalNumber,
   budgetAmount: z.string().trim().optional().nullable(),
   billRate: z.string().trim().optional().nullable(),
-  billable: z.string().optional().nullable(),
+  billingType: z.enum(["HOURLY", "FIXED_FEE", "NON_BILLABLE"]).default("HOURLY"),
 });
 
 /**
@@ -74,7 +74,7 @@ export async function createProjectAction(
     budgetHours: formData.get("budgetHours"),
     budgetAmount: formData.get("budgetAmount"),
     billRate: formData.get("billRate"),
-    billable: formData.get("billable"),
+    billingType: formData.get("billingType") ?? "HOURLY",
   });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
@@ -116,7 +116,7 @@ export async function createProjectAction(
       budgetHours,
       budgetCents: budgetCents ?? null,
       billRateCents,
-      billable: formData.get("billable") === null ? true : d.billable === "on",
+      billingType: d.billingType,
     },
   });
 
@@ -173,7 +173,7 @@ export async function updateProjectAction(
     budgetHours: formData.get("budgetHours"),
     budgetAmount: formData.get("budgetAmount"),
     billRate: formData.get("billRate"),
-    billable: formData.get("billable"),
+    billingType: formData.get("billingType") ?? "HOURLY",
   });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
@@ -195,7 +195,7 @@ export async function updateProjectAction(
       budgetHours: d.budgetHours,
       budgetCents,
       billRateCents,
-      billable: d.billable === "on",
+      billingType: d.billingType,
       status: status as "ACTIVE" | "ON_HOLD" | "COMPLETED" | "ARCHIVED",
     },
   });

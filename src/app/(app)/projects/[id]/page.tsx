@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { isAdmin, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { formatMedium, toISODate, today } from "@/lib/dates";
+import { addDays, formatMedium, toISODate, today } from "@/lib/dates";
 import { centsToInput, formatHours, formatMoney, pct } from "@/lib/format";
 import {
   PageHeader,
@@ -25,6 +25,9 @@ import {
   StatusUpdates,
   type StatusUpdateView,
 } from "./StatusUpdates";
+import { getLockState } from "@/lib/lock";
+import { isLocked } from "@/lib/periods";
+import { BillingTypeBadge } from "@/components/BillingTypeField";
 import { HealthChip } from "@/components/HealthChip";
 
 export const dynamic = "force-dynamic";
@@ -61,12 +64,15 @@ export default async function ProjectPage({
           estimatedHours: true,
           assigneeId: true,
           sectionId: true,
+          parentId: true,
         },
       },
     },
   });
 
   if (!project) notFound();
+
+  const lockState = await getLockState();
 
   const [entries, people, clients, partners, timeByTask] = await Promise.all([
     db.timeEntry.findMany({
@@ -132,18 +138,41 @@ export default async function ProjectPage({
   ];
   const groupById = new Map(groups.map((g) => [g.id, g]));
 
+  // Subtasks are keyed by parent so each one can be slotted in directly under
+  // it, whatever its position in the flat ordering.
+  const childrenByParent = new Map<string, typeof project.tasks>();
   for (const task of project.tasks) {
+    if (!task.parentId) continue;
+    const list = childrenByParent.get(task.parentId) ?? [];
+    list.push(task);
+    childrenByParent.set(task.parentId, list);
+  }
+
+  const view = (
+    task: (typeof project.tasks)[number],
+    depth: number,
+  ): ProjectTaskData => ({
+    id: task.id,
+    name: task.name,
+    description: task.description,
+    status: task.status,
+    dueDate: task.dueDate,
+    estimatedHours: task.estimatedHours,
+    assigneeId: task.assigneeId,
+    loggedMinutes: minutesByTask.get(task.id) ?? 0,
+    depth,
+    openSubtasks: (childrenByParent.get(task.id) ?? []).filter(
+      (c) => c.status !== "DONE",
+    ).length,
+  });
+
+  for (const task of project.tasks) {
+    if (task.parentId) continue; // placed under its parent below
     const group = groupById.get(task.sectionId) ?? groups[0];
-    group.tasks.push({
-      id: task.id,
-      name: task.name,
-      description: task.description,
-      status: task.status,
-      dueDate: task.dueDate,
-      estimatedHours: task.estimatedHours,
-      assigneeId: task.assigneeId,
-      loggedMinutes: minutesByTask.get(task.id) ?? 0,
-    });
+    group.tasks.push(view(task, 0));
+    for (const child of childrenByParent.get(task.id) ?? []) {
+      group.tasks.push(view(child, 1));
+    }
   }
 
   // The catch-all "Tasks" group only earns its place when it holds something,
@@ -172,6 +201,7 @@ export default async function ProjectPage({
           <span className="flex flex-wrap items-center gap-2">
             <ProjectStatusChip status={project.status} />
             <HealthChip health={currentUpdate?.health ?? null} />
+            <BillingTypeBadge type={project.billingType} />
             {project.client ? <span>{project.client.name}</span> : null}
             {project.partner ? <span>· via {project.partner.name}</span> : null}
             {project.owner ? <span>· Owner: {project.owner.name}</span> : null}
@@ -226,7 +256,7 @@ export default async function ProjectPage({
                   billRate: project.billRateCents
                     ? centsToInput(project.billRateCents)
                     : "",
-                  billable: project.billable,
+                  billingType: project.billingType,
                 }}
               />
             </>
@@ -361,6 +391,7 @@ export default async function ProjectPage({
                       key={task.id}
                       task={task}
                       people={people}
+                      projectId={project.id}
                       canDelete={admin || (minutesByTask.get(task.id) ?? 0) === 0}
                     />
                   ))}
@@ -397,12 +428,18 @@ export default async function ProjectPage({
             <LogTimeForm
               compact
               defaultDate={toISODate(today())}
+              earliestDate={
+                lockState.lockedThrough
+                  ? toISODate(addDays(lockState.lockedThrough, 1))
+                  : undefined
+              }
               defaultProjectId={project.id}
               projects={[
                 {
                   id: project.id,
                   name: project.name,
                   clientName: project.client?.name ?? null,
+                  billingType: project.billingType,
                   tasks: openTasks.map((t) => ({ id: t.id, name: t.name })),
                 },
               ]}
@@ -433,7 +470,9 @@ export default async function ProjectPage({
                       personName: entry.user.name,
                       taskName: entry.task?.name ?? "General project time",
                       // Members correct their own time; admins correct anyone's.
-                      editable: admin || entry.userId === user.id,
+                      editable:
+                        (admin || entry.userId === user.id) &&
+                        !isLocked(entry.date, lockState),
                     }}
                   />
                 ))}

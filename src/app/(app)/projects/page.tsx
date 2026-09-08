@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { ProjectStatus } from "@prisma/client";
+import type { BillingType, ProjectStatus } from "@prisma/client";
 import { isAdmin, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { formatMedium, relativeDueLabel, today } from "@/lib/dates";
@@ -10,6 +10,10 @@ import {
   ProgressBar,
 } from "@/components/ui";
 import { AutoSubmitSelect } from "@/components/AutoSubmitSelect";
+import {
+  BILLING_TYPES,
+  BillingTypeBadge,
+} from "@/components/BillingTypeField";
 import { SortHeader, type SortDir } from "@/components/SortHeader";
 import { HealthChip } from "@/components/HealthChip";
 import { setProjectOwnerAction } from "@/app/actions/projects";
@@ -74,6 +78,7 @@ export default async function ProjectsPage({
   const ownerId = params.owner ?? "";
   const budget = params.budget ?? "";
   const health = params.health ?? "";
+  const billing = params.billing ?? "";
   const sort = (params.sort ?? "due") as SortColumn;
   const dir: SortDir = params.dir === "desc" ? "desc" : "asc";
 
@@ -101,12 +106,14 @@ export default async function ProjectsPage({
         ...owner,
         ...(clientId ? { clientId } : {}),
         ...(partnerId ? { partnerId } : {}),
+        ...(billing ? { billingType: billing as BillingType } : {}),
       },
       select: {
         id: true,
         name: true,
         code: true,
         status: true,
+        billingType: true,
         dueDate: true,
         budgetHours: true,
         budgetCents: true,
@@ -248,7 +255,9 @@ export default async function ProjectsPage({
     return `/projects?${q.toString()}`;
   };
 
-  const filtered = Boolean(clientId || partnerId || ownerId || budget || health);
+  const filtered = Boolean(
+    clientId || partnerId || ownerId || budget || health || billing,
+  );
   const totalHours = rows.reduce((s, r) => s + r.logged, 0);
 
   return (
@@ -343,6 +352,20 @@ export default async function ProjectsPage({
         </div>
 
         <div className="min-w-[10rem] flex-1">
+          <label className="label" htmlFor="f-billing">
+            Billing
+          </label>
+          <select id="f-billing" name="billing" defaultValue={billing} className="input">
+            <option value="">All billing</option>
+            {BILLING_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="min-w-[10rem] flex-1">
           <label className="label" htmlFor="f-budget">
             Budget
           </label>
@@ -360,7 +383,14 @@ export default async function ProjectsPage({
         </button>
         {filtered ? (
           <Link
-            href={query({ client: "", partner: "", owner: "", budget: "", health: "" })}
+            href={query({
+              client: "",
+              partner: "",
+              owner: "",
+              budget: "",
+              health: "",
+              billing: "",
+            })}
             className="btn-ghost"
           >
             Clear
@@ -466,10 +496,13 @@ export default async function ProjectsPage({
                         >
                           {project.name}
                         </Link>
-                        <div className="text-xs text-ink-500">
-                          {project.client?.name ?? "No client"}
-                          {project.partner ? ` · via ${project.partner.name}` : ""}
-                          {project.code ? ` · ${project.code}` : ""}
+                        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-ink-500">
+                          <span>
+                            {project.client?.name ?? "No client"}
+                            {project.partner ? ` · via ${project.partner.name}` : ""}
+                            {project.code ? ` · ${project.code}` : ""}
+                          </span>
+                          <BillingTypeBadge type={project.billingType} />
                         </div>
                       </td>
 

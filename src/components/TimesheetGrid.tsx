@@ -36,6 +36,8 @@ export interface Day {
   weekday: string;
   label: string;
   isToday: boolean;
+  /** The month this day belongs to has closed: shown, never editable. */
+  closed?: boolean;
 }
 
 const cellValue = (minutes: number) => (minutes ? formatHours(minutes) : "");
@@ -243,14 +245,22 @@ export function TimesheetGrid({
                               const key = `${row.key}|${d.iso}`;
                               const locked = row.locked[d.iso] ?? 0;
 
-                              // Viewing someone else's week: a column of empty
-                              // input boxes is just noise, so show figures.
-                              if (readOnly) {
+                              // Viewing someone else's week, or a day whose
+                              // month has been closed: a column of empty input
+                              // boxes is just noise, so show figures.
+                              if (readOnly || d.closed) {
                                 const total = locked + (row.minutes[d.iso] ?? 0);
                                 return (
                                   <td
                                     key={d.iso}
-                                    className="td text-center tnum text-ink-700"
+                                    className={`td text-center tnum ${
+                                      d.closed ? "bg-ink-50 text-ink-500" : "text-ink-700"
+                                    }`}
+                                    title={
+                                      d.closed
+                                        ? "This month has been closed — time here can't be changed"
+                                        : undefined
+                                    }
                                   >
                                     {total ? formatHours(total) : "—"}
                                   </td>

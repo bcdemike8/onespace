@@ -29,16 +29,20 @@ export async function resolveRates(
     }),
     db.project.findUnique({
       where: { id: projectId },
-      select: { billRateCents: true, billable: true },
+      select: { billRateCents: true, billingType: true },
     }),
   ]);
 
   if (!user) throw new Error("User not found.");
   if (!project) throw new Error("Project not found.");
 
+  // A non-billable project cannot produce billable time, whatever the form
+  // said — the override only narrows, it never widens.
+  const projectIsBillable = project.billingType !== "NON_BILLABLE";
+
   return {
     billRateCents: project.billRateCents ?? user.billRateCents,
     costRateCents: user.costRateCents,
-    billable: billableOverride ?? project.billable,
+    billable: projectIsBillable && (billableOverride ?? true),
   };
 }

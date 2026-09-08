@@ -12,6 +12,9 @@ import {
   weekStart,
 } from "@/lib/dates";
 import { formatHours } from "@/lib/format";
+import { getLockState } from "@/lib/lock";
+import { isLocked, lockSummary } from "@/lib/periods";
+import { PeriodLockNotice } from "@/components/PeriodLockNotice";
 import { PageHeader, Stat } from "@/components/ui";
 import {
   TimesheetGrid,
@@ -171,6 +174,7 @@ export default async function TimesheetPage({
   });
 
   const nowDay = today();
+  const lockState = await getLockState();
   const days: Day[] = Array.from({ length: 7 }, (_, i) => {
     const date = addDays(from, i);
     return {
@@ -178,8 +182,10 @@ export default async function TimesheetPage({
       weekday: formatWeekday(date),
       label: formatShort(date),
       isToday: date.getTime() === nowDay.getTime(),
+      closed: isLocked(date, lockState),
     };
   });
+  const anyClosed = days.some((d) => d.closed);
 
   const weekMinutes = entries.reduce((sum, e) => sum + e.minutes, 0);
   const prevWeek = toISODate(addDays(from, -7));
@@ -266,6 +272,16 @@ export default async function TimesheetPage({
           </form>
         ) : null}
       </div>
+
+      {anyClosed || lockState.reopenedFrom ? (
+        <PeriodLockNotice
+          summary={lockSummary(nowDay, lockState)}
+          admin={admin}
+          reopenedFrom={
+            lockState.reopenedFrom ? toISODate(lockState.reopenedFrom) : null
+          }
+        />
+      ) : null}
 
       <TimesheetGrid projects={grid} days={days} readOnly={readOnly} />
     </div>

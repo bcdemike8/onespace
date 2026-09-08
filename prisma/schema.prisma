@@ -26,6 +26,17 @@ enum ProjectStatus {
   ARCHIVED
 }
 
+/// How a project earns. Drives what time logged to it defaults to, and how
+/// reports work out what's invoiceable.
+enum BillingType {
+  /// Invoiced on the hours: revenue is hours x bill rate.
+  HOURLY
+  /// Invoiced at an agreed price: revenue is the fee, however long it takes.
+  FIXED_FEE
+  /// Internal work, training, goodwill. Tracked, never invoiced.
+  NON_BILLABLE
+}
+
 // Where a time entry came from. The timesheet grid may only edit its own
 // entries: time booked from a project page, a stopwatch or an import shows
 // there as read-only, so filling in a week can add to it but never quietly
@@ -143,9 +154,10 @@ model Project {
 
   // Budgets. Either or both may be set; reports show whichever exists.
   budgetHours   Float?
-  budgetCents   Int? // revenue budget / fixed fee
-  billable      Boolean @default(true)
+  budgetCents   Int? // revenue budget, or the agreed fee on a fixed-fee project
   billRateCents Int? // overrides the person's billRate for this project
+
+  billingType BillingType @default(HOURLY)
 
   // Provenance: which template this was spun up from, if any.
   templateId String?
@@ -191,6 +203,12 @@ model Task {
   assigneeId String?
   assignee   User?   @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
 
+  // Subtasks. One level is all Asana gave us and all anyone wants to read:
+  // a parent may have children, a child may not.
+  parentId String?
+  parent   Task?   @relation("Subtasks", fields: [parentId], references: [id], onDelete: Cascade)
+  subtasks Task[]  @relation("Subtasks")
+
   dueDate        DateTime?
   estimatedHours Float?
   orderIndex     Int       @default(0)
@@ -205,6 +223,7 @@ model Task {
   @@index([projectId, orderIndex])
   @@index([assigneeId, status])
   @@index([dueDate])
+  @@index([parentId])
 }
 
 /**
@@ -339,4 +358,13 @@ model RunningTimer {
 
   notes     String?
   startedAt DateTime @default(now())
+}
+
+/// Small key/value store for things there will only ever be one of. Right now
+/// that's the timesheet period lock override; keeping it generic saves a
+/// migration the next time a single global setting turns up.
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
 }

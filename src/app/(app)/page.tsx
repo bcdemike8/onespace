@@ -11,6 +11,8 @@ import {
   weekStart,
 } from "@/lib/dates";
 import { formatHours, formatMoney, pct } from "@/lib/format";
+import { getLockState } from "@/lib/lock";
+import { isLocked } from "@/lib/periods";
 import {
   EmptyState,
   PageHeader,
@@ -53,6 +55,7 @@ function bucketTasks(tasks: TaskListItemData[]) {
 export default async function MyWorkPage() {
   const user = await requireUser();
   const now = today();
+  const lockState = await getLockState();
   const weekFrom = weekStart(now);
   const weekTo = weekEnd(now);
 
@@ -108,6 +111,7 @@ export default async function MyWorkPage() {
         select: {
           id: true,
           name: true,
+          billingType: true,
           client: { select: { name: true } },
           tasks: {
             where: { status: { not: "DONE" } },
@@ -182,6 +186,7 @@ export default async function MyWorkPage() {
     id: p.id,
     name: p.name,
     clientName: p.client?.name ?? null,
+    billingType: p.billingType,
     tasks: p.tasks,
   }));
 
@@ -345,6 +350,11 @@ export default async function MyWorkPage() {
             <LogTimeForm
               projects={loggableProjects}
               defaultDate={toISODate(now)}
+              earliestDate={
+                lockState.lockedThrough
+                  ? toISODate(addDays(lockState.lockedThrough, 1))
+                  : undefined
+              }
               compact
             />
           </section>
@@ -385,16 +395,25 @@ export default async function MyWorkPage() {
                         </div>
                       ) : null}
                     </div>
-                    <form action={deleteTimeEntryAction} className="shrink-0">
-                      <input type="hidden" name="id" value={entry.id} />
-                      <button
-                        type="submit"
-                        aria-label="Delete entry"
-                        className="px-1 text-ink-400 hover:text-bad-700"
+                    {isLocked(entry.date, lockState) ? (
+                      <span
+                        className="shrink-0 px-1 text-xs text-ink-400"
+                        title="This month has been closed"
                       >
-                        ×
-                      </button>
-                    </form>
+                        closed
+                      </span>
+                    ) : (
+                      <form action={deleteTimeEntryAction} className="shrink-0">
+                        <input type="hidden" name="id" value={entry.id} />
+                        <button
+                          type="submit"
+                          aria-label="Delete entry"
+                          className="px-1 text-ink-400 hover:text-bad-700"
+                        >
+                          ×
+                        </button>
+                      </form>
+                    )}
                   </li>
                 ))}
               </ul>

@@ -2,6 +2,7 @@
 
 import { useActionState, useMemo, useState } from "react";
 import { createProjectAction } from "@/app/actions/projects";
+import { BillingTypeField } from "@/components/BillingTypeField";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ErrorNote } from "@/components/ui";
 
@@ -252,15 +253,9 @@ export function NewProjectForm({
           </div>
         </div>
 
-        <label className="flex items-center gap-2 text-sm text-ink-700">
-          <input
-            type="checkbox"
-            name="billable"
-            defaultChecked
-            className="h-4 w-4 rounded border-ink-300"
-          />
-          Time on this project is billable by default
-        </label>
+        <div className="max-w-sm">
+          <BillingTypeField />
+        </div>
       </section>
 
       <ErrorNote message={state.error} />

@@ -1,4 +1,5 @@
 import "server-only";
+import type { BillingType } from "@prisma/client";
 import { db } from "@/lib/db";
 import {
   type Granularity,
@@ -267,12 +268,23 @@ export interface BudgetRow {
   clientName: string | null;
   partnerName: string | null;
   status: string;
+  billingType: BillingType;
   budgetHours: number | null;
   budgetCents: number | null;
   actualMinutes: number;
   /** What the logged hours actually cost you, at each person's cost rate. */
   actualCostCents: number;
+  /** Hours x bill rate on billable entries. Overstates a fixed-fee project. */
   billableCents: number;
+  /**
+   * What the project actually earns: the agreed fee on a fixed-fee project,
+   * hours x rate on an hourly one, nothing on a non-billable one.
+   */
+  revenueCents: number;
+  /** True when revenueCents is the fee rather than a sum of hours. */
+  revenueIsFee: boolean;
+  /** revenueCents - actualCostCents. */
+  marginCents: number;
   /** Percentage of the hours budget consumed. Null when no budget is set. */
   hoursUsedPct: number | null;
   /** Cost against the revenue budget — the number that tells you if you're underwater. */
@@ -306,6 +318,7 @@ export async function buildBudgetReport(
       id: true,
       name: true,
       status: true,
+      billingType: true,
       budgetHours: true,
       budgetCents: true,
       client: { select: { name: true } },
@@ -390,17 +403,32 @@ export async function buildBudgetReport(
         ? Math.round((actualCostCents / p.budgetCents) * 100)
         : null;
 
+    // A fixed-fee project earns its fee, not its hours. Fall back to hours x
+    // rate when no fee has been set yet, so the row isn't silently zero.
+    const revenueIsFee =
+      p.billingType === "FIXED_FEE" && p.budgetCents !== null && p.budgetCents > 0;
+    const revenueCents =
+      p.billingType === "NON_BILLABLE"
+        ? 0
+        : revenueIsFee
+          ? (p.budgetCents as number)
+          : billableCents;
+
     return {
       projectId: p.id,
       projectName: p.name,
       clientName: p.client?.name ?? null,
       partnerName: p.partner?.name ?? null,
       status: p.status,
+      billingType: p.billingType,
       budgetHours: p.budgetHours,
       budgetCents: p.budgetCents,
       actualMinutes,
       actualCostCents,
       billableCents,
+      revenueCents,
+      revenueIsFee,
+      marginCents: revenueCents - actualCostCents,
       hoursUsedPct,
       budgetUsedPct,
       overHours: hoursUsedPct !== null && hoursUsedPct > 100,
