@@ -1,9 +1,10 @@
 import type { Metadata, Viewport } from "next";
+import { BRAND } from "@/lib/brand";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "OneSpace",
-  description: "Templated projects, tasks and time tracking in one place.",
+  title: BRAND.name,
+  description: BRAND.description,
 };
 
 export const viewport: Viewport = {

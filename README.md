@@ -1,4 +1,4 @@
-# OneSpace
+# RevOptics OneSpace
 
 Templated projects, task tracking and billable time — the slice of Asana +
 Everhour that actually gets used, in one app you own.
@@ -116,6 +116,40 @@ Three ways, all landing in the same place:
 Mistyped an entry? Hover it in a project's time log and hit ✎. Members can
 correct their own time; admins can correct anyone's.
 
+## 6. Bringing Asana and Everhour across
+
+**Import** (admin only) reads the CSV exports from both tools. Every import
+shows you exactly what it will do before writing anything.
+
+**Asana — one file per project.** In Asana: open the project → the ▾ beside its
+name → Export / Print → CSV. The importer reads Name, Section/Column,
+Assignee, Assignee Email, Due Date, Notes, Completed At and Estimated time
+(Asana writes that as `H:MM`), locating each by name so it survives Asana
+changing its export format. You choose the client, the kickoff date, whether
+to include subtasks and completed tasks, and whether to also save the
+structure as a reusable template — which converts each due date into an
+offset from kickoff.
+
+**Everhour — one file for the whole date range.** Build a detailed time report
+including at least Date, Member, Project, Task and Time, then export CSV.
+Import your Asana projects first so the hours have somewhere to land; entries
+are matched to projects and tasks by name.
+
+Two things worth knowing:
+
+- **Include the Billable amount and Cost columns** if your report offers them.
+  The importer divides them by the hours to recover the rate that was actually
+  in force, so historical money stays true instead of being restated at
+  today's rates.
+- **Imports are safe to re-run.** An identical row — same person, project,
+  task, day, duration and note — is recognised as already imported and
+  skipped. So if some people were missing accounts on the first pass, add them
+  under People and run the same file again; only the newly-matchable rows land.
+
+Anyone in the file without a OneSpace account is listed in the preview. Their
+tasks come in unassigned and their hours are skipped, so add them first if you
+want the work attributed.
+
 ## 6. Reports
 
 Everything is a URL, so any report you run regularly is just a bookmark.
@@ -137,6 +171,12 @@ Three exports:
 Members only ever see their own time, and never see cost or margin.
 
 ---
+
+## Branding
+
+`src/lib/brand.ts` holds the name and logo mark. The colour palette lives in
+`src/app/globals.css` under `@theme` — change the `--color-brand-*` ramp there
+and it flows through every button, link and highlight in the app.
 
 ## Running it locally
 
@@ -169,6 +209,8 @@ src/lib/reporting.ts      every metric — hours, cost, billable, margin, budget
 src/lib/dates.ts          calendar-day handling, range presets, bucketing
 src/lib/rates.ts          which rates get stamped onto a time entry
 src/app/actions/          every mutation, as server actions
+src/lib/csv.ts            RFC 4180 reader (quoted commas, embedded newlines)
+src/lib/import/           Asana and Everhour CSV readers
 src/app/(app)/            the signed-in app
 ```
 

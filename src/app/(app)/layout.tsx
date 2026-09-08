@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { logoutAction } from "@/app/login/actions";
+import { BRAND } from "@/lib/brand";
 import { NavLinks, type NavItem } from "@/components/NavLinks";
 import { TimerBar } from "@/components/TimerBar";
 
@@ -18,6 +19,7 @@ const ADMIN_NAV: NavItem[] = [
   { href: "/templates", label: "Templates", icon: "⧉" },
   { href: "/clients", label: "Clients", icon: "◈" },
   { href: "/people", label: "People", icon: "◍" },
+  { href: "/import", label: "Import", icon: "⇪" },
 ];
 
 export default async function AppLayout({
@@ -44,10 +46,12 @@ export default async function AppLayout({
     <div className="flex min-h-screen">
       <aside className="hidden w-60 shrink-0 flex-col border-r border-ink-200 bg-white lg:flex">
         <div className="flex items-center gap-2.5 px-4 py-4">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-sm font-bold text-white">
-            1
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-xs font-bold tracking-tight text-white">
+            {BRAND.mark}
           </div>
-          <span className="text-base font-semibold tracking-tight">OneSpace</span>
+          <span className="text-base font-semibold tracking-tight">
+            {BRAND.shortName}
+          </span>
         </div>
 
         <div className="flex flex-1 flex-col gap-4 px-3 pb-4">
@@ -81,8 +85,8 @@ export default async function AppLayout({
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Compact nav for phones — the same links, scrolled horizontally. */}
         <div className="flex items-center gap-1 overflow-x-auto border-b border-ink-200 bg-white px-3 py-2 lg:hidden">
-          <span className="mr-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-brand-600 text-xs font-bold text-white">
-            1
+          <span className="mr-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-brand-600 text-[10px] font-bold text-white">
+            {BRAND.mark}
           </span>
           {[...BASE_NAV, ...(admin ? ADMIN_NAV : [])].map((item) => (
             <Link
