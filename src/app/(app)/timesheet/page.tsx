@@ -5,8 +5,8 @@ import {
   addDays,
   dayStart,
   formatMedium,
-  formatWeekday,
   formatShort,
+  formatWeekday,
   toISODate,
   today,
   weekStart,
@@ -15,7 +15,8 @@ import { formatHours } from "@/lib/format";
 import { PageHeader, Stat } from "@/components/ui";
 import {
   TimesheetGrid,
-  type PickerProject,
+  type Day,
+  type TimesheetProject,
   type TimesheetRow,
 } from "@/components/TimesheetGrid";
 
@@ -42,7 +43,7 @@ export default async function TimesheetPage({
       : ((await db.user.findUnique({ where: { id: subjectId } })) ?? viewer);
   const readOnly = subject.id !== viewer.id;
 
-  const [entries, openTasks, projects, people] = await Promise.all([
+  const [entries, ownedProjects, assignedTaskProjects, people] = await Promise.all([
     db.timeEntry.findMany({
       where: { userId: subject.id, date: { gte: from, lte: to } },
       select: {
@@ -51,42 +52,22 @@ export default async function TimesheetPage({
         taskId: true,
         projectId: true,
         task: { select: { name: true } },
-        project: {
-          select: { id: true, name: true, client: { select: { name: true } } },
-        },
       },
     }),
-    // Open tasks assigned to this person get a row even with no time yet, so
-    // the week starts pre-filled with what they're supposed to be doing.
+    // Everything this person is on: what they own...
+    db.project.findMany({
+      where: { ownerId: subject.id, status: { in: ["ACTIVE", "ON_HOLD"] } },
+      select: { id: true },
+    }),
+    // ...and anywhere they hold unfinished work.
     db.task.findMany({
       where: {
         assigneeId: subject.id,
         status: { not: "DONE" },
         project: { status: { in: ["ACTIVE", "ON_HOLD"] } },
       },
-      select: {
-        id: true,
-        name: true,
-        project: {
-          select: { id: true, name: true, client: { select: { name: true } } },
-        },
-      },
-      orderBy: [{ dueDate: "asc" }],
-      take: 60,
-    }),
-    db.project.findMany({
-      where: { status: { in: ["ACTIVE", "ON_HOLD"] } },
-      select: {
-        id: true,
-        name: true,
-        client: { select: { name: true } },
-        tasks: {
-          where: { status: { not: "DONE" } },
-          select: { id: true, name: true },
-          orderBy: { orderIndex: "asc" },
-        },
-      },
-      orderBy: { name: "asc" },
+      select: { projectId: true },
+      distinct: ["projectId"],
     }),
     admin
       ? db.user.findMany({
@@ -97,50 +78,76 @@ export default async function TimesheetPage({
       : Promise.resolve([]),
   ]);
 
-  const rowMap = new Map<string, TimesheetRow>();
-
-  const ensureRow = (
-    key: string,
-    seed: Omit<TimesheetRow, "key" | "minutes">,
-  ): TimesheetRow => {
-    let row = rowMap.get(key);
-    if (!row) {
-      row = { key, minutes: {}, ...seed };
-      rowMap.set(key, row);
-    }
-    return row;
-  };
-
-  for (const task of openTasks) {
-    ensureRow(`${task.project.id}|${task.id}`, {
-      projectId: task.project.id,
-      taskId: task.id,
-      projectName: task.project.name,
-      clientName: task.project.client?.name ?? null,
-      taskName: task.name,
-    });
+  // Why each project is on the sheet, so the header can say so.
+  const reasons = new Map<string, string>();
+  for (const p of ownedProjects) reasons.set(p.id, "you own this");
+  for (const t of assignedTaskProjects) {
+    if (!reasons.has(t.projectId)) reasons.set(t.projectId, "assigned to you");
+  }
+  for (const e of entries) {
+    if (!reasons.has(e.projectId)) reasons.set(e.projectId, "logged this week");
   }
 
+  const projectIds = [...reasons.keys()];
+
+  const projects = await db.project.findMany({
+    where: { id: { in: projectIds } },
+    select: {
+      id: true,
+      name: true,
+      client: { select: { name: true } },
+      tasks: {
+        where: { status: { not: "DONE" } },
+        select: { id: true, name: true },
+        orderBy: [{ orderIndex: "asc" }, { name: "asc" }],
+      },
+    },
+    orderBy: { name: "asc" },
+  });
+
+  // Rows are only the tasks with time on them this week; the picker covers
+  // the rest, which keeps a 30-project sheet readable.
+  const rowsByProject = new Map<string, Map<string, TimesheetRow>>();
   for (const entry of entries) {
-    const row = ensureRow(`${entry.projectId}|${entry.taskId ?? ""}`, {
-      projectId: entry.projectId,
-      taskId: entry.taskId,
-      projectName: entry.project.name,
-      clientName: entry.project.client?.name ?? null,
-      taskName: entry.task?.name ?? "General project time",
-    });
+    const key = entry.taskId ?? "";
+    const forProject =
+      rowsByProject.get(entry.projectId) ?? new Map<string, TimesheetRow>();
+
+    const row =
+      forProject.get(key) ??
+      ({
+        key: `${entry.projectId}|${key}`,
+        taskId: entry.taskId,
+        taskName: entry.task?.name ?? "General project time",
+        minutes: {},
+      } satisfies TimesheetRow);
+
     const iso = toISODate(entry.date);
     row.minutes[iso] = (row.minutes[iso] ?? 0) + entry.minutes;
+    forProject.set(key, row);
+    rowsByProject.set(entry.projectId, forProject);
   }
 
-  const rows = [...rowMap.values()].sort(
-    (a, b) =>
-      a.projectName.localeCompare(b.projectName) ||
+  const grid: TimesheetProject[] = projects.map((p) => ({
+    id: p.id,
+    name: p.name,
+    clientName: p.client?.name ?? null,
+    reason: reasons.get(p.id) ?? "on your sheet",
+    openTasks: p.tasks,
+    rows: [...(rowsByProject.get(p.id)?.values() ?? [])].sort((a, b) =>
       a.taskName.localeCompare(b.taskName),
-  );
+    ),
+  }));
+
+  // Projects with time on them come first — that's where the work is.
+  grid.sort((a, b) => {
+    const aHas = a.rows.length > 0 ? 0 : 1;
+    const bHas = b.rows.length > 0 ? 0 : 1;
+    return aHas - bHas || a.name.localeCompare(b.name);
+  });
 
   const nowDay = today();
-  const days = Array.from({ length: 7 }, (_, i) => {
+  const days: Day[] = Array.from({ length: 7 }, (_, i) => {
     const date = addDays(from, i);
     return {
       iso: toISODate(date),
@@ -149,13 +156,6 @@ export default async function TimesheetPage({
       isToday: date.getTime() === nowDay.getTime(),
     };
   });
-
-  const pickerProjects: PickerProject[] = projects.map((p) => ({
-    id: p.id,
-    name: p.name,
-    clientName: p.client?.name ?? null,
-    tasks: p.tasks,
-  }));
 
   const weekMinutes = entries.reduce((sum, e) => sum + e.minutes, 0);
   const prevWeek = toISODate(addDays(from, -7));
@@ -169,7 +169,7 @@ export default async function TimesheetPage({
         subtitle={
           readOnly
             ? `Viewing ${subject.name}'s week — read only.`
-            : "Fill in the week. Every cell saves as you go."
+            : "Every project you're on. Pick a task and fill in the week."
         }
         actions={
           <div className="flex items-center gap-1.5">
@@ -198,13 +198,18 @@ export default async function TimesheetPage({
       />
 
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-        <div className="grid flex-1 gap-3 sm:max-w-md sm:grid-cols-2">
+        <div className="grid flex-1 gap-3 sm:max-w-lg sm:grid-cols-3">
           <Stat
             label="Week"
-            value={`${formatMedium(from)}`}
+            value={formatMedium(from)}
             hint={`through ${formatMedium(to)}`}
           />
           <Stat label="Total logged" value={`${formatHours(weekMinutes)}h`} />
+          <Stat
+            label="Your projects"
+            value={grid.length}
+            hint={`${grid.filter((p) => p.rows.length > 0).length} with time this week`}
+          />
         </div>
 
         {admin && people.length > 1 ? (
@@ -213,12 +218,7 @@ export default async function TimesheetPage({
               Viewing
             </label>
             <input type="hidden" name="week" value={toISODate(from)} />
-            <select
-              id="person"
-              name="person"
-              defaultValue={subject.id}
-              className="input"
-            >
+            <select id="person" name="person" defaultValue={subject.id} className="input">
               {people.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.id === viewer.id ? `${p.name} (you)` : p.name}
@@ -232,12 +232,7 @@ export default async function TimesheetPage({
         ) : null}
       </div>
 
-      <TimesheetGrid
-        rows={rows}
-        days={days}
-        projects={pickerProjects}
-        readOnly={readOnly}
-      />
+      <TimesheetGrid projects={grid} days={days} readOnly={readOnly} />
     </div>
   );
 }
