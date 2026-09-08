@@ -21,6 +21,7 @@ export interface ParsedReportParams {
   groupBy: GroupBy;
   subGroupBy: GroupBy | null;
   clientIds: string[];
+  partnerIds: string[];
   projectIds: string[];
   userIds: string[];
   billable: BillableFilter;
@@ -87,6 +88,7 @@ export function parseReportParams(raw: RawParams): ParsedReportParams {
     groupBy,
     subGroupBy,
     clientIds: asArray(raw.clients),
+    partnerIds: asArray(raw.partners),
     projectIds: asArray(raw.projects),
     userIds: asArray(raw.people),
     billable,
@@ -109,6 +111,7 @@ export function reportQueryString(
   if (p.subGroupBy) q.set("subgroup", p.subGroupBy);
   if (p.billable !== "all") q.set("billable", p.billable);
   for (const id of p.clientIds) q.append("clients", id);
+  for (const id of p.partnerIds) q.append("partners", id);
   for (const id of p.projectIds) q.append("projects", id);
   for (const id of p.userIds) q.append("people", id);
 

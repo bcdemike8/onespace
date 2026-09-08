@@ -10,13 +10,18 @@ export const dynamic = "force-dynamic";
 export default async function NewProjectPage() {
   await requireAdmin();
 
-  const [templates, clients, people] = await Promise.all([
+  const [templates, clients, partners, people] = await Promise.all([
     db.projectTemplate.findMany({
       where: { archivedAt: null },
       include: { tasks: { select: { estimatedHours: true, offsetDays: true } } },
       orderBy: { name: "asc" },
     }),
     db.client.findMany({
+      where: { archivedAt: null },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    db.partner.findMany({
       where: { archivedAt: null },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
@@ -60,6 +65,7 @@ export default async function NewProjectPage() {
       <NewProjectForm
         templates={options}
         clients={clients}
+        partners={partners}
         people={people}
         defaultStart={toISODate(today())}
       />

@@ -38,6 +38,7 @@ const projectSchema = z.object({
   name: z.string().trim().min(1, "Give the project a name."),
   code: z.string().trim().max(40).optional().nullable(),
   clientId: z.string().trim().optional().nullable(),
+  partnerId: z.string().trim().optional().nullable(),
   ownerId: z.string().trim().optional().nullable(),
   templateId: z.string().trim().optional().nullable(),
   startDate: optionalDate,
@@ -65,6 +66,7 @@ export async function createProjectAction(
     name: formData.get("name"),
     code: formData.get("code"),
     clientId: formData.get("clientId"),
+    partnerId: formData.get("partnerId"),
     ownerId: formData.get("ownerId"),
     templateId: formData.get("templateId"),
     startDate: formData.get("startDate"),
@@ -106,6 +108,7 @@ export async function createProjectAction(
       name: d.name,
       code: d.code || null,
       clientId: d.clientId || null,
+      partnerId: d.partnerId || null,
       ownerId: d.ownerId || null,
       templateId: template?.id ?? null,
       startDate: d.startDate,
@@ -160,6 +163,7 @@ export async function updateProjectAction(
     name: formData.get("name"),
     code: formData.get("code"),
     clientId: formData.get("clientId"),
+    partnerId: formData.get("partnerId"),
     ownerId: formData.get("ownerId"),
     startDate: formData.get("startDate"),
     dueDate: formData.get("dueDate"),
@@ -181,6 +185,7 @@ export async function updateProjectAction(
       name: d.name,
       code: d.code || null,
       clientId: d.clientId || null,
+      partnerId: d.partnerId || null,
       ownerId: d.ownerId || null,
       startDate: d.startDate,
       dueDate: d.dueDate,
@@ -262,6 +267,57 @@ export async function toggleClientArchivedAction(formData: FormData) {
   await db.client.update({
     where: { id },
     data: { archivedAt: client.archivedAt ? null : new Date() },
+  });
+  revalidatePath("/clients", "layout");
+}
+
+
+// ----------------------------------------------------------------- partners
+
+export async function createPartnerAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  await requireAdmin();
+  const name = String(formData.get("name") ?? "").trim();
+  if (!name) return { error: "Give the partner a name." };
+
+  if (await db.partner.findUnique({ where: { name } })) {
+    return { error: `"${name}" already exists.` };
+  }
+
+  await db.partner.create({
+    data: { name, notes: (formData.get("notes") as string) || null },
+  });
+
+  revalidatePath("/clients", "layout");
+  refresh();
+  return { ok: true };
+}
+
+export async function updatePartnerAction(formData: FormData) {
+  await requireAdmin();
+  const id = String(formData.get("id") ?? "");
+  const name = String(formData.get("name") ?? "").trim();
+  if (!id || !name) return;
+
+  await db.partner.update({
+    where: { id },
+    data: { name, notes: (formData.get("notes") as string) || null },
+  });
+  revalidatePath("/clients", "layout");
+  refresh();
+}
+
+export async function togglePartnerArchivedAction(formData: FormData) {
+  await requireAdmin();
+  const id = String(formData.get("id") ?? "");
+  const partner = await db.partner.findUnique({ where: { id } });
+  if (!partner) return;
+
+  await db.partner.update({
+    where: { id },
+    data: { archivedAt: partner.archivedAt ? null : new Date() },
   });
   revalidatePath("/clients", "layout");
 }

@@ -87,6 +87,20 @@ model Client {
   projects Project[]
 }
 
+// A partner is who the work comes through — Outreach, Salesloft — as distinct
+// from the client, who is the end customer the work is actually for. Both
+// matter: you report delivery by client and channel performance by partner.
+model Partner {
+  id         String    @id @default(cuid())
+  name       String    @unique
+  notes      String?
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  projects Project[]
+}
+
 // --------------------------------------------------------------- projects
 
 model Project {
@@ -95,6 +109,9 @@ model Project {
   code     String? // short code you can type into reports, e.g. ACME-Q3
   clientId String?
   client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  partnerId String?
+  partner   Partner? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
 
   status ProjectStatus @default(ACTIVE)
 
@@ -122,6 +139,7 @@ model Project {
   timeEntries TimeEntry[]
 
   @@index([clientId])
+  @@index([partnerId])
   @@index([status])
   @@index([templateId])
 }

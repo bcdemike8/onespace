@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
 import { dayStart } from "@/lib/dates";
-import { matchKey } from "@/lib/import/shared";
+import { matchKey, splitProjectName } from "@/lib/import/shared";
 import { type AsanaPlan, parseAsanaCsv } from "@/lib/import/asana";
 import { type EverhourPlan, parseEverhourCsv } from "@/lib/import/everhour";
 
@@ -353,6 +353,9 @@ export interface EverhourPreview {
     warnings: string[];
     mappedColumns: { field: string; column: string | null }[];
     hasRates: boolean;
+    monthly: boolean;
+    partners: string[];
+    leadCount: number;
   };
   people?: PersonMatch[];
   projects?: {
@@ -424,6 +427,9 @@ export async function previewEverhourImportAction(
         hasRates: plan.entries.some(
           (e) => e.billRateCents !== null || e.costRateCents !== null,
         ),
+        monthly: plan.monthly,
+        partners: plan.partners,
+        leadCount: plan.projects.filter((pr) => pr.leadName).length,
         mappedColumns: [
           { field: "Date", column: plan.columns.date },
           { field: "Member", column: plan.columns.member },
@@ -487,6 +493,27 @@ export async function commitEverhourImportAction(
   const clients = await db.client.findMany({ select: { id: true, name: true } });
   const clientByName = new Map(clients.map((c) => [matchKey(c.name), c]));
 
+  const partners = await db.partner.findMany({ select: { id: true, name: true } });
+  const partnerByName = new Map(partners.map((p) => [matchKey(p.name), p]));
+
+  async function partnerIdFor(name: string): Promise<string | null> {
+    if (!name) return null;
+    const existing = partnerByName.get(matchKey(name));
+    if (existing) return existing.id;
+    const created = await db.partner.create({ data: { name } });
+    partnerByName.set(matchKey(name), created);
+    return created.id;
+  }
+
+  async function clientIdFor(name: string): Promise<string | null> {
+    if (!name) return null;
+    const existing = clientByName.get(matchKey(name));
+    if (existing) return existing.id;
+    const created = await db.client.create({ data: { name } });
+    clientByName.set(matchKey(name), created);
+    return created.id;
+  }
+
   // Tasks are matched by name within their project, one lookup per project.
   const tasksByProject = new Map<string, Map<string, string>>();
   async function taskIdFor(projectId: string, taskName: string) {
@@ -503,10 +530,21 @@ export async function commitEverhourImportAction(
     return lookup.get(matchKey(taskName)) ?? null;
   }
 
-  let imported = 0;
+  interface Resolved {
+    userId: string;
+    projectId: string;
+    taskId: string | null;
+    date: Date;
+    minutes: number;
+    notes: string | null;
+    billable: boolean;
+    billRateCents: number;
+    costRateCents: number;
+  }
+
+  const resolved: Resolved[] = [];
   let skippedNoUser = 0;
   let skippedNoProject = 0;
-  let duplicates = 0;
   let createdProjects = 0;
   const missingPeople = new Set<string>();
   const missingProjects = new Set<string>();
@@ -514,7 +552,15 @@ export async function commitEverhourImportAction(
   for (const entry of plan.entries) {
     const user =
       (entry.memberEmail ? userByEmail.get(entry.memberEmail.toLowerCase()) : undefined) ??
-      userByName.get(matchKey(entry.memberName));
+      userByName.get(matchKey(entry.memberName)) ??
+      // Everhour sometimes carries a longer form of the same name
+      // ("Marcus Callaway Taylor" for "Marcus Callaway"), and this report has
+      // no email column to fall back on.
+      users.find(
+        (u) =>
+          matchKey(entry.memberName).startsWith(matchKey(u.name)) ||
+          matchKey(u.name).startsWith(matchKey(entry.memberName)),
+      );
 
     if (!user) {
       skippedNoUser += 1;
@@ -529,18 +575,27 @@ export async function commitEverhourImportAction(
       : undefined;
 
     if (!project && entry.projectName && options.createMissingProjects) {
-      let clientId: string | null = null;
-      if (entry.clientName) {
-        const existing = clientByName.get(matchKey(entry.clientName));
-        if (existing) clientId = existing.id;
-        else {
-          const created = await db.client.create({ data: { name: entry.clientName } });
-          clientByName.set(matchKey(entry.clientName), created);
-          clientId = created.id;
-        }
-      }
+      // Everhour's "client" is the partner the work came through; the end
+      // customer is buried in the project name.
+      const derived = splitProjectName(entry.projectName);
+      const clientId = await clientIdFor(entry.clientName || derived.client);
+      const partnerId = await partnerIdFor(entry.partnerName);
+
+      // The report names a project lead — that's the project owner.
+      const owner = entry.leadName
+        ? (userByName.get(matchKey(entry.leadName)) ??
+           users.find((u) => matchKey(u.name).startsWith(matchKey(entry.leadName))))
+        : undefined;
+
       const created = await db.project.create({
-        data: { name: entry.projectName, clientId, status: "COMPLETED" },
+        data: {
+          name: entry.projectName,
+          clientId,
+          partnerId,
+          ownerId: owner?.id ?? null,
+          // These are historical, so they stay out of the active list.
+          status: "COMPLETED",
+        },
         select: { id: true, name: true, billable: true, billRateCents: true },
       });
       projectByName.set(matchKey(entry.projectName), created);
@@ -556,24 +611,6 @@ export async function commitEverhourImportAction(
 
     const taskId = await taskIdFor(project.id, entry.taskName);
 
-    // Guard against a double-click or a re-run of the same file creating the
-    // work twice — an identical row on the same day is treated as already done.
-    const already = await db.timeEntry.findFirst({
-      where: {
-        userId: user.id,
-        projectId: project.id,
-        taskId,
-        date: entry.date,
-        minutes: entry.minutes,
-        notes: entry.notes,
-      },
-      select: { id: true },
-    });
-    if (already) {
-      duplicates += 1;
-      continue;
-    }
-
     // Prefer the rate implied by the export, so historical money stays true.
     const billRateCents =
       (options.useExportedRates ? entry.billRateCents : null) ??
@@ -582,21 +619,83 @@ export async function commitEverhourImportAction(
     const costRateCents =
       (options.useExportedRates ? entry.costRateCents : null) ?? user.costRateCents;
 
-    await db.timeEntry.create({
-      data: {
-        userId: user.id,
-        projectId: project.id,
-        taskId,
-        date: entry.date,
-        minutes: entry.minutes,
-        notes: entry.notes,
-        billable: entry.billable && project.billable,
-        billRateCents,
-        costRateCents,
-      },
+    resolved.push({
+      userId: user.id,
+      projectId: project.id,
+      taskId,
+      date: entry.date,
+      minutes: entry.minutes,
+      // When the export names a task this project doesn't have, keep the name
+      // in the note rather than throwing it away — it's often the only record
+      // of what the time was actually spent on.
+      notes: entry.notes ?? (taskId ? null : entry.taskName || null),
+      billable: entry.billable && project.billable,
+      billRateCents,
+      costRateCents,
     });
-    imported += 1;
   }
+
+  // Re-importing the same file must not double-count, but a month-grouped
+  // export legitimately contains repeated identical rows — four one-hour
+  // kickoff calls in the same month are four hours, not one. So compare
+  // COUNTS per signature rather than mere existence.
+  const signature = (r: Resolved) =>
+    [
+      r.userId,
+      r.projectId,
+      r.taskId ?? "",
+      r.date.toISOString().slice(0, 10),
+      r.minutes,
+      r.notes ?? "",
+      r.billable,
+    ].join("\u0000");
+
+  const wanted = new Map<string, Resolved[]>();
+  for (const r of resolved) {
+    const key = signature(r);
+    wanted.set(key, [...(wanted.get(key) ?? []), r]);
+  }
+
+  const projectIds = [...new Set(resolved.map((r) => r.projectId))];
+  const existingRows = projectIds.length
+    ? await db.timeEntry.groupBy({
+        by: ["userId", "projectId", "taskId", "date", "minutes", "notes", "billable"],
+        where: { projectId: { in: projectIds } },
+        _count: { _all: true },
+      })
+    : [];
+
+  const already = new Map<string, number>();
+  for (const row of existingRows) {
+    const key = [
+      row.userId,
+      row.projectId,
+      row.taskId ?? "",
+      row.date.toISOString().slice(0, 10),
+      row.minutes,
+      row.notes ?? "",
+      row.billable,
+    ].join("\u0000");
+    already.set(key, (already.get(key) ?? 0) + row._count._all);
+  }
+
+  const toCreate: Resolved[] = [];
+  let duplicates = 0;
+  for (const [key, group] of wanted) {
+    const have = already.get(key) ?? 0;
+    if (have >= group.length) {
+      duplicates += group.length;
+      continue;
+    }
+    duplicates += have;
+    toCreate.push(...group.slice(have));
+  }
+
+  // One bulk insert rather than a thousand round trips.
+  for (let i = 0; i < toCreate.length; i += 500) {
+    await db.timeEntry.createMany({ data: toCreate.slice(i, i + 500) });
+  }
+  const imported = toCreate.length;
 
   const notes: string[] = [];
   if (missingPeople.size > 0) {

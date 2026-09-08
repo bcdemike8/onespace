@@ -9,6 +9,7 @@ import type { ParsedReportParams } from "@/lib/report-params";
 export function ReportFilters({
   params,
   clients,
+  partners,
   projects,
   people,
   action = "/reports",
@@ -16,6 +17,7 @@ export function ReportFilters({
 }: {
   params: ParsedReportParams;
   clients: { id: string; name: string }[];
+  partners: { id: string; name: string }[];
   projects: { id: string; name: string; clientName: string | null }[];
   people: { id: string; name: string }[];
   action?: string;
@@ -144,12 +146,18 @@ export function ReportFilters({
         </div>
       ) : null}
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <MultiSelect
           id="clients"
           label="Clients"
           selected={params.clientIds}
           options={clients.map((c) => ({ value: c.id, label: c.name }))}
+        />
+        <MultiSelect
+          id="partners"
+          label="Partners"
+          selected={params.partnerIds}
+          options={partners.map((c) => ({ value: c.id, label: c.name }))}
         />
         <MultiSelect
           id="projects"

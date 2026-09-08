@@ -675,6 +675,34 @@ function EverhourImport({ thisYearStart }: { thisYearStart: string }) {
 
           <Warnings items={preview.plan.warnings} />
 
+          {preview.plan.partners.length > 0 || preview.plan.leadCount > 0 ? (
+            <div className="card p-4 text-sm">
+              <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink-600">
+                Also in this file
+              </h3>
+              {preview.plan.partners.length > 0 ? (
+                <p className="text-ink-700">
+                  <strong className="font-medium">Partners:</strong>{" "}
+                  {preview.plan.partners.join(", ")}
+                  <span className="block text-xs text-ink-500">
+                    Everhour&apos;s &ldquo;client&rdquo; is who the work came
+                    through. Projects created here get it as their partner, and
+                    the end customer is taken from the project name.
+                  </span>
+                </p>
+              ) : null}
+              {preview.plan.leadCount > 0 ? (
+                <p className="mt-2 text-ink-700">
+                  <strong className="font-medium">Project leads:</strong>{" "}
+                  {preview.plan.leadCount} projects name one
+                  <span className="block text-xs text-ink-500">
+                    Used as the project owner on anything created by this import.
+                  </span>
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
           <div className="card overflow-hidden">
             <div className="border-b border-ink-200 bg-ink-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-ink-600">
               Projects in this file

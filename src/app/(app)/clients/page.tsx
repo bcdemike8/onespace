@@ -5,21 +5,28 @@ import { formatHours, formatMoney } from "@/lib/format";
 import { EmptyState, PageHeader } from "@/components/ui";
 import {
   toggleClientArchivedAction,
+  togglePartnerArchivedAction,
   updateClientAction,
+  updatePartnerAction,
 } from "@/app/actions/projects";
 import { NewClientForm } from "./NewClientForm";
+import { NewPartnerForm } from "./NewPartnerForm";
 
 export const dynamic = "force-dynamic";
 
 export default async function ClientsPage() {
   await requireAdmin();
 
-  const clients = await db.client.findMany({
-    include: {
-      projects: { select: { id: true, name: true, status: true } },
-    },
-    orderBy: [{ archivedAt: "asc" }, { name: "asc" }],
-  });
+  const [clients, partners] = await Promise.all([
+    db.client.findMany({
+      include: { projects: { select: { id: true, name: true, status: true } } },
+      orderBy: [{ archivedAt: "asc" }, { name: "asc" }],
+    }),
+    db.partner.findMany({
+      include: { projects: { select: { id: true, status: true } } },
+      orderBy: [{ archivedAt: "asc" }, { name: "asc" }],
+    }),
+  ]);
 
   const projectIds = clients.flatMap((c) => c.projects.map((p) => p.id));
 
@@ -44,8 +51,8 @@ export default async function ClientsPage() {
   return (
     <div>
       <PageHeader
-        title="Clients"
-        subtitle="Who the work is for. Reports roll up by client automatically."
+        title="Clients & partners"
+        subtitle="A client is who the work is for; a partner is who it came through. Reports can group by either."
       />
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -141,10 +148,74 @@ export default async function ClientsPage() {
           )}
         </div>
 
-        <div>
+        <div className="space-y-6">
           <section className="card p-4">
             <h2 className="mb-3 text-sm font-semibold text-ink-900">New client</h2>
             <NewClientForm />
+          </section>
+
+          <section className="card overflow-hidden">
+            <div className="border-b border-ink-200 bg-ink-50 px-4 py-2">
+              <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-600">
+                Partners
+              </h2>
+            </div>
+
+            {partners.length === 0 ? (
+              <p className="px-4 py-4 text-sm text-ink-500">
+                No partners yet — add the companies work comes through, like
+                Outreach or Salesloft.
+              </p>
+            ) : (
+              <ul className="divide-y divide-ink-100">
+                {partners.map((partner) => (
+                  <li
+                    key={partner.id}
+                    className={`px-4 py-2.5 ${partner.archivedAt ? "opacity-60" : ""}`}
+                  >
+                    <form
+                      action={updatePartnerAction}
+                      className="flex items-center gap-2"
+                    >
+                      <input type="hidden" name="id" value={partner.id} />
+                      <input
+                        name="name"
+                        defaultValue={partner.name}
+                        aria-label="Partner name"
+                        className="min-w-0 flex-1 bg-transparent text-sm font-medium text-ink-900 outline-none focus:text-brand-700"
+                      />
+                      <span className="shrink-0 text-xs tnum text-ink-500">
+                        {partner.projects.length}
+                      </span>
+                      <button type="submit" className="btn-ghost btn-sm shrink-0">
+                        Save
+                      </button>
+                    </form>
+                    <div className="mt-1 flex items-center gap-3">
+                      <Link
+                        href={`/reports?partners=${partner.id}&preset=this_year`}
+                        className="text-xs text-brand-700 hover:underline"
+                      >
+                        Report →
+                      </Link>
+                      <form action={togglePartnerArchivedAction}>
+                        <input type="hidden" name="id" value={partner.id} />
+                        <button
+                          type="submit"
+                          className="text-xs text-ink-400 hover:text-ink-700"
+                        >
+                          {partner.archivedAt ? "Restore" : "Archive"}
+                        </button>
+                      </form>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div className="border-t border-ink-200 p-4">
+              <NewPartnerForm />
+            </div>
           </section>
         </div>
       </div>

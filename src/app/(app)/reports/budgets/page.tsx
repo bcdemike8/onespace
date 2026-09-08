@@ -19,14 +19,16 @@ export default async function BudgetReportPage({
   const raw = await searchParams;
   const params = parseReportParams(raw);
 
-  const [rows, clients, projects] = await Promise.all([
+  const [rows, clients, partners, projects] = await Promise.all([
     buildBudgetReport({
       from: params.from,
       to: params.to,
       clientIds: params.clientIds,
+      partnerIds: params.partnerIds,
       projectIds: params.projectIds,
     }),
     db.client.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    db.partner.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }),
     db.project.findMany({
       select: { id: true, name: true, client: { select: { name: true } } },
       orderBy: { name: "asc" },
@@ -73,6 +75,7 @@ export default async function BudgetReportPage({
       <ReportFilters
         params={params}
         clients={clients}
+        partners={partners}
         projects={projects.map((p) => ({
           id: p.id,
           name: p.name,
@@ -134,6 +137,7 @@ export default async function BudgetReportPage({
                         </Link>
                         <div className="text-xs text-ink-500">
                           {row.clientName ?? "No client"}
+                          {row.partnerName ? ` · via ${row.partnerName}` : ""}
                         </div>
                       </td>
 

@@ -37,6 +37,7 @@ export default async function ProjectPage({
     where: { id },
     include: {
       client: { select: { id: true, name: true } },
+      partner: { select: { id: true, name: true } },
       owner: { select: { name: true } },
       template: { select: { id: true, name: true } },
       sections: { orderBy: { orderIndex: "asc" } },
@@ -58,7 +59,7 @@ export default async function ProjectPage({
 
   if (!project) notFound();
 
-  const [entries, people, clients, timeByTask] = await Promise.all([
+  const [entries, people, clients, partners, timeByTask] = await Promise.all([
     db.timeEntry.findMany({
       where: { projectId: id },
       select: {
@@ -81,6 +82,11 @@ export default async function ProjectPage({
       orderBy: { name: "asc" },
     }),
     db.client.findMany({
+      where: { archivedAt: null },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    db.partner.findMany({
       where: { archivedAt: null },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
@@ -147,6 +153,7 @@ export default async function ProjectPage({
           <span className="flex flex-wrap items-center gap-2">
             <ProjectStatusChip status={project.status} />
             {project.client ? <span>{project.client.name}</span> : null}
+            {project.partner ? <span>· via {project.partner.name}</span> : null}
             {project.owner ? <span>· Owner: {project.owner.name}</span> : null}
             {project.startDate ? (
               <span>· Started {formatMedium(project.startDate)}</span>
@@ -180,12 +187,14 @@ export default async function ProjectPage({
               </form>
               <ProjectSettings
                 clients={clients}
+                partners={partners}
                 people={people}
                 values={{
                   id: project.id,
                   name: project.name,
                   code: project.code ?? "",
                   clientId: project.clientId ?? "",
+                  partnerId: project.partnerId ?? "",
                   ownerId: project.ownerId ?? "",
                   status: project.status,
                   startDate: project.startDate ? toISODate(project.startDate) : "",

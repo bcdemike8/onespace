@@ -130,10 +130,26 @@ to include subtasks and completed tasks, and whether to also save the
 structure as a reusable template — which converts each due date into an
 offset from kickoff.
 
-**Everhour — one file for the whole date range.** Build a detailed time report
-including at least Date, Member, Project, Task and Time, then export CSV.
+**Everhour — one file for the whole date range.** Two shapes are supported and
+detected automatically:
+
+- A **detailed report** with one row per entry (Date, Member, Project, Task,
+  Time). Day-level accuracy.
+- A **saved "Historical Report"**, which groups rows under month headings
+  rather than dating each one. Everything in it is filed on the first of its
+  month, so month, quarter and year reports are exact but weekly ones are not.
+  Subtotal and Total rows are recognised and skipped rather than double-counted.
+
+The Historical Report also carries two things nothing else does, and both are
+used: its **Client column is the partner** the work came through (the end
+customer is parsed out of the project name instead), and its **Leads column
+names the project lead**, which becomes the project owner on anything the
+import creates.
+
 Import your Asana projects first so the hours have somewhere to land; entries
-are matched to projects and tasks by name.
+are matched to projects and tasks by name, and to people by email then name —
+including a longer form of the same name, since that report has no email
+column.
 
 Two things worth knowing:
 
@@ -141,10 +157,14 @@ Two things worth knowing:
   The importer divides them by the hours to recover the rate that was actually
   in force, so historical money stays true instead of being restated at
   today's rates.
-- **Imports are safe to re-run.** An identical row — same person, project,
-  task, day, duration and note — is recognised as already imported and
-  skipped. So if some people were missing accounts on the first pass, add them
-  under People and run the same file again; only the newly-matchable rows land.
+- **Imports are safe to re-run.** Re-running compares *counts* per identical
+  row rather than mere existence, so four one-hour kickoff calls in the same
+  month import as four hours the first time and add nothing the second. If
+  some people were missing accounts on the first pass, add them under People
+  and run the same file again; only the newly-matchable rows land.
+- **A task name with no matching task is kept in the entry's note** rather than
+  dropped. For projects that came from Everhour rather than Asana, that note is
+  often the only record of what the time was spent on.
 
 Anyone in the file without a OneSpace account is listed in the preview. Their
 tasks come in unassigned and their hours are skipped, so add them first if you
@@ -171,6 +191,13 @@ Three exports:
 Members only ever see their own time, and never see cost or margin.
 
 ---
+
+## Clients and partners
+
+A **client** is who the work is for; a **partner** is who it came through
+(Outreach, Salesloft). Both live on a project, and reports group by either —
+so you can read delivery by customer and channel performance by partner from
+the same data. Manage both on the Clients page.
 
 ## Branding
 

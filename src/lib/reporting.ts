@@ -9,11 +9,18 @@ import {
 
 export type BillableFilter = "all" | "billable" | "nonbillable";
 
-export type GroupBy = "project" | "client" | "person" | "task" | "date";
+export type GroupBy =
+  | "project"
+  | "client"
+  | "partner"
+  | "person"
+  | "task"
+  | "date";
 
 export const GROUP_BY_OPTIONS: { value: GroupBy; label: string }[] = [
   { value: "project", label: "Project" },
   { value: "client", label: "Client" },
+  { value: "partner", label: "Partner" },
   { value: "person", label: "Person" },
   { value: "task", label: "Task" },
   { value: "date", label: "Date" },
@@ -23,6 +30,7 @@ export interface ReportFilters {
   from: Date;
   to: Date;
   clientIds?: string[];
+  partnerIds?: string[];
   projectIds?: string[];
   userIds?: string[];
   billable?: BillableFilter;
@@ -90,7 +98,12 @@ type EntryShape = {
   costRateCents: number;
   notes: string | null;
   user: { id: string; name: string };
-  project: { id: string; name: string; client: { id: string; name: string } | null };
+  project: {
+    id: string;
+    name: string;
+    client: { id: string; name: string } | null;
+    partner: { id: string; name: string } | null;
+  };
   task: { id: string; name: string } | null;
 };
 
@@ -99,6 +112,7 @@ export async function fetchEntries(filters: ReportFilters): Promise<EntryShape[]
     from,
     to,
     clientIds = [],
+    partnerIds = [],
     projectIds = [],
     userIds = [],
     billable = "all",
@@ -109,7 +123,14 @@ export async function fetchEntries(filters: ReportFilters): Promise<EntryShape[]
       date: { gte: dayStart(from), lte: dayStart(to) },
       ...(projectIds.length ? { projectId: { in: projectIds } } : {}),
       ...(userIds.length ? { userId: { in: userIds } } : {}),
-      ...(clientIds.length ? { project: { clientId: { in: clientIds } } } : {}),
+      ...(clientIds.length || partnerIds.length
+        ? {
+            project: {
+              ...(clientIds.length ? { clientId: { in: clientIds } } : {}),
+              ...(partnerIds.length ? { partnerId: { in: partnerIds } } : {}),
+            },
+          }
+        : {}),
       ...(billable === "all" ? {} : { billable: billable === "billable" }),
     },
     select: {
@@ -126,6 +147,7 @@ export async function fetchEntries(filters: ReportFilters): Promise<EntryShape[]
           id: true,
           name: true,
           client: { select: { id: true, name: true } },
+          partner: { select: { id: true, name: true } },
         },
       },
       task: { select: { id: true, name: true } },
@@ -146,6 +168,11 @@ function dimensionOf(entry: EntryShape, groupBy: GroupBy, granularity: Granulari
       return {
         key: entry.project.client?.id ?? "__none__",
         label: entry.project.client?.name ?? "No client",
+      };
+    case "partner":
+      return {
+        key: entry.project.partner?.id ?? "__none__",
+        label: entry.project.partner?.name ?? "No partner",
       };
     case "person":
       return { key: entry.user.id, label: entry.user.name };
@@ -238,6 +265,7 @@ export interface BudgetRow {
   projectId: string;
   projectName: string;
   clientName: string | null;
+  partnerName: string | null;
   status: string;
   budgetHours: number | null;
   budgetCents: number | null;
@@ -259,15 +287,19 @@ export interface BudgetRow {
  * a truthful answer.
  */
 export async function buildBudgetReport(
-  filters: Pick<ReportFilters, "from" | "to" | "clientIds" | "projectIds">,
+  filters: Pick<
+    ReportFilters,
+    "from" | "to" | "clientIds" | "partnerIds" | "projectIds"
+  >,
   opts: { includeArchived?: boolean } = {},
 ): Promise<BudgetRow[]> {
-  const { from, to, clientIds = [], projectIds = [] } = filters;
+  const { from, to, clientIds = [], partnerIds = [], projectIds = [] } = filters;
 
   const projects = await db.project.findMany({
     where: {
       ...(projectIds.length ? { id: { in: projectIds } } : {}),
       ...(clientIds.length ? { clientId: { in: clientIds } } : {}),
+      ...(partnerIds.length ? { partnerId: { in: partnerIds } } : {}),
       ...(opts.includeArchived ? {} : { status: { not: "ARCHIVED" } }),
     },
     select: {
@@ -277,6 +309,7 @@ export async function buildBudgetReport(
       budgetHours: true,
       budgetCents: true,
       client: { select: { name: true } },
+      partner: { select: { name: true } },
     },
     orderBy: { name: "asc" },
   });
@@ -286,7 +319,14 @@ export async function buildBudgetReport(
     where: {
       date: { gte: dayStart(from), lte: dayStart(to) },
       ...(projectIds.length ? { projectId: { in: projectIds } } : {}),
-      ...(clientIds.length ? { project: { clientId: { in: clientIds } } } : {}),
+      ...(clientIds.length || partnerIds.length
+        ? {
+            project: {
+              ...(clientIds.length ? { clientId: { in: clientIds } } : {}),
+              ...(partnerIds.length ? { partnerId: { in: partnerIds } } : {}),
+            },
+          }
+        : {}),
     },
     _sum: { minutes: true },
   });
@@ -296,7 +336,14 @@ export async function buildBudgetReport(
     where: {
       date: { gte: dayStart(from), lte: dayStart(to) },
       ...(projectIds.length ? { projectId: { in: projectIds } } : {}),
-      ...(clientIds.length ? { project: { clientId: { in: clientIds } } } : {}),
+      ...(clientIds.length || partnerIds.length
+        ? {
+            project: {
+              ...(clientIds.length ? { clientId: { in: clientIds } } : {}),
+              ...(partnerIds.length ? { partnerId: { in: partnerIds } } : {}),
+            },
+          }
+        : {}),
     },
     select: {
       projectId: true,
@@ -347,6 +394,7 @@ export async function buildBudgetReport(
       projectId: p.id,
       projectName: p.name,
       clientName: p.client?.name ?? null,
+      partnerName: p.partner?.name ?? null,
       status: p.status,
       budgetHours: p.budgetHours,
       budgetCents: p.budgetCents,

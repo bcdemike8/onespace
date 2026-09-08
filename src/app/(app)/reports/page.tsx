@@ -31,12 +31,13 @@ export default async function ReportsPage({
     ? params
     : { ...params, userIds: [viewer.id] };
 
-  const [report, clients, projects, people] = await Promise.all([
+  const [report, clients, partners, projects, people] = await Promise.all([
     buildReport(
       {
         from: scoped.from,
         to: scoped.to,
         clientIds: scoped.clientIds,
+        partnerIds: scoped.partnerIds,
         projectIds: scoped.projectIds,
         userIds: scoped.userIds,
         billable: scoped.billable,
@@ -46,6 +47,10 @@ export default async function ReportsPage({
       scoped.subGroupBy,
     ),
     db.client.findMany({
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    db.partner.findMany({
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     }),
@@ -97,6 +102,7 @@ export default async function ReportsPage({
       <ReportFilters
         params={params}
         clients={clients}
+        partners={partners}
         projects={projects.map((p) => ({
           id: p.id,
           name: p.name,

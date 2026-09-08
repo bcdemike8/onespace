@@ -67,3 +67,41 @@ export const truthy = (value: string) =>
 /** Case- and whitespace-insensitive key for matching names across systems. */
 export const matchKey = (value: string) =>
   value.trim().toLowerCase().replace(/\s+/g, " ");
+
+
+/**
+ * Split "Dow Jones | Outreach Implementation: (1-19)" into the end customer
+ * and the service. Asana and Everhour both bury the customer in the project
+ * name — after a pipe where there is one, otherwise before the first word
+ * that starts the service description.
+ */
+const SERVICE_WORDS = ["Outreach", "Amplify", "Quick Start", "Basic Outreach", "Salesloft"];
+
+export function splitProjectName(full: string): {
+  client: string;
+  service: string;
+} {
+  const name = full.trim();
+
+  const pipe = name.indexOf("|");
+  if (pipe > 0) {
+    return {
+      client: name.slice(0, pipe).trim().replace(/[-–—:]+$/, "").trim(),
+      service: name.slice(pipe + 1).trim(),
+    };
+  }
+
+  let cut = -1;
+  for (const word of SERVICE_WORDS) {
+    const at = name.indexOf(word);
+    if (at > 0 && (cut === -1 || at < cut)) cut = at;
+  }
+  if (cut > 0) {
+    return {
+      client: name.slice(0, cut).trim().replace(/[-–—:]+$/, "").trim(),
+      service: name.slice(cut).trim(),
+    };
+  }
+
+  return { client: name, service: name };
+}

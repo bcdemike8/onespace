@@ -17,11 +17,13 @@ export interface TemplateOption {
 export function NewProjectForm({
   templates,
   clients,
+  partners,
   people,
   defaultStart,
 }: {
   templates: TemplateOption[];
   clients: { id: string; name: string }[];
+  partners: { id: string; name: string }[];
   people: { id: string; name: string }[];
   defaultStart: string;
 }) {
@@ -135,6 +137,20 @@ export function NewProjectForm({
               {clients.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="label" htmlFor="partnerId">
+              Partner <span className="font-normal text-ink-400">(who it came through)</span>
+            </label>
+            <select id="partnerId" name="partnerId" className="input" defaultValue="">
+              <option value="">No partner</option>
+              {partners.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
                 </option>
               ))}
             </select>

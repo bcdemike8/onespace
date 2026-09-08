@@ -13,6 +13,7 @@ export interface ProjectSettingsValues {
   name: string;
   code: string;
   clientId: string;
+  partnerId: string;
   ownerId: string;
   status: string;
   startDate: string;
@@ -26,10 +27,12 @@ export interface ProjectSettingsValues {
 export function ProjectSettings({
   values,
   clients,
+  partners,
   people,
 }: {
   values: ProjectSettingsValues;
   clients: { id: string; name: string }[];
+  partners: { id: string; name: string }[];
   people: { id: string; name: string }[];
 }) {
   const [state, action] = useActionState(updateProjectAction, {});
@@ -91,6 +94,25 @@ export function ProjectSettings({
                 {clients.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="label" htmlFor="p-partner">
+                Partner
+              </label>
+              <select
+                id="p-partner"
+                name="partnerId"
+                defaultValue={values.partnerId}
+                className="input"
+              >
+                <option value="">No partner</option>
+                {partners.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
                   </option>
                 ))}
               </select>
