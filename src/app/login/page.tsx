@@ -15,7 +15,7 @@ export default async function LoginPage() {
     <main className="flex min-h-screen items-center justify-center px-4 py-12">
       <div className="w-full max-w-md">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-brand-600 text-sm font-bold tracking-tight text-white">
+          <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-brand-300 text-sm font-bold tracking-tight text-ink-900">
             {BRAND.mark}
           </div>
           <h1 className="text-2xl font-semibold tracking-tight text-ink-900">

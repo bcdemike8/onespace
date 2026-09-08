@@ -46,7 +46,7 @@ export default async function AppLayout({
     <div className="flex min-h-screen">
       <aside className="hidden w-60 shrink-0 flex-col border-r border-ink-200 bg-white lg:flex">
         <div className="flex items-center gap-2.5 px-4 py-4">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-xs font-bold tracking-tight text-white">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-300 text-xs font-bold tracking-tight text-ink-900">
             {BRAND.mark}
           </div>
           <span className="text-base font-semibold tracking-tight">
@@ -85,7 +85,7 @@ export default async function AppLayout({
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Compact nav for phones — the same links, scrolled horizontally. */}
         <div className="flex items-center gap-1 overflow-x-auto border-b border-ink-200 bg-white px-3 py-2 lg:hidden">
-          <span className="mr-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-brand-600 text-[10px] font-bold text-white">
+          <span className="mr-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-brand-300 text-[10px] font-bold text-ink-900">
             {BRAND.mark}
           </span>
           {[...BASE_NAV, ...(admin ? ADMIN_NAV : [])].map((item) => (

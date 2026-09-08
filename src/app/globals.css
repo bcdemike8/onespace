@@ -1,27 +1,40 @@
 @import "tailwindcss";
 
 @theme {
-  --color-ink-50: #f6f7f9;
-  --color-ink-100: #eceef2;
-  --color-ink-200: #d9dde5;
-  --color-ink-300: #b8bfcc;
-  --color-ink-400: #8b95a8;
-  --color-ink-500: #667085;
-  --color-ink-600: #4b5568;
-  --color-ink-700: #374151;
-  --color-ink-800: #1f2836;
-  --color-ink-900: #111827;
+  /* RevOptics palette.
+     Their three greys sit at ink-50 / ink-300 / ink-400 and black at ink-900;
+     ink-500 upward are derived, because #878787 only reaches 3.6:1 on white
+     and small text needs 4.5:1. */
+  --color-ink-50: #f7f7f7;
+  --color-ink-100: #efefef;
+  --color-ink-200: #e2e2e2;
+  --color-ink-300: #c3c3c3;
+  --color-ink-400: #878787;
+  --color-ink-500: #6a6a6a;
+  --color-ink-600: #545454;
+  --color-ink-700: #3d3d3d;
+  --color-ink-800: #262626;
+  --color-ink-900: #0f0f0f;
 
-  --color-brand-50: #eef4ff;
-  --color-brand-100: #dbe6fe;
-  --color-brand-200: #bfd3fe;
-  --color-brand-500: #3b6df6;
-  --color-brand-600: #2554d8;
-  --color-brand-700: #1e43ad;
+  /* Both brand greens are light — #90cdbf carries white at only 1.8:1 — so
+     they are used as surfaces and accents with dark text on them, never as a
+     background behind white. The darker steps exist for text and links. */
+  --color-brand-50: #f1faf7;
+  --color-brand-100: #dff3ec;
+  --color-brand-200: #b0e5d0;
+  --color-brand-300: #90cdbf;
+  --color-brand-400: #6bb0a0;
+  --color-brand-500: #4a9284;
+  --color-brand-600: #3d8073;
+  --color-brand-700: #2b6154;
+  --color-brand-800: #1d453c;
+  --color-brand-900: #163b33;
 
-  --color-good-50: #ecfdf3;
-  --color-good-500: #12b76a;
-  --color-good-700: #027a48;
+  /* Status colours stay conventional, and deliberately more saturated than
+     the brand mint so "done" never reads as "branded". */
+  --color-good-50: #eafaf2;
+  --color-good-500: #17966a;
+  --color-good-700: #0f7b52;
 
   --color-warn-50: #fffaeb;
   --color-warn-500: #f79009;
@@ -35,6 +48,7 @@
     "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 }
+
 
 :root {
   --page: var(--color-ink-50);
@@ -74,7 +88,7 @@ body {
       disabled:opacity-50;
   }
   .btn-primary {
-    @apply bg-brand-600 text-white hover:bg-brand-700;
+    @apply bg-ink-900 text-white hover:bg-ink-800;
   }
   .btn-secondary {
     @apply border border-ink-300 bg-white text-ink-700 hover:bg-ink-50;
@@ -92,7 +106,7 @@ body {
   .input {
     @apply w-full rounded-lg border border-ink-300 bg-white px-3 py-2 text-sm
       text-ink-900 outline-none placeholder:text-ink-400
-      focus:border-brand-500 focus:ring-2 focus:ring-brand-100;
+      focus:border-brand-500 focus:ring-2 focus:ring-brand-200;
   }
   .label {
     @apply mb-1 block text-xs font-medium text-ink-600;
@@ -103,7 +117,7 @@ body {
   }
 
   .th {
-    @apply px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-ink-500;
+    @apply px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-ink-600;
   }
   .td {
     @apply px-3 py-2 text-sm text-ink-800;

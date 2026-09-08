@@ -35,11 +35,11 @@ export function TimerBar({ timer }: { timer: RunningTimerInfo }) {
   )}:${two(total % 60)}`;
 
   return (
-    <div className="sticky top-0 z-20 border-b border-brand-200 bg-brand-50/95 backdrop-blur">
+    <div className="sticky top-0 z-20 border-b border-brand-300 bg-brand-200/95 backdrop-blur">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-2.5 sm:px-6">
         <span className="relative flex h-2 w-2 shrink-0">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand-500 opacity-60" />
-          <span className="relative inline-flex h-2 w-2 rounded-full bg-brand-600" />
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand-700 opacity-50" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-brand-800" />
         </span>
 
         <div className="min-w-0 flex-1">
@@ -48,13 +48,13 @@ export function TimerBar({ timer }: { timer: RunningTimerInfo }) {
           </div>
           <Link
             href={`/projects/${timer.projectId}`}
-            className="truncate text-xs text-ink-500 hover:text-brand-700"
+            className="truncate text-xs text-brand-800 hover:text-ink-900"
           >
             {timer.projectName}
           </Link>
         </div>
 
-        <div className="text-lg font-semibold tnum text-brand-700">{clock}</div>
+        <div className="text-lg font-semibold tnum text-brand-900">{clock}</div>
 
         <form action={stopTimerAction}>
           <SubmitButton className="btn-primary btn-sm" pendingLabel="Stopping…">
@@ -62,7 +62,7 @@ export function TimerBar({ timer }: { timer: RunningTimerInfo }) {
           </SubmitButton>
         </form>
         <form action={discardTimerAction}>
-          <SubmitButton className="btn-ghost btn-sm" pendingLabel="…">
+          <SubmitButton className="btn-ghost btn-sm text-brand-900 hover:bg-brand-300" pendingLabel="…">
             Discard
           </SubmitButton>
         </form>
