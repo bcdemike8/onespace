@@ -4,13 +4,20 @@ import { db } from "@/lib/db";
 import {
   addDays,
   formatMedium,
+  relativeDueLabel,
   toISODate,
   today,
   weekEnd,
   weekStart,
 } from "@/lib/dates";
-import { formatHours, formatMoney } from "@/lib/format";
-import { PageHeader, Stat, EmptyState } from "@/components/ui";
+import { formatHours, formatMoney, pct } from "@/lib/format";
+import {
+  EmptyState,
+  PageHeader,
+  ProgressBar,
+  ProjectStatusChip,
+  Stat,
+} from "@/components/ui";
 import { LogTimeForm, type LoggableProject } from "@/components/LogTimeForm";
 import { TaskListItem, type TaskListItemData } from "@/components/TaskListItem";
 import { deleteTimeEntryAction } from "@/app/actions/time";
@@ -49,8 +56,15 @@ export default async function MyWorkPage() {
   const weekFrom = weekStart(now);
   const weekTo = weekEnd(now);
 
-  const [openTasks, weekEntries, todayEntries, recentEntries, projects, timer] =
-    await Promise.all([
+  const [
+    openTasks,
+    weekEntries,
+    todayEntries,
+    recentEntries,
+    projects,
+    timer,
+    ownedProjects,
+  ] = await Promise.all([
       db.task.findMany({
         where: { assigneeId: user.id, status: { not: "DONE" } },
         select: {
@@ -104,7 +118,40 @@ export default async function MyWorkPage() {
         orderBy: { name: "asc" },
       }),
       db.runningTimer.findUnique({ where: { userId: user.id } }),
+      // What this person is accountable for, as distinct from what's on their
+      // own plate — a lead often owns work other people are doing.
+      db.project.findMany({
+        where: { ownerId: user.id, status: { in: ["ACTIVE", "ON_HOLD"] } },
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          dueDate: true,
+          budgetHours: true,
+          client: { select: { name: true } },
+          _count: { select: { tasks: true } },
+        },
+        orderBy: [{ dueDate: "asc" }, { name: "asc" }],
+      }),
     ]);
+
+  const ownedIds = ownedProjects.map((p) => p.id);
+  const [ownedMinutes, ownedOpen] = await Promise.all([
+    db.timeEntry.groupBy({
+      by: ["projectId"],
+      where: { projectId: { in: ownedIds } },
+      _sum: { minutes: true },
+    }),
+    db.task.groupBy({
+      by: ["projectId"],
+      where: { projectId: { in: ownedIds }, status: { not: "DONE" } },
+      _count: { _all: true },
+    }),
+  ]);
+  const ownedMinutesBy = new Map(
+    ownedMinutes.map((r) => [r.projectId, r._sum.minutes ?? 0]),
+  );
+  const ownedOpenBy = new Map(ownedOpen.map((r) => [r.projectId, r._count._all]));
 
   const loggedByTask = await db.timeEntry.groupBy({
     by: ["taskId"],
@@ -172,7 +219,82 @@ export default async function MyWorkPage() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-ink-500">
+          {ownedProjects.length > 0 ? (
+            <section className="mb-6">
+              <div className="mb-3 flex items-baseline justify-between">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-600">
+                  Projects I own
+                </h2>
+                <span className="text-xs text-ink-500 tnum">
+                  {ownedProjects.length}
+                </span>
+              </div>
+
+              <div className="card overflow-hidden">
+                <ul className="divide-y divide-ink-100">
+                  {ownedProjects.map((project) => {
+                    const minutes = ownedMinutesBy.get(project.id) ?? 0;
+                    const open = ownedOpenBy.get(project.id) ?? 0;
+                    const overdue =
+                      project.dueDate && project.dueDate < now && open > 0;
+
+                    return (
+                      <li
+                        key={project.id}
+                        className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 hover:bg-ink-50/60"
+                      >
+                        <div className="min-w-[14rem] flex-1">
+                          <Link
+                            href={`/projects/${project.id}`}
+                            className="text-sm font-medium text-ink-900 hover:text-brand-700"
+                          >
+                            {project.name}
+                          </Link>
+                          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-ink-500">
+                            <span>{project.client?.name ?? "No client"}</span>
+                            {project.dueDate ? (
+                              <span
+                                className={
+                                  overdue ? "font-medium text-bad-700" : undefined
+                                }
+                              >
+                                · {relativeDueLabel(project.dueDate, now)}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <div className="text-xs text-ink-600 tnum">
+                          {open}/{project._count.tasks} open
+                        </div>
+
+                        <div className="w-36 shrink-0">
+                          {project.budgetHours ? (
+                            <ProgressBar
+                              value={minutes / 60}
+                              max={project.budgetHours}
+                              label={`${formatHours(minutes)}h of ${project.budgetHours}h · ${pct(
+                                minutes / 60,
+                                project.budgetHours,
+                              )}%`}
+                            />
+                          ) : (
+                            <span className="text-xs text-ink-400 tnum">
+                              {formatHours(minutes)}h logged
+                            </span>
+                          )}
+                        </div>
+
+                        <ProjectStatusChip status={project.status} />
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            </section>
+          ) : null}
+
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-ink-600">
             My tasks
           </h2>
 

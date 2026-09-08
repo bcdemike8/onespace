@@ -148,6 +148,9 @@ export async function createProjectAction(
     });
   }
 
+  // Steps the template didn't name an owner for fall to the project's owner.
+  await cascadeOwnerToTasks(project.id, d.ownerId || null);
+
   refresh();
   redirect(`/projects/${project.id}`);
 }
@@ -196,6 +199,7 @@ export async function updateProjectAction(
       status: status as "ACTIVE" | "ON_HOLD" | "COMPLETED" | "ARCHIVED",
     },
   });
+  await cascadeOwnerToTasks(id, d.ownerId || null);
 
   refresh();
   revalidatePath(`/projects/${id}`, "layout");
@@ -272,6 +276,42 @@ export async function toggleClientArchivedAction(formData: FormData) {
 }
 
 
+/**
+ * Give the project's owner every task nobody else is doing.
+ *
+ * Only unassigned tasks are touched. A task deliberately given to someone
+ * other than the owner — which is most of what came across from Asana — stays
+ * with them; use assignAllTasksToOwnerAction to override that on purpose.
+ */
+async function cascadeOwnerToTasks(projectId: string, ownerId: string | null) {
+  if (!ownerId) return 0;
+  const { count } = await db.task.updateMany({
+    where: { projectId, assigneeId: null },
+    data: { assigneeId: ownerId },
+  });
+  return count;
+}
+
+/** Hand every task on the project to its owner, including reassigning. */
+export async function assignAllTasksToOwnerAction(formData: FormData) {
+  await requireAdmin();
+  const id = String(formData.get("id") ?? "");
+
+  const project = await db.project.findUnique({
+    where: { id },
+    select: { ownerId: true },
+  });
+  if (!project?.ownerId) return;
+
+  await db.task.updateMany({
+    where: { projectId: id },
+    data: { assigneeId: project.ownerId },
+  });
+
+  refresh();
+  revalidatePath(`/projects/${id}`, "layout");
+}
+
 /** Set (or clear) a project's owner from the projects list. */
 export async function setProjectOwnerAction(formData: FormData) {
   await requireAdmin();
@@ -283,6 +323,7 @@ export async function setProjectOwnerAction(formData: FormData) {
     where: { id },
     data: { ownerId: ownerId || null },
   });
+  await cascadeOwnerToTasks(id, ownerId || null);
 
   refresh();
   revalidatePath(`/projects/${id}`, "layout");

@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import {
+  assignAllTasksToOwnerAction,
   deleteProjectAction,
   updateProjectAction,
 } from "@/app/actions/projects";
@@ -259,6 +260,22 @@ export function ProjectSettings({
             <SubmitButton pendingLabel="Saving…">Save changes</SubmitButton>
           </div>
         </form>
+
+        {values.ownerId ? (
+          <form
+            action={assignAllTasksToOwnerAction}
+            className="mt-4 border-t border-ink-200 pt-4"
+          >
+            <input type="hidden" name="id" value={values.id} />
+            <button type="submit" className="btn-secondary btn-sm">
+              Give every task to the owner
+            </button>
+            <p className="mt-1.5 text-xs text-ink-500">
+              Changing the owner already hands them anything unassigned. This
+              also takes over tasks currently assigned to someone else.
+            </p>
+          </form>
+        ) : null}
 
         <form
           action={deleteProjectAction}

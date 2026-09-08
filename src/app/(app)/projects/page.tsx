@@ -16,6 +16,7 @@ import { setProjectOwnerAction } from "@/app/actions/projects";
 export const dynamic = "force-dynamic";
 
 const STATUS_TABS: { value: string; label: string }[] = [
+  { value: "mine", label: "Mine" },
   { value: "open", label: "Open" },
   { value: "ACTIVE", label: "Active" },
   { value: "ON_HOLD", label: "On hold" },
@@ -35,16 +36,19 @@ export default async function ProjectsPage({
   const status = params.status ?? "open";
   const clientId = params.client ?? "";
 
+  // "Mine" is the same open list, narrowed to what this person owns.
   const statusWhere =
     status === "all"
       ? {}
-      : status === "open"
+      : status === "open" || status === "mine"
         ? { status: { in: ["ACTIVE", "ON_HOLD"] as ProjectStatus[] } }
         : { status: status as ProjectStatus };
 
+  const ownerWhere = status === "mine" ? { ownerId: user.id } : {};
+
   const [projects, clients, people] = await Promise.all([
     db.project.findMany({
-      where: { ...statusWhere, ...(clientId ? { clientId } : {}) },
+      where: { ...statusWhere, ...ownerWhere, ...(clientId ? { clientId } : {}) },
       select: {
         id: true,
         name: true,
@@ -154,8 +158,16 @@ export default async function ProjectsPage({
 
       {projects.length === 0 ? (
         <EmptyState
-          title="No projects here yet."
-          body="Build a template first, then spin up projects from it in a couple of clicks."
+          title={
+            status === "mine"
+              ? "No open projects are assigned to you."
+              : "No projects here yet."
+          }
+          body={
+            status === "mine"
+              ? "Projects show up here once someone sets you as their owner."
+              : "Build a template first, then spin up projects from it in a couple of clicks."
+          }
           action={
             isAdmin(user)
               ? { href: "/projects/new", label: "Create a project" }
