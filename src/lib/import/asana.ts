@@ -122,9 +122,12 @@ export function parseAsanaCsv(text: string): AsanaPlan {
     if (sectionName && !sections.includes(sectionName)) sections.push(sectionName);
 
     if (!detectedProjectName) {
-      // The "Projects" column can hold several, comma separated. Take the first.
-      const projects = cell(row, columns.projects);
-      if (projects) detectedProjectName = projects.split(",")[0].trim() || null;
+      // Asana comma-separates this column when a task sits in several projects,
+      // but plenty of company names contain a comma too ("Candex Solutions,
+      // Inc."), and splitting on it silently truncates them. A per-project
+      // export — which is what this importer is for — only ever names one
+      // project, so take the cell whole and let the preview show the result.
+      detectedProjectName = cell(row, columns.projects) || null;
     }
 
     const assigneeName = cell(row, columns.assignee);
