@@ -26,6 +26,7 @@ export interface AsanaColumnMap {
 export interface PlannedTask {
   name: string;
   sectionName: string | null;
+  parentName: string | null;
   assigneeName: string;
   assigneeEmail: string;
   dueDate: Date | null;
@@ -153,6 +154,7 @@ export function parseAsanaCsv(text: string): AsanaPlan {
     tasks.push({
       name,
       sectionName,
+      parentName: cell(row, columns.parentTask) || null,
       assigneeName,
       assigneeEmail,
       dueDate: parseImportDate(cell(row, columns.dueDate)),
@@ -168,6 +170,33 @@ export function parseAsanaCsv(text: string): AsanaPlan {
       rowNumber: index + 2, // +1 for the header, +1 for 1-based counting
     });
   });
+
+  // Asana leaves Section/Column blank on subtasks, which would scatter them
+  // into an unsectioned pile away from the work they belong to. Give each one
+  // its parent's section so the imported project reads the way it did in Asana.
+  const sectionByTaskName = new Map(
+    tasks
+      .filter((t) => t.sectionName)
+      .map((t) => [t.name.trim().toLowerCase(), t.sectionName!]),
+  );
+  let inherited = 0;
+  for (const task of tasks) {
+    if (task.sectionName || !task.parentName) continue;
+    const parentSection = sectionByTaskName.get(
+      task.parentName.trim().toLowerCase(),
+    );
+    if (parentSection) {
+      task.sectionName = parentSection;
+      inherited += 1;
+    }
+  }
+  if (inherited > 0) {
+    warnings.push(
+      `${inherited} ${inherited === 1 ? "subtask was" : "subtasks were"} filed ` +
+        "under the section of their parent task, since Asana doesn't put " +
+        "subtasks in sections.",
+    );
+  }
 
   const subtaskCount = tasks.filter((t) => t.isSubtask).length;
   if (subtaskCount > 0) {
