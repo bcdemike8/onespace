@@ -280,6 +280,10 @@ function parseGroupedEverhourCsv(
     nonbillable: headers.findIndex((h) => /^non-?billable time$/i.test(h)),
     billingType: headers.findIndex((h) => /^billing type$/i.test(h)),
     leads: headers.findIndex((h) => /^leads?$/i.test(h)),
+    // Everhour can add a per-row date to this report. When it's there we use
+    // it and the month headings become mere grouping; without it the heading
+    // is the only date there is.
+    day: headers.findIndex((h) => /^(day|date)$/i.test(h)),
   };
 
   const entries: PlannedEntry[] = [];
@@ -290,6 +294,7 @@ function parseGroupedEverhourCsv(
   >();
   const partnerSet = new Set<string>();
 
+  const hasDayColumn = col.day >= 0;
   let month: Date | null = null;
   let lastPartner = "";
   let earliest: Date | null = null;
@@ -341,11 +346,14 @@ function parseGroupedEverhourCsv(
     const leadRaw = col.leads >= 0 ? (row[col.leads] ?? "").trim() : "";
     const leadName = ROLLUP.test(leadRaw) ? "" : leadRaw.split(",")[0].trim();
 
-    if (!month || (!billableHours && !nonBillableHours)) {
+    const rowDate = hasDayColumn ? parseImportDate(row[col.day] ?? "") : null;
+    const entryDate = rowDate ?? month;
+
+    if (!entryDate || (!billableHours && !nonBillableHours)) {
       skippedRows += 1;
       return;
     }
-    if ((opts.from && month < opts.from) || (opts.to && month > opts.to)) {
+    if ((opts.from && entryDate < opts.from) || (opts.to && entryDate > opts.to)) {
       outOfRange += 1;
       return;
     }
@@ -362,7 +370,7 @@ function parseGroupedEverhourCsv(
       const minutes = Math.round(hours * 60);
 
       entries.push({
-        date: month,
+        date: entryDate,
         memberName,
         memberEmail: "",
         clientName: "",
@@ -379,8 +387,8 @@ function parseGroupedEverhourCsv(
       });
 
       totalMinutes += minutes;
-      if (!earliest || month < earliest) earliest = month;
-      if (!latest || month > latest) latest = month;
+      if (!earliest || entryDate < earliest) earliest = entryDate;
+      if (!latest || entryDate > latest) latest = entryDate;
 
       if (memberName) {
         const k = memberName.toLowerCase();
@@ -407,11 +415,14 @@ function parseGroupedEverhourCsv(
     }
   });
 
-  warnings.push(
-    "This is a month-grouped report, so it carries no day-level dates. Every " +
-      "entry is filed on the first of its month — month, quarter and year " +
-      "reports will be exact, weekly ones won't be meaningful.",
-  );
+  if (!hasDayColumn) {
+    warnings.push(
+      "This report has no per-row date column, so every entry is filed on the " +
+        "first of its month. Month, quarter and year reports will be exact, " +
+        "weekly ones won't be meaningful. Re-export with the Day column " +
+        "included to get real dates.",
+    );
+  }
   warnings.push(
     "It has no rate columns either, so each person's current cost and bill " +
       "rates are applied. Set those under People before importing.",
@@ -431,7 +442,7 @@ function parseGroupedEverhourCsv(
 
   return {
     columns: {
-      date: "month blocks",
+      date: hasDayColumn ? (headers[col.day] ?? "Day") : "month blocks",
       member: headers[col.member] ?? null,
       memberEmail: null,
       client: null,
@@ -447,7 +458,7 @@ function parseGroupedEverhourCsv(
     members: [...memberMap.values()].sort((a, b) => b.minutes - a.minutes),
     projects: [...projectMap.values()].sort((a, b) => b.minutes - a.minutes),
     partners: [...partnerSet].sort(),
-    monthly: true,
+    monthly: !hasDayColumn,
     earliest,
     latest,
     totalMinutes,

@@ -356,6 +356,8 @@ export interface EverhourPreview {
     monthly: boolean;
     partners: string[];
     leadCount: number;
+    /** Time already loaded by a previous import over the same days. */
+    existingImported: { count: number; minutes: number };
   };
   people?: PersonMatch[];
   projects?: {
@@ -405,7 +407,7 @@ export async function previewEverhourImportAction(
       };
     }
 
-    const [people, projects] = await Promise.all([
+    const [people, projects, priorImport] = await Promise.all([
       matchPeople(
         plan.members.map((m) => ({
           name: m.name,
@@ -414,6 +416,16 @@ export async function previewEverhourImportAction(
         })),
       ),
       matchProjects(plan),
+      plan.earliest && plan.latest
+        ? db.timeEntry.aggregate({
+            where: {
+              source: "IMPORT",
+              date: { gte: plan.earliest, lte: plan.latest },
+            },
+            _count: { _all: true },
+            _sum: { minutes: true },
+          })
+        : Promise.resolve(null),
     ]);
 
     return {
@@ -430,6 +442,10 @@ export async function previewEverhourImportAction(
         monthly: plan.monthly,
         partners: plan.partners,
         leadCount: plan.projects.filter((pr) => pr.leadName).length,
+        existingImported: {
+          count: priorImport?._count._all ?? 0,
+          minutes: priorImport?._sum.minutes ?? 0,
+        },
         mappedColumns: [
           { field: "Date", column: plan.columns.date },
           { field: "Member", column: plan.columns.member },
@@ -457,6 +473,13 @@ export interface EverhourCommitOptions {
   toISO: string;
   createMissingProjects: boolean;
   useExportedRates: boolean;
+  /**
+   * Clear time from earlier imports across the days this file covers, before
+   * loading it. For re-importing the same period at better resolution — a
+   * report re-exported with real dates rather than month headings, where the
+   * usual row-matching can't recognise the old rows as the same work.
+   */
+  replaceImported: boolean;
 }
 
 export async function commitEverhourImportAction(
@@ -471,6 +494,20 @@ export async function commitEverhourImportAction(
   });
   if (plan.entries.length === 0) {
     return { ok: false, error: "No usable time entries in that range." };
+  }
+
+  // Only ever removes IMPORT rows, and only across the days this file covers:
+  // hours typed into a timesheet, logged from a project page or captured by a
+  // stopwatch are never touched.
+  let replaced = 0;
+  if (options.replaceImported && plan.earliest && plan.latest) {
+    const { count } = await db.timeEntry.deleteMany({
+      where: {
+        source: "IMPORT",
+        date: { gte: plan.earliest, lte: plan.latest },
+      },
+    });
+    replaced = count;
   }
 
   const users = await db.user.findMany({
@@ -720,6 +757,12 @@ export async function commitEverhourImportAction(
     notes.push(
       `${duplicates} ${duplicates === 1 ? "entry was" : "entries were"} already ` +
         "imported and left alone.",
+    );
+  }
+  if (replaced > 0) {
+    notes.push(
+      `${replaced} ${replaced === 1 ? "entry" : "entries"} from an earlier ` +
+        "import were cleared first. Time logged in OneSpace itself was untouched.",
     );
   }
 

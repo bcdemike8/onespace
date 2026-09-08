@@ -531,6 +531,7 @@ function EverhourImport({ thisYearStart }: { thisYearStart: string }) {
   const [toISO, setToISO] = useState("");
   const [createMissingProjects, setCreateMissingProjects] = useState(false);
   const [useExportedRates, setUseExportedRates] = useState(true);
+  const [replaceImported, setReplaceImported] = useState(false);
 
   const runPreview = (content: string, from: string, to: string) => {
     start(async () => {
@@ -763,6 +764,33 @@ function EverhourImport({ thisYearStart }: { thisYearStart: string }) {
               </span>
             </label>
 
+            {preview.plan.existingImported.count > 0 ? (
+              <label className="flex items-start gap-2 rounded-lg border border-warn-500/30 bg-warn-50 p-3 text-sm text-ink-700">
+                <input
+                  type="checkbox"
+                  checked={replaceImported}
+                  onChange={(e) => setReplaceImported(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-ink-300"
+                />
+                <span>
+                  Replace the {preview.plan.existingImported.count} entries
+                  {" "}({formatHours(preview.plan.existingImported.minutes)}h) a
+                  previous import already put on these days
+                  <span className="block text-xs text-warn-700">
+                    Tick this when re-importing the same period — for instance a
+                    report re-exported with real dates instead of month
+                    headings, where the old rows can&apos;t be matched to the
+                    new ones. Leave it off and you&apos;ll get both.
+                  </span>
+                  <span className="block text-xs text-ink-500">
+                    Only removes time that came from an import. Anything logged
+                    in OneSpace — timesheets, project pages, stopwatches — is
+                    left alone.
+                  </span>
+                </span>
+              </label>
+            ) : null}
+
             <label className="flex items-start gap-2 text-sm text-ink-700">
               <input
                 type="checkbox"
@@ -797,6 +825,7 @@ function EverhourImport({ thisYearStart }: { thisYearStart: string }) {
                       toISO,
                       createMissingProjects,
                       useExportedRates,
+                      replaceImported,
                     }),
                   );
                 })
