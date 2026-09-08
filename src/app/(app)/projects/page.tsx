@@ -11,6 +11,7 @@ import {
   ProjectStatusChip,
 } from "@/components/ui";
 import { AutoSubmitSelect } from "@/components/AutoSubmitSelect";
+import { SortHeader, type SortDir } from "@/components/SortHeader";
 import { setProjectOwnerAction } from "@/app/actions/projects";
 
 export const dynamic = "force-dynamic";
@@ -25,18 +26,33 @@ const STATUS_TABS: { value: string; label: string }[] = [
   { value: "all", label: "All" },
 ];
 
+const BUDGET_FILTERS: { value: string; label: string }[] = [
+  { value: "", label: "Any budget" },
+  { value: "over", label: "Over budget" },
+  { value: "risk", label: "85% or more" },
+  { value: "none", label: "No budget set" },
+  { value: "under", label: "Under 85%" },
+];
+
+type SortColumn = "project" | "owner" | "due" | "open" | "hours" | "budget";
+
 export default async function ProjectsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; client?: string }>;
+  searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const user = await requireUser();
   const admin = isAdmin(user);
   const params = await searchParams;
+
   const status = params.status ?? "open";
   const clientId = params.client ?? "";
+  const partnerId = params.partner ?? "";
+  const ownerId = params.owner ?? "";
+  const budget = params.budget ?? "";
+  const sort = (params.sort ?? "due") as SortColumn;
+  const dir: SortDir = params.dir === "desc" ? "desc" : "asc";
 
-  // "Mine" is the same open list, narrowed to what this person owns.
   const statusWhere =
     status === "all"
       ? {}
@@ -44,11 +60,24 @@ export default async function ProjectsPage({
         ? { status: { in: ["ACTIVE", "ON_HOLD"] as ProjectStatus[] } }
         : { status: status as ProjectStatus };
 
-  const ownerWhere = status === "mine" ? { ownerId: user.id } : {};
+  // The Mine tab and the owner dropdown are the same filter; the tab wins.
+  const owner =
+    status === "mine"
+      ? { ownerId: user.id }
+      : ownerId === "none"
+        ? { ownerId: null }
+        : ownerId
+          ? { ownerId }
+          : {};
 
-  const [projects, clients, people] = await Promise.all([
+  const [projects, clients, partners, people] = await Promise.all([
     db.project.findMany({
-      where: { ...statusWhere, ...ownerWhere, ...(clientId ? { clientId } : {}) },
+      where: {
+        ...statusWhere,
+        ...owner,
+        ...(clientId ? { clientId } : {}),
+        ...(partnerId ? { partnerId } : {}),
+      },
       select: {
         id: true,
         name: true,
@@ -63,9 +92,13 @@ export default async function ProjectsPage({
         owner: { select: { name: true } },
         _count: { select: { tasks: true } },
       },
-      orderBy: [{ status: "asc" }, { dueDate: "asc" }, { name: "asc" }],
     }),
     db.client.findMany({
+      where: { archivedAt: null },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    db.partner.findMany({
       where: { archivedAt: null },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
@@ -95,19 +128,80 @@ export default async function ProjectsPage({
   const minutes = new Map(
     minutesByProject.map((r) => [r.projectId, r._sum.minutes ?? 0]),
   );
-  const openTasks = new Map(
-    openTaskCounts.map((r) => [r.projectId, r._count._all]),
-  );
-
+  const openTasks = new Map(openTaskCounts.map((r) => [r.projectId, r._count._all]));
   const now = today();
+
+  // Hours, open tasks and budget burn are all derived, so filtering and
+  // sorting on them happens here rather than in the query.
+  let rows = projects.map((p) => {
+    const logged = minutes.get(p.id) ?? 0;
+    const usedPct = p.budgetHours ? (logged / 60 / p.budgetHours) * 100 : null;
+    return {
+      ...p,
+      logged,
+      open: openTasks.get(p.id) ?? 0,
+      usedPct,
+    };
+  });
+
+  if (budget === "over") rows = rows.filter((r) => r.usedPct !== null && r.usedPct > 100);
+  if (budget === "risk") rows = rows.filter((r) => r.usedPct !== null && r.usedPct >= 85);
+  if (budget === "under") rows = rows.filter((r) => r.usedPct !== null && r.usedPct < 85);
+  if (budget === "none") rows = rows.filter((r) => r.usedPct === null);
+
+  const factor = dir === "asc" ? 1 : -1;
+  // Projects with nothing in the sorted column sink to the bottom either way,
+  // rather than crowding the top of a descending sort.
+  const nullsLast = (a: number | null, b: number | null) => {
+    if (a === null && b === null) return 0;
+    if (a === null) return 1;
+    if (b === null) return -1;
+    return (a - b) * factor;
+  };
+
+  rows.sort((a, b) => {
+    switch (sort) {
+      case "project":
+        return a.name.localeCompare(b.name) * factor;
+      case "owner":
+        return (
+          (a.owner?.name ?? "~").localeCompare(b.owner?.name ?? "~") * factor ||
+          a.name.localeCompare(b.name)
+        );
+      case "open":
+        return (a.open - b.open) * factor || a.name.localeCompare(b.name);
+      case "hours":
+        return (a.logged - b.logged) * factor || a.name.localeCompare(b.name);
+      case "budget":
+        return nullsLast(a.usedPct, b.usedPct) || a.name.localeCompare(b.name);
+      case "due":
+      default:
+        return (
+          nullsLast(
+            a.dueDate ? a.dueDate.getTime() : null,
+            b.dueDate ? b.dueDate.getTime() : null,
+          ) || a.name.localeCompare(b.name)
+        );
+    }
+  });
+
+  const query = (overrides: Record<string, string | undefined>) => {
+    const q = new URLSearchParams();
+    const merged = { status, client: clientId, partner: partnerId, owner: ownerId, budget, sort, dir, ...overrides };
+    for (const [k, v] of Object.entries(merged)) if (v) q.set(k, String(v));
+    return `/projects?${q.toString()}`;
+  };
+
+  const filtered = Boolean(clientId || partnerId || ownerId || budget);
+  const totalHours = rows.reduce((s, r) => s + r.logged, 0);
 
   return (
     <div>
       <PageHeader
         title="Projects"
-        subtitle="Every engagement, its hours and how much of the budget is gone."
+        subtitle={`${rows.length} ${rows.length === 1 ? "project" : "projects"} · ${formatHours(totalHours)}h logged against them`}
         actions={
-          isAdmin(user) ? (
+          admin ? (
             <Link href="/projects/new" className="btn-primary">
               New project
             </Link>
@@ -115,61 +209,111 @@ export default async function ProjectsPage({
         }
       />
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <div className="flex flex-wrap gap-1">
-          {STATUS_TABS.map((tab) => {
-            const href = `/projects?status=${tab.value}${
-              clientId ? `&client=${clientId}` : ""
-            }`;
-            const active = status === tab.value;
-            return (
-              <Link
-                key={tab.value}
-                href={href}
-                className={`rounded-lg px-2.5 py-1.5 text-sm font-medium ${
-                  active
-                    ? "bg-ink-900 text-white"
-                    : "text-ink-600 hover:bg-ink-100"
-                }`}
-              >
-                {tab.label}
-              </Link>
-            );
-          })}
-        </div>
-
-        {clients.length > 0 ? (
-          <form className="ml-auto flex items-end gap-2">
-            <input type="hidden" name="status" value={status} />
-            <select name="client" defaultValue={clientId} className="input w-52">
-              <option value="">All clients</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            <button type="submit" className="btn-secondary">
-              Filter
-            </button>
-          </form>
-        ) : null}
+      <div className="mb-4 flex flex-wrap gap-1">
+        {STATUS_TABS.map((tab) => (
+          <Link
+            key={tab.value}
+            href={query({ status: tab.value, owner: tab.value === "mine" ? "" : ownerId })}
+            className={`rounded-lg px-2.5 py-1.5 text-sm font-medium ${
+              status === tab.value
+                ? "bg-ink-900 text-white"
+                : "text-ink-600 hover:bg-ink-100"
+            }`}
+          >
+            {tab.label}
+          </Link>
+        ))}
       </div>
 
-      {projects.length === 0 ? (
+      <form className="card mb-4 flex flex-wrap items-end gap-3 p-4">
+        <input type="hidden" name="status" value={status} />
+        <input type="hidden" name="sort" value={sort} />
+        <input type="hidden" name="dir" value={dir} />
+
+        <div className="min-w-[10rem] flex-1">
+          <label className="label" htmlFor="f-owner">
+            Owner
+          </label>
+          <select id="f-owner" name="owner" defaultValue={ownerId} className="input">
+            <option value="">Anyone</option>
+            <option value="none">Unassigned</option>
+            {people.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="min-w-[10rem] flex-1">
+          <label className="label" htmlFor="f-client">
+            Client
+          </label>
+          <select id="f-client" name="client" defaultValue={clientId} className="input">
+            <option value="">All clients</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="min-w-[10rem] flex-1">
+          <label className="label" htmlFor="f-partner">
+            Partner
+          </label>
+          <select id="f-partner" name="partner" defaultValue={partnerId} className="input">
+            <option value="">All partners</option>
+            {partners.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="min-w-[10rem] flex-1">
+          <label className="label" htmlFor="f-budget">
+            Budget
+          </label>
+          <select id="f-budget" name="budget" defaultValue={budget} className="input">
+            {BUDGET_FILTERS.map((b) => (
+              <option key={b.value} value={b.value}>
+                {b.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <button type="submit" className="btn-secondary">
+          Apply
+        </button>
+        {filtered ? (
+          <Link href={query({ client: "", partner: "", owner: "", budget: "" })} className="btn-ghost">
+            Clear
+          </Link>
+        ) : null}
+      </form>
+
+      {rows.length === 0 ? (
         <EmptyState
           title={
             status === "mine"
               ? "No open projects are assigned to you."
-              : "No projects here yet."
+              : filtered
+                ? "Nothing matches those filters."
+                : "No projects here yet."
           }
           body={
             status === "mine"
               ? "Projects show up here once someone sets you as their owner."
-              : "Build a template first, then spin up projects from it in a couple of clicks."
+              : filtered
+                ? "Try clearing a filter, or widening the status tab."
+                : "Build a template first, then spin up projects from it in a couple of clicks."
           }
           action={
-            isAdmin(user)
+            admin && !filtered && status !== "mine"
               ? { href: "/projects/new", label: "Create a project" }
               : undefined
           }
@@ -177,26 +321,63 @@ export default async function ProjectsPage({
       ) : (
         <div className="card overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[52rem]">
+            <table className="w-full min-w-[58rem]">
               <thead className="border-b border-ink-200 bg-ink-50">
                 <tr>
-                  <th className="th">Project</th>
-                  <th className="th">Owner</th>
+                  <SortHeader
+                    label="Project"
+                    column="project"
+                    activeColumn={sort}
+                    activeDir={dir}
+                    href={(c, d) => query({ sort: c, dir: d })}
+                  />
+                  <SortHeader
+                    label="Owner"
+                    column="owner"
+                    activeColumn={sort}
+                    activeDir={dir}
+                    href={(c, d) => query({ sort: c, dir: d })}
+                  />
                   <th className="th">Status</th>
-                  <th className="th">Due</th>
-                  <th className="th text-right">Open tasks</th>
-                  <th className="th text-right">Hours</th>
-                  <th className="th w-48">Budget used</th>
+                  <SortHeader
+                    label="Due"
+                    column="due"
+                    activeColumn={sort}
+                    activeDir={dir}
+                    href={(c, d) => query({ sort: c, dir: d })}
+                  />
+                  <SortHeader
+                    label="Open tasks"
+                    column="open"
+                    activeColumn={sort}
+                    activeDir={dir}
+                    defaultDir="desc"
+                    align="right"
+                    href={(c, d) => query({ sort: c, dir: d })}
+                  />
+                  <SortHeader
+                    label="Hours"
+                    column="hours"
+                    activeColumn={sort}
+                    activeDir={dir}
+                    defaultDir="desc"
+                    align="right"
+                    href={(c, d) => query({ sort: c, dir: d })}
+                  />
+                  <SortHeader
+                    label="Budget used"
+                    column="budget"
+                    activeColumn={sort}
+                    activeDir={dir}
+                    defaultDir="desc"
+                    href={(c, d) => query({ sort: c, dir: d })}
+                  />
                 </tr>
               </thead>
               <tbody className="divide-y divide-ink-100">
-                {projects.map((project) => {
-                  const logged = minutes.get(project.id) ?? 0;
-                  const loggedHours = logged / 60;
+                {rows.map((project) => {
                   const overdue =
-                    project.dueDate &&
-                    project.dueDate < now &&
-                    project.status === "ACTIVE";
+                    project.dueDate && project.dueDate < now && project.status === "ACTIVE";
 
                   return (
                     <tr key={project.id} className="hover:bg-ink-50/60">
@@ -237,9 +418,11 @@ export default async function ProjectsPage({
                           </span>
                         )}
                       </td>
+
                       <td className="td">
                         <ProjectStatusChip status={project.status} />
                       </td>
+
                       <td className="td text-sm">
                         {project.dueDate ? (
                           <span className={overdue ? "font-medium text-bad-700" : ""}>
@@ -252,27 +435,25 @@ export default async function ProjectsPage({
                           <span className="text-ink-400">—</span>
                         )}
                       </td>
+
                       <td className="td text-right tnum">
-                        {openTasks.get(project.id) ?? 0}
-                        <span className="text-ink-400">
-                          /{project._count.tasks}
-                        </span>
+                        {project.open}
+                        <span className="text-ink-400">/{project._count.tasks}</span>
                       </td>
+
                       <td className="td text-right tnum font-medium">
-                        {formatHours(logged)}
+                        {formatHours(project.logged)}
                         {project.budgetHours ? (
-                          <span className="text-ink-400">
-                            {" "}
-                            / {project.budgetHours}
-                          </span>
+                          <span className="text-ink-400"> / {project.budgetHours}</span>
                         ) : null}
                       </td>
-                      <td className="td">
+
+                      <td className="td w-48">
                         {project.budgetHours ? (
                           <ProgressBar
-                            value={loggedHours}
+                            value={project.logged / 60}
                             max={project.budgetHours}
-                            label={`${pct(loggedHours, project.budgetHours)}% of ${
+                            label={`${pct(project.logged / 60, project.budgetHours)}% of ${
                               project.budgetHours
                             }h${
                               project.budgetCents
@@ -281,9 +462,7 @@ export default async function ProjectsPage({
                             }`}
                           />
                         ) : (
-                          <span className="text-xs text-ink-400">
-                            No budget set
-                          </span>
+                          <span className="text-xs text-ink-400">No budget set</span>
                         )}
                       </td>
                     </tr>
