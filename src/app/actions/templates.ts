@@ -323,20 +323,34 @@ export async function saveProjectAsTemplateAction(formData: FormData) {
   // stamped out against any future kickoff date.
   const start = project.startDate ?? project.createdAt;
 
-  await db.templateTask.createMany({
-    data: project.tasks.map((t) => ({
-      templateId: template.id,
-      sectionId: t.sectionId ? (sectionIdMap.get(t.sectionId) ?? null) : null,
-      name: t.name,
-      description: t.description,
-      defaultAssigneeId: t.assigneeId,
-      estimatedHours: t.estimatedHours,
-      orderIndex: t.orderIndex,
-      offsetDays: t.dueDate
-        ? Math.round((t.dueDate.getTime() - start.getTime()) / 86_400_000)
-        : null,
-    })),
+  const row = (t: (typeof project.tasks)[number], parentId: string | null) => ({
+    templateId: template.id,
+    sectionId: t.sectionId ? (sectionIdMap.get(t.sectionId) ?? null) : null,
+    parentId,
+    name: t.name,
+    description: t.description,
+    defaultAssigneeId: t.assigneeId,
+    estimatedHours: t.estimatedHours,
+    orderIndex: t.orderIndex,
+    offsetDays: t.dueDate
+      ? Math.round((t.dueDate.getTime() - start.getTime()) / 86_400_000)
+      : null,
   });
+
+  // Same two passes as instantiation, in reverse: the copies need new ids
+  // before anything can point at them.
+  const taskIdMap = new Map<string, string>();
+  for (const t of project.tasks.filter((t) => !t.parentId)) {
+    const created = await db.templateTask.create({ data: row(t, null) });
+    taskIdMap.set(t.id, created.id);
+  }
+
+  const children = project.tasks.filter((t) => t.parentId);
+  if (children.length > 0) {
+    await db.templateTask.createMany({
+      data: children.map((t) => row(t, taskIdMap.get(t.parentId as string) ?? null)),
+    });
+  }
 
   refresh();
   redirect(`/templates/${template.id}`);

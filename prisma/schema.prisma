@@ -296,12 +296,19 @@ model TemplateTask {
   offsetDays     Int?
   estimatedHours Float?
 
+  // Mirrors Task: one level of nesting, so a template can carry the checklist
+  // under a step rather than flattening it on the way into a project.
+  parentId String?
+  parent   TemplateTask?  @relation("TemplateSubtasks", fields: [parentId], references: [id], onDelete: Cascade)
+  subtasks TemplateTask[] @relation("TemplateSubtasks")
+
   defaultAssigneeId String?
   defaultAssignee   User?   @relation("TemplateDefaultAssignee", fields: [defaultAssigneeId], references: [id], onDelete: SetNull)
 
   orderIndex Int @default(0)
 
   @@index([templateId, orderIndex])
+  @@index([parentId])
 }
 
 // ------------------------------------------------------------------- time

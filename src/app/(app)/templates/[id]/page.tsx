@@ -72,8 +72,19 @@ export default async function TemplatePage({
     })),
   ];
   const byId = new Map(groups.map((g) => [g.id, g]));
+
+  // Subtasks sit directly under their parent, as they will once the template
+  // is stamped into a project.
+  const childrenOf = new Map<string, typeof template.tasks>();
   for (const task of template.tasks) {
-    (byId.get(task.sectionId) ?? groups[0]).tasks.push(task);
+    if (!task.parentId) continue;
+    childrenOf.set(task.parentId, [...(childrenOf.get(task.parentId) ?? []), task]);
+  }
+  for (const task of template.tasks) {
+    if (task.parentId) continue;
+    const group = byId.get(task.sectionId) ?? groups[0];
+    group.tasks.push(task);
+    for (const child of childrenOf.get(task.id) ?? []) group.tasks.push(child);
   }
 
   return (
@@ -146,7 +157,11 @@ export default async function TemplatePage({
                     {group.tasks.map((task) => (
                       <li
                         key={task.id}
-                        className="group flex items-start gap-3 px-4 py-2.5"
+                        className={`group flex items-start gap-3 py-2.5 pr-4 ${
+                          task.parentId
+                            ? "border-l-2 border-ink-200 bg-ink-50/40 pl-9"
+                            : "pl-4"
+                        }`}
                       >
                         <div className="min-w-0 flex-1">
                           <div className="text-sm font-medium text-ink-900">

@@ -134,18 +134,34 @@ export async function createProjectAction(
       sectionIdMap.set(section.id, created.id);
     }
 
-    await db.task.createMany({
-      data: template.tasks.map((t) => ({
-        projectId: project.id,
-        sectionId: t.sectionId ? (sectionIdMap.get(t.sectionId) ?? null) : null,
-        name: t.name,
-        description: t.description,
-        assigneeId: t.defaultAssigneeId,
-        estimatedHours: t.estimatedHours,
-        orderIndex: t.orderIndex,
-        dueDate: t.offsetDays === null ? null : addDays(start, t.offsetDays),
-      })),
+    // Parents first, so their subtasks have a real id to point at. Template
+    // task ids don't survive the copy, so the mapping is kept explicitly.
+    const row = (t: (typeof template.tasks)[number], parentId: string | null) => ({
+      projectId: project.id,
+      sectionId: t.sectionId ? (sectionIdMap.get(t.sectionId) ?? null) : null,
+      parentId,
+      name: t.name,
+      description: t.description,
+      assigneeId: t.defaultAssigneeId,
+      estimatedHours: t.estimatedHours,
+      orderIndex: t.orderIndex,
+      dueDate: t.offsetDays === null ? null : addDays(start, t.offsetDays),
     });
+
+    const taskIdMap = new Map<string, string>();
+    for (const t of template.tasks.filter((t) => !t.parentId)) {
+      const created = await db.task.create({ data: row(t, null) });
+      taskIdMap.set(t.id, created.id);
+    }
+
+    const children = template.tasks.filter((t) => t.parentId);
+    if (children.length > 0) {
+      await db.task.createMany({
+        data: children.map((t) =>
+          row(t, taskIdMap.get(t.parentId as string) ?? null),
+        ),
+      });
+    }
   }
 
   // Steps the template didn't name an owner for fall to the project's owner.

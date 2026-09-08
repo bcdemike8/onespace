@@ -29,12 +29,42 @@ export function NewProjectForm({
   defaultStart: string;
 }) {
   const [state, action] = useActionState(createProjectAction, {});
-  const [templateId, setTemplateId] = useState(templates[0]?.id ?? "");
+  const [templateId, setTemplateId] = useState("");
 
   const selected = useMemo(
     () => templates.find((t) => t.id === templateId) ?? null,
     [templates, templateId],
   );
+
+  // "Amplify Core (1-19 seats)" becomes the option "1-19 seats" under an
+  // "Amplify Core" heading, so eight near-identical SOW names read as three
+  // families rather than eight strings to compare character by character.
+  // Only worth doing where a family actually has siblings — a lone template
+  // keeps its full name, which also stops a "(2)" dedupe suffix from being
+  // mistaken for a variant.
+  const grouped = useMemo(() => {
+    const split = (name: string) => /^(.*?)\s*\(([^()]*)\)\s*$/.exec(name);
+
+    const familySize = new Map<string, number>();
+    for (const t of templates) {
+      const m = split(t.name);
+      if (m) familySize.set(m[1], (familySize.get(m[1]) ?? 0) + 1);
+    }
+
+    const out = new Map<string, (TemplateOption & { optionLabel: string })[]>();
+    for (const t of templates) {
+      const m = split(t.name);
+      const family = m && (familySize.get(m[1]) ?? 0) > 1;
+      const group = family ? (m as RegExpExecArray)[1] : "Other templates";
+      const optionLabel = family ? (m as RegExpExecArray)[2] : t.name;
+      out.set(group, [...(out.get(group) ?? []), { ...t, optionLabel }]);
+    }
+
+    // Families first, the catch-all last.
+    return [...out.entries()].sort(([a], [b]) =>
+      a === "Other templates" ? 1 : b === "Other templates" ? -1 : a.localeCompare(b),
+    );
+  }, [templates]);
 
   return (
     <form action={action} className="space-y-6">
@@ -43,73 +73,55 @@ export function NewProjectForm({
           Start from a template
         </h2>
         <p className="mb-4 text-sm text-ink-500">
-          Every task, owner, estimate and due-date offset comes across. Due
-          dates are counted forward from the start date you pick below.
+          Every step, subtask, owner, estimate and due-date offset comes across.
+          Due dates are counted forward from the start date you pick below.
         </p>
 
-        <div className="grid gap-2 sm:grid-cols-2">
-          <label
-            className={`flex cursor-pointer flex-col rounded-lg border p-3 transition-colors ${
-              templateId === ""
-                ? "border-brand-500 bg-brand-50"
-                : "border-ink-200 hover:border-ink-300"
-            }`}
-          >
-            <span className="flex items-center gap-2">
-              <input
-                type="radio"
-                name="templateId"
-                value=""
-                checked={templateId === ""}
-                onChange={() => setTemplateId("")}
-                className="h-4 w-4"
-              />
-              <span className="text-sm font-medium text-ink-900">
-                Blank project
-              </span>
-            </span>
-            <span className="mt-1 pl-6 text-xs text-ink-500">
-              Start empty and add your own tasks.
-            </span>
-          </label>
-
-          {templates.map((template) => (
-            <label
-              key={template.id}
-              className={`flex cursor-pointer flex-col rounded-lg border p-3 transition-colors ${
-                templateId === template.id
-                  ? "border-brand-500 bg-brand-50"
-                  : "border-ink-200 hover:border-ink-300"
-              }`}
-            >
-              <span className="flex items-center gap-2">
-                <input
-                  type="radio"
-                  name="templateId"
-                  value={template.id}
-                  checked={templateId === template.id}
-                  onChange={() => setTemplateId(template.id)}
-                  className="h-4 w-4"
-                />
-                <span className="text-sm font-medium text-ink-900">
-                  {template.name}
-                </span>
-              </span>
-              <span className="mt-1 pl-6 text-xs text-ink-500">
-                {template.taskCount} tasks
-                {template.totalHours > 0 ? ` · ${template.totalHours}h estimated` : ""}
-                {template.spanDays !== null ? ` · runs ${template.spanDays} days` : ""}
-              </span>
-            </label>
+        <label className="label" htmlFor="templateId">
+          Template
+        </label>
+        <select
+          id="templateId"
+          name="templateId"
+          value={templateId}
+          onChange={(e) => setTemplateId(e.target.value)}
+          className="input"
+        >
+          <option value="">Blank project — start empty</option>
+          {grouped.map(([group, items]) => (
+            <optgroup key={group} label={group}>
+              {items.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.optionLabel}
+                </option>
+              ))}
+            </optgroup>
           ))}
-        </div>
+        </select>
 
-        {templates.length === 0 ? (
-          <p className="mt-3 text-sm text-ink-500">
-            No templates yet — you can create this project blank and save it as
-            a template once it looks right.
+        {selected ? (
+          <div className="mt-3 rounded-lg border border-ink-200 bg-ink-50 p-3">
+            <p className="text-sm font-medium text-ink-900">{selected.name}</p>
+            {selected.description ? (
+              <p className="mt-0.5 text-xs text-ink-600">{selected.description}</p>
+            ) : null}
+            <p className="mt-1 text-xs text-ink-500">
+              {selected.taskCount} steps
+              {selected.totalHours > 0
+                ? ` · ${selected.totalHours}h budgeted`
+                : ""}
+              {selected.spanDays !== null
+                ? ` · runs ${selected.spanDays} days`
+                : ""}
+            </p>
+          </div>
+        ) : (
+          <p className="mt-3 text-xs text-ink-500">
+            {templates.length === 0
+              ? "No templates yet — create this project blank and save it as a template once it looks right."
+              : "No template: the project starts with no sections or steps."}
           </p>
-        ) : null}
+        )}
       </section>
 
       <section className="card space-y-4 p-5">
