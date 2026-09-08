@@ -21,6 +21,11 @@ import {
 import { TimeEntryRow } from "@/components/TimeEntryRow";
 import { saveProjectAsTemplateAction } from "@/app/actions/templates";
 import { ProjectSettings } from "./ProjectSettings";
+import {
+  StatusUpdates,
+  type StatusUpdateView,
+} from "./StatusUpdates";
+import { HealthChip } from "@/components/HealthChip";
 
 export const dynamic = "force-dynamic";
 
@@ -41,6 +46,10 @@ export default async function ProjectPage({
       owner: { select: { name: true } },
       template: { select: { id: true, name: true } },
       sections: { orderBy: { orderIndex: "asc" } },
+      statusUpdates: {
+        orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+        include: { author: { select: { name: true } } },
+      },
       tasks: {
         orderBy: [{ orderIndex: "asc" }, { createdAt: "asc" }],
         select: {
@@ -145,6 +154,16 @@ export default async function ProjectPage({
 
   const openTasks = project.tasks.filter((t) => t.status !== "DONE");
 
+  const updates: StatusUpdateView[] = project.statusUpdates.map((u) => ({
+    id: u.id,
+    health: u.health,
+    note: u.note,
+    dateLabel: formatMedium(u.date),
+    authorName: u.author?.name ?? "Someone",
+    canDelete: admin || u.authorId === user.id,
+  }));
+  const [currentUpdate, ...olderUpdates] = updates;
+
   return (
     <div>
       <PageHeader
@@ -152,6 +171,7 @@ export default async function ProjectPage({
         subtitle={
           <span className="flex flex-wrap items-center gap-2">
             <ProjectStatusChip status={project.status} />
+            <HealthChip health={currentUpdate?.health ?? null} />
             {project.client ? <span>{project.client.name}</span> : null}
             {project.partner ? <span>· via {project.partner.name}</span> : null}
             {project.owner ? <span>· Owner: {project.owner.name}</span> : null}
@@ -289,6 +309,13 @@ export default async function ProjectPage({
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
+          <StatusUpdates
+            projectId={project.id}
+            today={toISODate(today())}
+            current={currentUpdate ?? null}
+            history={olderUpdates}
+          />
+
           {visibleGroups.map((group) => (
             <section key={group.id ?? "none"} className="card overflow-hidden">
               <div className="flex items-center justify-between gap-2 border-b border-ink-200 bg-ink-50 px-4 py-2">

@@ -8,10 +8,10 @@ import {
   EmptyState,
   PageHeader,
   ProgressBar,
-  ProjectStatusChip,
 } from "@/components/ui";
 import { AutoSubmitSelect } from "@/components/AutoSubmitSelect";
 import { SortHeader, type SortDir } from "@/components/SortHeader";
+import { HealthChip } from "@/components/HealthChip";
 import { setProjectOwnerAction } from "@/app/actions/projects";
 
 export const dynamic = "force-dynamic";
@@ -34,7 +34,30 @@ const BUDGET_FILTERS: { value: string; label: string }[] = [
   { value: "under", label: "Under 85%" },
 ];
 
-type SortColumn = "project" | "owner" | "due" | "open" | "hours" | "budget";
+const HEALTH_FILTERS: { value: string; label: string }[] = [
+  { value: "", label: "Any status" },
+  { value: "OFF_TRACK", label: "Off track" },
+  { value: "AT_RISK", label: "At risk" },
+  { value: "ON_TRACK", label: "On track" },
+  { value: "none", label: "No update yet" },
+  { value: "attention", label: "At risk or off track" },
+];
+
+/** How health sorts: worst first, then anything never updated. */
+const HEALTH_RANK: Record<string, number> = {
+  OFF_TRACK: 0,
+  AT_RISK: 1,
+  ON_TRACK: 2,
+};
+
+type SortColumn =
+  | "project"
+  | "owner"
+  | "health"
+  | "due"
+  | "open"
+  | "hours"
+  | "budget";
 
 export default async function ProjectsPage({
   searchParams,
@@ -50,6 +73,7 @@ export default async function ProjectsPage({
   const partnerId = params.partner ?? "";
   const ownerId = params.owner ?? "";
   const budget = params.budget ?? "";
+  const health = params.health ?? "";
   const sort = (params.sort ?? "due") as SortColumn;
   const dir: SortDir = params.dir === "desc" ? "desc" : "asc";
 
@@ -112,7 +136,9 @@ export default async function ProjectsPage({
 
   const ids = projects.map((p) => p.id);
 
-  const [minutesByProject, openTaskCounts] = await Promise.all([
+  // One row per project's most recent update, resolved in JS — "latest per
+  // group" is awkward in SQL and the volume here doesn't warrant the trick.
+  const [minutesByProject, openTaskCounts, latestUpdates] = await Promise.all([
     db.timeEntry.groupBy({
       by: ["projectId"],
       where: { projectId: { in: ids } },
@@ -123,7 +149,22 @@ export default async function ProjectsPage({
       where: { projectId: { in: ids }, status: { not: "DONE" } },
       _count: { _all: true },
     }),
+    db.statusUpdate.findMany({
+      where: { projectId: { in: ids } },
+      orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+      select: { projectId: true, health: true, date: true, note: true },
+    }),
   ]);
+
+  const healthByProject = new Map<
+    string,
+    { health: (typeof latestUpdates)[number]["health"]; date: Date; note: string | null }
+  >();
+  for (const u of latestUpdates) {
+    if (!healthByProject.has(u.projectId)) {
+      healthByProject.set(u.projectId, { health: u.health, date: u.date, note: u.note });
+    }
+  }
 
   const minutes = new Map(
     minutesByProject.map((r) => [r.projectId, r._sum.minutes ?? 0]),
@@ -136,13 +177,21 @@ export default async function ProjectsPage({
   let rows = projects.map((p) => {
     const logged = minutes.get(p.id) ?? 0;
     const usedPct = p.budgetHours ? (logged / 60 / p.budgetHours) * 100 : null;
+    const update = healthByProject.get(p.id) ?? null;
     return {
       ...p,
       logged,
       open: openTasks.get(p.id) ?? 0,
       usedPct,
+      health: update?.health ?? null,
+      healthDate: update?.date ?? null,
     };
   });
+
+  if (health === "none") rows = rows.filter((r) => r.health === null);
+  else if (health === "attention")
+    rows = rows.filter((r) => r.health === "AT_RISK" || r.health === "OFF_TRACK");
+  else if (health) rows = rows.filter((r) => r.health === health);
 
   if (budget === "over") rows = rows.filter((r) => r.usedPct !== null && r.usedPct > 100);
   if (budget === "risk") rows = rows.filter((r) => r.usedPct !== null && r.usedPct >= 85);
@@ -163,6 +212,13 @@ export default async function ProjectsPage({
     switch (sort) {
       case "project":
         return a.name.localeCompare(b.name) * factor;
+      case "health":
+        return (
+          nullsLast(
+            a.health ? HEALTH_RANK[a.health] : null,
+            b.health ? HEALTH_RANK[b.health] : null,
+          ) || a.name.localeCompare(b.name)
+        );
       case "owner":
         return (
           (a.owner?.name ?? "~").localeCompare(b.owner?.name ?? "~") * factor ||
@@ -187,12 +243,12 @@ export default async function ProjectsPage({
 
   const query = (overrides: Record<string, string | undefined>) => {
     const q = new URLSearchParams();
-    const merged = { status, client: clientId, partner: partnerId, owner: ownerId, budget, sort, dir, ...overrides };
+    const merged = { status, client: clientId, partner: partnerId, owner: ownerId, budget, health, sort, dir, ...overrides };
     for (const [k, v] of Object.entries(merged)) if (v) q.set(k, String(v));
     return `/projects?${q.toString()}`;
   };
 
-  const filtered = Boolean(clientId || partnerId || ownerId || budget);
+  const filtered = Boolean(clientId || partnerId || ownerId || budget || health);
   const totalHours = rows.reduce((s, r) => s + r.logged, 0);
 
   return (
@@ -274,6 +330,19 @@ export default async function ProjectsPage({
         </div>
 
         <div className="min-w-[10rem] flex-1">
+          <label className="label" htmlFor="f-health">
+            Project status
+          </label>
+          <select id="f-health" name="health" defaultValue={health} className="input">
+            {HEALTH_FILTERS.map((h) => (
+              <option key={h.value} value={h.value}>
+                {h.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="min-w-[10rem] flex-1">
           <label className="label" htmlFor="f-budget">
             Budget
           </label>
@@ -290,7 +359,10 @@ export default async function ProjectsPage({
           Apply
         </button>
         {filtered ? (
-          <Link href={query({ client: "", partner: "", owner: "", budget: "" })} className="btn-ghost">
+          <Link
+            href={query({ client: "", partner: "", owner: "", budget: "", health: "" })}
+            className="btn-ghost"
+          >
             Clear
           </Link>
         ) : null}
@@ -338,7 +410,13 @@ export default async function ProjectsPage({
                     activeDir={dir}
                     href={(c, d) => query({ sort: c, dir: d })}
                   />
-                  <th className="th">Status</th>
+                  <SortHeader
+                    label="Status"
+                    column="health"
+                    activeColumn={sort}
+                    activeDir={dir}
+                    href={(c, d) => query({ sort: c, dir: d })}
+                  />
                   <SortHeader
                     label="Due"
                     column="due"
@@ -420,7 +498,21 @@ export default async function ProjectsPage({
                       </td>
 
                       <td className="td">
-                        <ProjectStatusChip status={project.status} />
+                        <HealthChip health={project.health} />
+                        <div className="mt-1 text-xs text-ink-500">
+                          {[
+                            project.healthDate
+                              ? `as of ${formatMedium(project.healthDate)}`
+                              : null,
+                            // The workflow state only earns space when it
+                            // isn't the default.
+                            project.status !== "ACTIVE"
+                              ? project.status.replace("_", " ").toLowerCase()
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ") || "—"}
+                        </div>
                       </td>
 
                       <td className="td text-sm">
