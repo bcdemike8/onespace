@@ -24,6 +24,8 @@ export interface TimesheetProject {
   clientName: string | null;
   /** Why this project is on your sheet — owner, assigned work, or logged time. */
   reason: string;
+  /** Everything this person has ever logged here, not just this week. */
+  toDateMinutes: number;
   /** Every task not yet finished, for the picker. */
   openTasks: { id: string; name: string }[];
   rows: TimesheetRow[];
@@ -144,9 +146,17 @@ export function TimesheetGrid({
                   {project.clientName ?? "No client"} · {project.reason}
                 </p>
               </div>
-              <span className="shrink-0 text-sm font-medium tnum text-ink-700">
-                {projectTotal ? `${formatHours(projectTotal)}h` : "—"}
-              </span>
+              <div className="shrink-0 text-right">
+                <div className="text-sm font-medium tnum text-ink-900">
+                  {projectTotal ? `${formatHours(projectTotal)}h` : "—"}
+                  <span className="font-normal text-ink-500"> this week</span>
+                </div>
+                {project.toDateMinutes > 0 ? (
+                  <div className="text-xs tnum text-ink-500">
+                    {formatHours(project.toDateMinutes)}h logged all time
+                  </div>
+                ) : null}
+              </div>
             </div>
 
             {/* A project with nothing logged shows just a picker — with a dozen
@@ -232,6 +242,20 @@ export function TimesheetGrid({
                             {days.map((d) => {
                               const key = `${row.key}|${d.iso}`;
                               const locked = row.locked[d.iso] ?? 0;
+
+                              // Viewing someone else's week: a column of empty
+                              // input boxes is just noise, so show figures.
+                              if (readOnly) {
+                                const total = locked + (row.minutes[d.iso] ?? 0);
+                                return (
+                                  <td
+                                    key={d.iso}
+                                    className="td text-center tnum text-ink-700"
+                                  >
+                                    {total ? formatHours(total) : "—"}
+                                  </td>
+                                );
+                              }
 
                               return (
                                 <td key={d.iso} className="p-1 text-center align-top">

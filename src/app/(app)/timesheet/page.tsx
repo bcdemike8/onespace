@@ -91,6 +91,21 @@ export default async function TimesheetPage({
 
   const projectIds = [...reasons.keys()];
 
+  // Lifetime hours per project for this person, so the sheet carries the
+  // history alongside the week. The imported Everhour months sit on the 1st
+  // of each month, so they'd otherwise only surface in nine specific weeks.
+  const lifetime = await db.timeEntry.groupBy({
+    by: ["projectId"],
+    where: { userId: subject.id, projectId: { in: projectIds } },
+    _sum: { minutes: true },
+  });
+  const lifetimeBy = new Map(lifetime.map((r) => [r.projectId, r._sum.minutes ?? 0]));
+
+  const allTime = await db.timeEntry.aggregate({
+    where: { userId: subject.id },
+    _sum: { minutes: true },
+  });
+
   const projects = await db.project.findMany({
     where: { id: { in: projectIds } },
     select: {
@@ -137,6 +152,7 @@ export default async function TimesheetPage({
     name: p.name,
     clientName: p.client?.name ?? null,
     reason: reasons.get(p.id) ?? "on your sheet",
+    toDateMinutes: lifetimeBy.get(p.id) ?? 0,
     openTasks: p.tasks,
     rows: [...(rowsByProject.get(p.id)?.values() ?? [])].sort((a, b) =>
       a.taskName.localeCompare(b.taskName),
@@ -147,7 +163,11 @@ export default async function TimesheetPage({
   grid.sort((a, b) => {
     const aHas = a.rows.length > 0 ? 0 : 1;
     const bHas = b.rows.length > 0 ? 0 : 1;
-    return aHas - bHas || a.name.localeCompare(b.name);
+    return (
+      aHas - bHas ||
+      b.toDateMinutes - a.toDateMinutes ||
+      a.name.localeCompare(b.name)
+    );
   });
 
   const nowDay = today();
@@ -197,12 +217,18 @@ export default async function TimesheetPage({
             >
               →
             </Link>
+            <Link
+              href={`/reports?preset=this_year&group=project&granularity=month&people=${subject.id}`}
+              className="btn-secondary btn-sm"
+            >
+              Full history
+            </Link>
           </div>
         }
       />
 
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-        <div className="grid flex-1 gap-3 sm:max-w-lg sm:grid-cols-3">
+        <div className="grid flex-1 gap-3 sm:grid-cols-2 lg:max-w-3xl lg:grid-cols-4">
           <Stat
             label="Week"
             value={formatMedium(from)}
@@ -210,9 +236,14 @@ export default async function TimesheetPage({
           />
           <Stat label="Total logged" value={`${formatHours(weekMinutes)}h`} />
           <Stat
-            label="Your projects"
+            label={readOnly ? "Their projects" : "Your projects"}
             value={grid.length}
             hint={`${grid.filter((p) => p.rows.length > 0).length} with time this week`}
+          />
+          <Stat
+            label="Logged all time"
+            value={`${formatHours(allTime._sum.minutes ?? 0)}h`}
+            hint="Everything on record, imports included"
           />
         </div>
 
