@@ -272,6 +272,22 @@ export async function toggleClientArchivedAction(formData: FormData) {
 }
 
 
+/** Set (or clear) a project's owner from the projects list. */
+export async function setProjectOwnerAction(formData: FormData) {
+  await requireAdmin();
+  const id = String(formData.get("id") ?? "");
+  const ownerId = String(formData.get("ownerId") ?? "");
+  if (!id) return;
+
+  await db.project.update({
+    where: { id },
+    data: { ownerId: ownerId || null },
+  });
+
+  refresh();
+  revalidatePath(`/projects/${id}`, "layout");
+}
+
 // ----------------------------------------------------------------- partners
 
 export async function createPartnerAction(

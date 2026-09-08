@@ -10,6 +10,8 @@ import {
   ProgressBar,
   ProjectStatusChip,
 } from "@/components/ui";
+import { AutoSubmitSelect } from "@/components/AutoSubmitSelect";
+import { setProjectOwnerAction } from "@/app/actions/projects";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +30,7 @@ export default async function ProjectsPage({
   searchParams: Promise<{ status?: string; client?: string }>;
 }) {
   const user = await requireUser();
+  const admin = isAdmin(user);
   const params = await searchParams;
   const status = params.status ?? "open";
   const clientId = params.client ?? "";
@@ -39,7 +42,7 @@ export default async function ProjectsPage({
         ? { status: { in: ["ACTIVE", "ON_HOLD"] as ProjectStatus[] } }
         : { status: status as ProjectStatus };
 
-  const [projects, clients] = await Promise.all([
+  const [projects, clients, people] = await Promise.all([
     db.project.findMany({
       where: { ...statusWhere, ...(clientId ? { clientId } : {}) },
       select: {
@@ -51,6 +54,8 @@ export default async function ProjectsPage({
         budgetHours: true,
         budgetCents: true,
         client: { select: { id: true, name: true } },
+        partner: { select: { name: true } },
+        ownerId: true,
         owner: { select: { name: true } },
         _count: { select: { tasks: true } },
       },
@@ -58,6 +63,11 @@ export default async function ProjectsPage({
     }),
     db.client.findMany({
       where: { archivedAt: null },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    db.user.findMany({
+      where: { isActive: true },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     }),
@@ -159,6 +169,7 @@ export default async function ProjectsPage({
               <thead className="border-b border-ink-200 bg-ink-50">
                 <tr>
                   <th className="th">Project</th>
+                  <th className="th">Owner</th>
                   <th className="th">Status</th>
                   <th className="th">Due</th>
                   <th className="th text-right">Open tasks</th>
@@ -186,9 +197,33 @@ export default async function ProjectsPage({
                         </Link>
                         <div className="text-xs text-ink-500">
                           {project.client?.name ?? "No client"}
+                          {project.partner ? ` · via ${project.partner.name}` : ""}
                           {project.code ? ` · ${project.code}` : ""}
-                          {project.owner ? ` · ${project.owner.name}` : ""}
                         </div>
+                      </td>
+
+                      <td className="td">
+                        {admin ? (
+                          <form action={setProjectOwnerAction}>
+                            <input type="hidden" name="id" value={project.id} />
+                            <AutoSubmitSelect
+                              name="ownerId"
+                              ariaLabel={`Owner of ${project.name}`}
+                              defaultValue={project.ownerId ?? ""}
+                              className={`input w-36 py-1 text-xs ${
+                                project.ownerId ? "" : "text-ink-400"
+                              }`}
+                              options={[
+                                { value: "", label: "— unassigned —" },
+                                ...people.map((p) => ({ value: p.id, label: p.name })),
+                              ]}
+                            />
+                          </form>
+                        ) : (
+                          <span className="text-sm text-ink-600">
+                            {project.owner?.name ?? "—"}
+                          </span>
+                        )}
                       </td>
                       <td className="td">
                         <ProjectStatusChip status={project.status} />
