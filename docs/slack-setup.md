@@ -97,7 +97,7 @@ to prove the request is allowed.
 
 **New** → **GitHub Repo** → the OneSpace repo. Then on that service:
 
-- **Settings → Deploy → Start Command**: `node scripts/slack-digest.mjs`
+- **Settings → Config as code**: `railway.cron.json`
 - **Settings → Cron Schedule**: `0 10 * * 1-5`
 - **Variables**:
   - `APP_URL` — your OneSpace address, e.g. `https://onespace-production-xxxx.up.railway.app`
@@ -106,6 +106,13 @@ to prove the request is allowed.
     name. The cron service sends it with every request and the app refuses the
     call if the two don't match. (Or set it once as a Railway project-level
     shared variable and both services pick it up.)
+
+**Don't set a Start Command in the dashboard for this one.** Railway's
+config-as-code overrides dashboard settings, so a service pointed at the repo
+picks up `railway.json` — the web app's config — and starts a server that never
+exits. No digest is ever sent. `railway.cron.json` exists to give this service
+its own start command, skip the pointless Next build, and stop Railway
+restarting a failed run (which would re-send to everyone it already reached).
 
 **Railway's cron is UTC.** `0 10 * * 1-5` is 5am Central while daylight saving
 is in effect. When it ends on 2 November 2026, change it to `0 11 * * 1-5` or

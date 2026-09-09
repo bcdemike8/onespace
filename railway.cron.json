@@ -1,0 +1,14 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "//": "Config for the scheduled service that sends the daily Slack brief. Railway's config-as-code overrides the dashboard, so without this second file the cron service inherits railway.json, starts the web app, never exits, and no digest is sent. Point that service at this file under Settings -> Config as code.",
+  "build": {
+    "builder": "NIXPACKS",
+    "//": "The script is plain fetch with no dependencies, so there is nothing to compile. Skipping the Next build keeps the deploy quick.",
+    "buildCommand": "echo 'nothing to build - this service only runs a script'"
+  },
+  "deploy": {
+    "startCommand": "node scripts/slack-digest.mjs",
+    "//": "NEVER, deliberately: the script exits non-zero when a send fails, and a restart would re-run the batch and double-message everyone it already reached. A failed run should stay failed and stay visible.",
+    "restartPolicyType": "NEVER"
+  }
+}
