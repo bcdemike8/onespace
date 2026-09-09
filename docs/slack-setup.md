@@ -5,10 +5,9 @@ without it OneSpace behaves exactly as it does today.
 
 When it's done:
 
-- **Monday morning** each person gets a DM listing what's overdue and what's due
-  this week, plus any project they own that's at risk or off track.
-- **Friday afternoon** each person gets a DM with the hours they logged that
-  week, by project, and which weekdays are still empty.
+- **Every weekday at 5am CT** each person gets a DM with what's overdue, what's
+  due today, any project they own that's at risk, and whether their time is up
+  to date. On Mondays it widens to the week ahead.
 - **`/onespace log 1.5 Acme kickoff`** logs time without leaving Slack.
 - **Status updates** on a project post into that project's channel.
 
@@ -87,35 +86,32 @@ Test it with `/onespace help`.
 
 ---
 
-## 5. Schedule the weekly digests
+## 5. Schedule the daily brief
 
 Railway runs a scheduled service to completion, so this is a second service in
 the same project pointing at the same repo.
 
 **New** → **GitHub Repo** → the OneSpace repo. Then on that service:
 
-- **Settings → Deploy → Start Command**: `node scripts/slack-digest.mjs monday`
-- **Settings → Cron Schedule**: `0 13 * * 1`
-- **Variables**: `CRON_SECRET` (the same value) and `APP_URL` (your OneSpace URL)
+- **Settings → Deploy → Start Command**: `node scripts/slack-digest.mjs`
+- **Settings → Cron Schedule**: `0 10 * * 1-5`
+- **Variables**: `CRON_SECRET` (the same value the app has) and `APP_URL`
 
-Repeat for a second service with `node scripts/slack-digest.mjs friday` and
-`0 20 * * 5`.
+**Railway's cron is UTC.** `0 10 * * 1-5` is 5am Central while daylight saving
+is in effect. When it ends on 2 November 2026, change it to `0 11 * * 1-5` or
+the brief arrives at 4am.
 
-**Railway's cron is UTC.** The two above are 9am Monday and 4pm Friday US
-Eastern while daylight saving is in effect; in winter they land an hour earlier,
-so shift them to `0 14 * * 1` and `0 21 * * 5` in November if that bothers you.
+`1-5` is Monday to Friday. Use `0 10 * * *` if you want it at weekends too.
 
 You can trigger a run by hand at any time:
 
 ```bash
-curl -X POST "https://<your-onespace-url>/api/cron/slack-digest?kind=monday" \
+curl -X POST "https://<your-onespace-url>/api/cron/slack-digest" \
   -H "Authorization: Bearer $CRON_SECRET"
 ```
 
 It replies with who it sent to, who was skipped, and who has no Slack account
 yet.
-
----
 
 ## 6. Map projects to channels (optional)
 
@@ -129,12 +125,13 @@ list means it hasn't been invited yet.
 
 ## What to expect in the first week
 
-The Monday digest **stays quiet** for anyone with nothing overdue, nothing due
-that week, and no project of theirs at risk. That's deliberate: a weekly "you
-have 0 tasks" is how a useful nudge becomes something people mute.
+The brief **stays quiet** for anyone who has nothing overdue, nothing due today,
+no project of theirs at risk, *and* logged time on the last working day. All
+four have to be true. That's deliberate: a 5am message saying "all clear" every
+morning is muted within a week.
 
-The Friday digest **always sends**, including at zero, because an empty week is
-exactly the one worth flagging before the month closes.
+Which means an empty day still gets a message if the time isn't logged — that
+half is the point, and it's what stops the month closing on a gap.
 
 Time logged from Slack is a normal manual entry — it lands on today, respects
 the project's billing type, and can't be written into a closed month.

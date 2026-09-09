@@ -17,20 +17,19 @@ export interface DigestProject {
   openTasks: number;
 }
 
-export interface MondayInput {
+export interface DailyInput {
   firstName: string;
+  /** True on Mondays, when the week ahead is worth showing, not just today. */
+  weekAhead: boolean;
   overdue: DigestTask[];
-  dueThisWeek: DigestTask[];
+  dueToday: DigestTask[];
+  /** The rest of this week. Only shown on the week-ahead day. */
+  dueLater: DigestTask[];
   ownedNeedingAttention: DigestProject[];
-  appUrl: string;
-}
-
-export interface FridayInput {
-  firstName: string;
-  byProject: { name: string; minutes: number }[];
-  totalMinutes: number;
-  /** Days this week with nothing logged at all, as short labels ("Tue"). */
-  emptyDays: string[];
+  /** Minutes logged on the last working day, and the label for that day. */
+  lastWorkedMinutes: number;
+  lastWorkedLabel: string;
+  weekMinutes: number;
   appUrl: string;
 }
 
@@ -56,20 +55,19 @@ const linkButton = (label: string, url: string) => ({
   ],
 });
 
-// Slack truncates long messages badly, and a digest nobody finishes reading is
-// a digest nobody acts on.
-const MAX_LINES = 8;
+// Slack truncates long messages badly, and a brief nobody finishes reading is
+// a brief nobody acts on. At 5am this needs to be scannable in ten seconds.
+const MAX_LINES = 6;
 
-function taskLines(tasks: DigestTask[]): string {
+function taskLines(tasks: DigestTask[], withDate = true): string {
   const shown = tasks.slice(0, MAX_LINES).map((t) => {
-    const due = t.dueDate
-      ? t.dueDate.toLocaleDateString("en-US", {
-          timeZone: "UTC",
-          weekday: "short",
-          month: "short",
-          day: "numeric",
-        })
-      : "no date";
+    if (!withDate || !t.dueDate) return `• ${t.name} — _${t.projectName}_`;
+    const due = t.dueDate.toLocaleDateString("en-US", {
+      timeZone: "UTC",
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
     return `• ${t.name} — _${t.projectName}_ · ${due}`;
   });
   const rest = tasks.length - shown.length;
@@ -77,29 +75,43 @@ function taskLines(tasks: DigestTask[]): string {
   return shown.join("\n");
 }
 
-export function buildMondayDigest(input: MondayInput): SlackMessage {
-  const { firstName, overdue, dueThisWeek, ownedNeedingAttention, appUrl } = input;
+/**
+ * The 5am brief. One message a day covering what's on your plate and whether
+ * your time is up to date — the two things that go stale without a nudge.
+ *
+ * On Mondays it widens to the week ahead; the rest of the week it stays on
+ * today, because a daily message repeating the same seven tasks stops being
+ * read by Wednesday.
+ */
+export function buildDailyDigest(input: DailyInput): SlackMessage {
+  const {
+    firstName, weekAhead, overdue, dueToday, dueLater,
+    ownedNeedingAttention, lastWorkedMinutes, lastWorkedLabel,
+    weekMinutes, appUrl,
+  } = input;
+
   const blocks: unknown[] = [];
 
-  const total = overdue.length + dueThisWeek.length;
+  const bits: string[] = [];
+  if (overdue.length) bits.push(`${overdue.length} overdue`);
+  if (dueToday.length) bits.push(`${dueToday.length} due today`);
+  if (weekAhead && dueLater.length) bits.push(`${dueLater.length} later this week`);
+
   const headline =
-    total === 0
-      ? `Morning ${firstName} — nothing is due on your plate this week.`
-      : `Morning ${firstName} — ${total} ${total === 1 ? "task" : "tasks"} on your plate this week.`;
+    bits.length === 0
+      ? `Morning ${firstName} — nothing due on your plate today.`
+      : `Morning ${firstName} — ${bits.join(", ")}.`;
 
   blocks.push(section(`*${headline}*`));
 
   if (overdue.length > 0) {
-    blocks.push(
-      section(
-        `:rotating_light: *Overdue (${overdue.length})*\n${taskLines(overdue)}`,
-      ),
-    );
+    blocks.push(section(`:rotating_light: *Overdue*\n${taskLines(overdue)}`));
   }
-  if (dueThisWeek.length > 0) {
-    blocks.push(
-      section(`*Due this week (${dueThisWeek.length})*\n${taskLines(dueThisWeek)}`),
-    );
+  if (dueToday.length > 0) {
+    blocks.push(section(`*Due today*\n${taskLines(dueToday, false)}`));
+  }
+  if (weekAhead && dueLater.length > 0) {
+    blocks.push(section(`*Rest of the week*\n${taskLines(dueLater)}`));
   }
 
   if (ownedNeedingAttention.length > 0) {
@@ -110,47 +122,18 @@ export function buildMondayDigest(input: MondayInput): SlackMessage {
           `• ${p.health === "OFF_TRACK" ? ":red_circle:" : ":large_yellow_circle:"} ${p.name} — ${p.openTasks} open`,
       )
       .join("\n");
-    blocks.push(section(`*Projects you own that need a look*\n${lines}`));
+    blocks.push(section(`*Your projects needing a look*\n${lines}`));
   }
 
+  // Time, every day. This is the half that keeps the invoice honest.
+  const timeLine =
+    lastWorkedMinutes === 0
+      ? `:hourglass: *Nothing logged ${lastWorkedLabel}.* ${formatHours(weekMinutes)}h this week so far.`
+      : `:hourglass: ${formatHours(lastWorkedMinutes)}h logged ${lastWorkedLabel} · ${formatHours(weekMinutes)}h this week so far.`;
+  blocks.push(section(timeLine));
+
+  blocks.push(context("Log from here with `/onespace log 1.5 Acme kickoff call`."));
   blocks.push(linkButton("Open my work", appUrl));
-
-  return { text: headline, blocks };
-}
-
-export function buildFridayDigest(input: FridayInput): SlackMessage {
-  const { firstName, byProject, totalMinutes, emptyDays, appUrl } = input;
-  const blocks: unknown[] = [];
-
-  const hours = formatHours(totalMinutes);
-  const headline =
-    totalMinutes === 0
-      ? `${firstName}, there's no time logged against your name this week.`
-      : `${firstName}, you've logged ${hours}h this week.`;
-
-  blocks.push(section(`*${headline}*`));
-
-  if (byProject.length > 0) {
-    const lines = byProject
-      .slice(0, MAX_LINES)
-      .map((p) => `• ${formatHours(p.minutes)}h — ${p.name}`);
-    const rest = byProject.length - lines.length;
-    if (rest > 0) lines.push(`• _…and ${rest} more_`);
-    blocks.push(section(lines.join("\n")));
-  }
-
-  if (emptyDays.length > 0) {
-    blocks.push(
-      context(
-        `:calendar: Nothing logged on ${emptyDays.join(", ")}. Worth a look before the month closes.`,
-      ),
-    );
-  }
-
-  blocks.push(
-    context("Log from here with `/onespace log 1.5 Acme kickoff call`."),
-  );
-  blocks.push(linkButton("Open my timesheet", `${appUrl}/timesheet`));
 
   return { text: headline, blocks };
 }

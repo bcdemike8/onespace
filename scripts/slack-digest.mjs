@@ -1,18 +1,15 @@
 // Railway cron entry point. Railway's scheduler runs a service to completion on
 // a schedule, so this is a one-shot: call the digest endpoint, report, exit.
 //
-//   node scripts/slack-digest.mjs monday
-//   node scripts/slack-digest.mjs friday
+//   node scripts/slack-digest.mjs
 //
 // Needs APP_URL (or RAILWAY_PUBLIC_DOMAIN) and CRON_SECRET. The exit code
 // matters: a non-zero exit is what makes a failed run visible in Railway
 // instead of disappearing into the log.
 
-const kind = (process.argv[2] || process.env.DIGEST_KIND || "monday").trim();
-if (kind !== "monday" && kind !== "friday") {
-  console.error(`Unknown digest "${kind}". Use monday or friday.`);
-  process.exit(2);
-}
+// An argument is no longer needed — there's one daily brief — but an old
+// schedule still passing "monday" shouldn't start failing because of it.
+const kind = "daily";
 
 const base =
   (process.env.APP_URL && process.env.APP_URL.replace(/\/+$/, "")) ||

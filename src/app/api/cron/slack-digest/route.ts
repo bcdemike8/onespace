@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { slackConfigured } from "@/lib/slack/client";
-import { sendFridayDigests, sendMondayDigests } from "@/lib/slack/send";
+import { sendDailyDigests } from "@/lib/slack/send";
 
 export const dynamic = "force-dynamic";
 
@@ -34,21 +34,19 @@ async function run(request: Request) {
     );
   }
 
-  const kind = new URL(request.url).searchParams.get("kind") ?? "monday";
-  if (kind !== "monday" && kind !== "friday") {
-    return NextResponse.json(
-      { error: "kind must be 'monday' or 'friday'." },
-      { status: 400 },
-    );
+  // `kind` is still accepted so an existing schedule or bookmark keeps working;
+  // there is only one digest now.
+  const kind = new URL(request.url).searchParams.get("kind") ?? "daily";
+  if (!["daily", "monday", "friday"].includes(kind)) {
+    return NextResponse.json({ error: "kind must be 'daily'." }, { status: 400 });
   }
 
-  const result =
-    kind === "monday" ? await sendMondayDigests() : await sendFridayDigests();
+  const result = await sendDailyDigests();
 
   // 200 even when individual sends failed: the run itself worked, and the body
   // says who didn't get one. A 500 here would make Railway retry the whole
   // batch and double-message everyone who did.
-  return NextResponse.json({ kind, ...result });
+  return NextResponse.json({ kind: "daily", ...result });
 }
 
 export const GET = run;
