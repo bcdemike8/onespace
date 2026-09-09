@@ -16,6 +16,26 @@ export interface SlackResult<T> {
   data?: T;
 }
 
+/**
+ * Form-encode arguments. Slack's Web API is inconsistent about JSON bodies —
+ * chat.postMessage accepts them, users.lookupByEmail and conversations.list do
+ * not, and the ones that don't reply `invalid_arguments` as though you'd sent
+ * nothing at all. Form encoding is the one shape every method accepts, so
+ * everything goes out that way and nested values (blocks) travel as JSON
+ * strings, which is exactly what Slack expects there.
+ */
+function encode(body: Record<string, unknown>): string {
+  const form = new URLSearchParams();
+  for (const [key, value] of Object.entries(body)) {
+    if (value === undefined || value === null) continue;
+    form.set(
+      key,
+      typeof value === "object" ? JSON.stringify(value) : String(value),
+    );
+  }
+  return form.toString();
+}
+
 async function call<T>(
   method: string,
   body: Record<string, unknown>,
@@ -29,9 +49,9 @@ async function call<T>(
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json; charset=utf-8",
+        "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
       },
-      body: JSON.stringify(body),
+      body: encode(body),
     });
   } catch {
     // A digest run shouldn't die because Slack had a bad minute.
@@ -58,10 +78,25 @@ export function postMessage(channel: string, text: string, blocks?: unknown[]) {
   });
 }
 
-/** Find a Slack member by email. Returns null when they simply aren't there. */
-export async function lookupByEmail(email: string): Promise<string | null> {
+export interface EmailLookup {
+  id: string | null;
+  /** Set only when Slack refused the question, never when the answer is "no". */
+  error?: string;
+}
+
+/**
+ * Find a Slack member by email.
+ *
+ * "Not in the workspace" and "the app isn't allowed to ask" are different
+ * answers and used to collapse into the same null. They don't any more: a
+ * missing scope looks identical to seven people not existing, which is a
+ * miserable thing to debug.
+ */
+export async function lookupByEmail(email: string): Promise<EmailLookup> {
   const r = await call<{ user: { id: string } }>("users.lookupByEmail", { email });
-  return r.ok && r.data ? r.data.user.id : null;
+  if (r.ok && r.data) return { id: r.data.user.id };
+  if (r.error === "users_not_found") return { id: null };
+  return { id: null, error: r.error ?? "unknown_error" };
 }
 
 export interface SlackChannel {

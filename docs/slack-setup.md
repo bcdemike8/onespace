@@ -69,6 +69,15 @@ It matches on email, so someone's Slack profile has to use their `@revoptics.co`
 address. Anyone it can't find is named in the result. Re-run it whenever you add
 a person — nobody gets a digest until they're matched.
 
+**If nobody matches at all** — every name listed, including your own — the
+problem isn't the addresses, it's permission. Slack only shares email addresses
+with an app that holds `users:read.email`, and **a scope added after the app was
+installed does nothing until you reinstall**. Go to **OAuth & Permissions**,
+confirm `users:read` and `users:read.email` are both in *Bot Token Scopes*, then
+**Reinstall to Workspace** at the top of that page. The bot token doesn't change,
+so nothing in Railway needs updating. OneSpace now says so in the error rather
+than reporting everyone as "not found".
+
 ---
 
 ## 4. Turn on the slash command

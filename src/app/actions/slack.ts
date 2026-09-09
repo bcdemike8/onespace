@@ -30,7 +30,13 @@ export async function linkSlackAccountsAction(): Promise<ActionState> {
   const missing: string[] = [];
 
   for (const person of people) {
-    const id = await lookupByEmail(person.email);
+    const { id, error } = await lookupByEmail(person.email);
+
+    // Slack refusing to answer is not the same as answering "no". Stop on the
+    // first refusal: it will be identical for everyone else, and seven
+    // rate-limited calls make the real problem harder to see, not easier.
+    if (error) return { error: explainLookupError(error) };
+
     if (!id) {
       missing.push(person.name);
       continue;
@@ -56,6 +62,23 @@ export async function linkSlackAccountsAction(): Promise<ActionState> {
     );
   }
   return { ok: true, message: parts.join(" ") };
+}
+
+/** Slack's error codes, in words an admin can act on. */
+function explainLookupError(code: string): string {
+  switch (code) {
+    case "missing_scope":
+    case "not_allowed_token_type":
+      return "Slack won't share email addresses with the app yet. In your Slack app under OAuth & Permissions add the users:read.email scope (and users:read), reinstall to the workspace, then try again. The bot token stays the same.";
+    case "invalid_auth":
+    case "account_inactive":
+    case "token_revoked":
+      return "Slack rejected the bot token. Check SLACK_BOT_TOKEN in Railway still matches the app's Bot User OAuth Token.";
+    case "ratelimited":
+      return "Slack is rate-limiting the lookups. Wait a minute and run it again.";
+    default:
+      return `Slack returned "${code}" when looking people up.`;
+  }
 }
 
 export interface SlackStatus {
