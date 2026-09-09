@@ -97,9 +97,11 @@ to prove the request is allowed.
 
 **New** → **GitHub Repo** → the OneSpace repo. Then on that service:
 
-- **Settings → Config as code**: `railway.cron.json`
 - **Settings → Cron Schedule**: `0 10 * * 1-5`
+- **Leave Start Command empty** — see below
 - **Variables**:
+  - `ONESPACE_ROLE` = `cron` — **this is the switch.** Without it the service
+    starts the web app instead and no brief is ever sent.
   - `APP_URL` — your OneSpace address, e.g. `https://onespace-production-xxxx.up.railway.app`
   - `CRON_SECRET` — **the identical string you put on the OneSpace app service.**
     Open that service's Variables, copy the value, paste it here under the same
@@ -107,12 +109,13 @@ to prove the request is allowed.
     call if the two don't match. (Or set it once as a Railway project-level
     shared variable and both services pick it up.)
 
-**Don't set a Start Command in the dashboard for this one.** Railway's
-config-as-code overrides dashboard settings, so a service pointed at the repo
-picks up `railway.json` — the web app's config — and starts a server that never
-exits. No digest is ever sent. `railway.cron.json` exists to give this service
-its own start command, skip the pointless Next build, and stop Railway
-restarting a failed run (which would re-send to everyone it already reached).
+**Why a variable and not a Start Command.** Railway's config-as-code overrides
+the dashboard, and a repo gets one `railway.json` — so a Start Command typed
+into the UI is ignored and the service silently runs the web app instead. Both
+services therefore run the same thing, `node scripts/start.mjs`, which reads
+`ONESPACE_ROLE` and either serves the app or sends the brief. The default is the
+web app on purpose: forgetting the variable gets you a working site, not a site
+that won't start.
 
 **Railway's cron is UTC.** `0 10 * * 1-5` is 5am Central while daylight saving
 is in effect. When it ends on 2 November 2026, change it to `0 11 * * 1-5` or

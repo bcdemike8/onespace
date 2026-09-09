@@ -35,6 +35,7 @@ try {
   const body = await res.json().catch(() => null);
 
   if (!res.ok) {
+    // The whole run failed and nothing was sent, so a retry is safe and useful.
     console.error(`${kind} digest failed (${res.status}):`, body ?? "(no body)");
     process.exit(1);
   }
@@ -47,9 +48,10 @@ try {
         : ""),
   );
 
-  // Individual failures are worth surfacing as a failed run — silently sending
-  // five of seven digests every week is the kind of thing nobody notices.
-  process.exit(body.failed?.length ? 1 : 0);
+  // Exit 0 even when some sends failed. Railway retries a failed run, and a
+  // retry re-sends to everyone it already reached — worse than the gap. The
+  // line above names who missed out, which is what a person needs to see.
+  process.exit(0);
 } catch (err) {
   console.error(`${kind} digest couldn't reach ${url}:`, err.message);
   process.exit(1);
