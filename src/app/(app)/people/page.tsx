@@ -8,7 +8,9 @@ import {
   togglePersonActiveAction,
   updatePersonAction,
 } from "@/app/actions/people";
+import { slackStatus } from "@/app/actions/slack";
 import { NewPersonForm } from "./NewPersonForm";
+import { SlackPanel } from "./SlackPanel";
 import { ResetPasswordForm } from "./ResetPasswordForm";
 
 export const dynamic = "force-dynamic";
@@ -17,13 +19,14 @@ export default async function PeoplePage() {
   const admin = await requireAdmin();
   const since = addDays(today(), -29);
 
-  const [people, recent] = await Promise.all([
+  const [people, recent, slack] = await Promise.all([
     db.user.findMany({ orderBy: [{ isActive: "desc" }, { name: "asc" }] }),
     db.timeEntry.groupBy({
       by: ["userId"],
       where: { date: { gte: since } },
       _sum: { minutes: true },
     }),
+    slackStatus(),
   ]);
 
   const minutesByUser = new Map(
@@ -170,6 +173,8 @@ export default async function PeoplePage() {
             <h2 className="mb-3 text-sm font-semibold text-ink-900">Add someone</h2>
             <NewPersonForm />
           </section>
+
+          <SlackPanel status={slack} />
 
           <div className="card p-4 text-xs leading-relaxed text-ink-500">
             <p className="mb-1 font-medium text-ink-700">About rate changes</p>

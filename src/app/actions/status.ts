@@ -6,6 +6,8 @@ import type { ProjectHealth } from "@prisma/client";
 import { db } from "@/lib/db";
 import { isAdmin, requireUser } from "@/lib/auth";
 import { dayStart } from "@/lib/dates";
+import { buildStatusUpdateMessage } from "@/lib/slack/digest";
+import { appUrl, tryPost } from "@/lib/slack/send";
 
 export type ActionState = { error?: string; ok?: boolean };
 
@@ -55,6 +57,24 @@ export async function addStatusUpdateAction(
       date: dayStart(date),
     },
   });
+
+  // Mirror it into the project's Slack channel when one is mapped. Awaited so
+  // the serverless request doesn't end mid-flight, but tryPost never throws —
+  // the update is already saved and Slack being down mustn't undo that.
+  const project = await db.project.findUnique({
+    where: { id: projectId },
+    select: { name: true, slackChannelId: true },
+  });
+  if (project?.slackChannelId) {
+    const msg = buildStatusUpdateMessage({
+      projectName: project.name,
+      health,
+      note: note?.trim() || null,
+      authorName: user.name,
+      url: `${appUrl()}/projects/${projectId}`,
+    });
+    await tryPost(project.slackChannelId, msg.text, msg.blocks);
+  }
 
   revalidatePath(`/projects/${projectId}`, "layout");
   revalidatePath("/projects", "layout");

@@ -79,6 +79,10 @@ model User {
   costRateCents Int @default(0)
   billRateCents Int @default(0)
 
+  /// Slack member id (U…), matched from this person's email. Null until the
+  /// workspace is linked, or when someone has no Slack account.
+  slackUserId String? @unique
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -158,6 +162,10 @@ model Project {
   billRateCents Int? // overrides the person's billRate for this project
 
   billingType BillingType @default(HOURLY)
+
+  /// Slack channel this project is discussed in (C…). Status updates post here.
+  slackChannelId   String?
+  slackChannelName String?
 
   // Provenance: which template this was spun up from, if any.
   templateId String?

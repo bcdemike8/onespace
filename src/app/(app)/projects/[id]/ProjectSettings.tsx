@@ -25,6 +25,7 @@ export interface ProjectSettingsValues {
   budgetAmount: string;
   billRate: string;
   billingType: BillingType;
+  slackChannelId: string;
 }
 
 export function ProjectSettings({
@@ -32,11 +33,13 @@ export function ProjectSettings({
   clients,
   partners,
   people,
+  slackChannels,
 }: {
   values: ProjectSettingsValues;
   clients: { id: string; name: string }[];
   partners: { id: string; name: string }[];
   people: { id: string; name: string }[];
+  slackChannels: { id: string; name: string; isPrivate: boolean }[];
 }) {
   const [state, action] = useActionState(updateProjectAction, {});
   const [open, setOpen] = useState(false);
@@ -237,6 +240,35 @@ export function ProjectSettings({
           </div>
 
           <BillingTypeField id="p-billing" defaultValue={values.billingType} />
+
+          <div>
+            <label className="label" htmlFor="p-slack">
+              Slack channel
+            </label>
+            <select
+              id="p-slack"
+              name="slackChannel"
+              defaultValue={
+                slackChannels.find((c) => c.id === values.slackChannelId)
+                  ? `${values.slackChannelId}|${slackChannels.find((c) => c.id === values.slackChannelId)?.name}`
+                  : ""
+              }
+              className="input"
+            >
+              <option value="">No channel</option>
+              {slackChannels.map((c) => (
+                <option key={c.id} value={`${c.id}|${c.name}`}>
+                  {c.isPrivate ? "🔒 " : "# "}
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-ink-500">
+              {slackChannels.length === 0
+                ? "No channels available — the bot has to be invited to a channel before it can post there."
+                : "Status updates on this project get posted here."}
+            </p>
+          </div>
 
           <ErrorNote message={state.error} />
           {state.ok ? (

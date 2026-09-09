@@ -25,6 +25,7 @@ import {
   StatusUpdates,
   type StatusUpdateView,
 } from "./StatusUpdates";
+import { slackChannelOptions } from "@/app/actions/slack";
 import { getLockState } from "@/lib/lock";
 import { isLocked } from "@/lib/periods";
 import { BillingTypeBadge } from "@/components/BillingTypeField";
@@ -72,7 +73,11 @@ export default async function ProjectPage({
 
   if (!project) notFound();
 
-  const lockState = await getLockState();
+  const [lockState, slackChannels] = await Promise.all([
+    getLockState(),
+    // Only admins see the settings dialog this feeds.
+    admin ? slackChannelOptions() : Promise.resolve([]),
+  ]);
 
   const [entries, people, clients, partners, timeByTask] = await Promise.all([
     db.timeEntry.findMany({
@@ -239,6 +244,7 @@ export default async function ProjectPage({
                 clients={clients}
                 partners={partners}
                 people={people}
+                slackChannels={slackChannels}
                 values={{
                   id: project.id,
                   name: project.name,
@@ -257,6 +263,7 @@ export default async function ProjectPage({
                     ? centsToInput(project.billRateCents)
                     : "",
                   billingType: project.billingType,
+                  slackChannelId: project.slackChannelId ?? "",
                 }}
               />
             </>

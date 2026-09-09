@@ -47,6 +47,8 @@ const projectSchema = z.object({
   budgetAmount: z.string().trim().optional().nullable(),
   billRate: z.string().trim().optional().nullable(),
   billingType: z.enum(["HOURLY", "FIXED_FEE", "NON_BILLABLE"]).default("HOURLY"),
+  // "C0123|general" — the id to store plus the name to show it by.
+  slackChannel: z.string().trim().max(200).optional().nullable(),
 });
 
 /**
@@ -190,11 +192,13 @@ export async function updateProjectAction(
     budgetAmount: formData.get("budgetAmount"),
     billRate: formData.get("billRate"),
     billingType: formData.get("billingType") ?? "HOURLY",
+    slackChannel: formData.get("slackChannel"),
   });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
   const d = parsed.data;
   const status = String(formData.get("status") ?? "ACTIVE");
+  const [slackChannelId, slackChannelName] = (d.slackChannel ?? "").split("|");
   const budgetCents = d.budgetAmount ? parseMoneyToCents(d.budgetAmount) : null;
   const billRateCents = d.billRate ? parseMoneyToCents(d.billRate) : null;
 
@@ -212,6 +216,8 @@ export async function updateProjectAction(
       budgetCents,
       billRateCents,
       billingType: d.billingType,
+      slackChannelId: slackChannelId || null,
+      slackChannelName: slackChannelId ? (slackChannelName ?? null) : null,
       status: status as "ACTIVE" | "ON_HOLD" | "COMPLETED" | "ARCHIVED",
     },
   });

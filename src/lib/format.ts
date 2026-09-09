@@ -52,13 +52,16 @@ export function parseDuration(input: string): number | null {
   if (colon) return Number(colon[1]) * 60 + Number(colon[2]);
 
   // 1h30m / 1h 30 / 45m / 2h
-  const hm = raw.match(/^(?:(\d+(?:\.\d+)?)\s*h)?\s*(?:(\d+(?:\.\d+)?)\s*m?)?$/);
+  const hm = raw.match(/^(?:(\d+(?:\.\d+)?)\s*h)?\s*(?:(\d+(?:\.\d+)?)\s*(m)?)?$/);
   if (hm && (hm[1] || hm[2])) {
     const hours = hm[1] ? Number(hm[1]) : 0;
-    // A bare number with an "h" present is minutes; a bare number alone is hours.
     const rest = hm[2] ? Number(hm[2]) : 0;
-    const minutes = hm[1] ? rest : rest * 60;
-    return Math.round(hours * 60 + minutes);
+    // The trailing number is minutes when it says so ("45m") or when an hours
+    // part already claimed the hours ("1h30"). A bare number is hours: "1.5"
+    // has always meant an hour and a half here, and changing that would
+    // silently rewrite what people type into the timesheet every day.
+    const saysMinutes = Boolean(hm[3]) || Boolean(hm[1]);
+    return Math.round(hours * 60 + (saysMinutes ? rest : rest * 60));
   }
 
   const num = Number(raw);
