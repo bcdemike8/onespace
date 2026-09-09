@@ -91,11 +91,21 @@ Test it with `/onespace help`.
 Railway runs a scheduled service to completion, so this is a second service in
 the same project pointing at the same repo.
 
+This service doesn't run *inside* OneSpace. It wakes at 5am, makes an HTTP
+request to the app, and exits — so it has to be told where the app is and how
+to prove the request is allowed.
+
 **New** → **GitHub Repo** → the OneSpace repo. Then on that service:
 
 - **Settings → Deploy → Start Command**: `node scripts/slack-digest.mjs`
 - **Settings → Cron Schedule**: `0 10 * * 1-5`
-- **Variables**: `CRON_SECRET` (the same value the app has) and `APP_URL`
+- **Variables**:
+  - `APP_URL` — your OneSpace address, e.g. `https://onespace-production-xxxx.up.railway.app`
+  - `CRON_SECRET` — **the identical string you put on the OneSpace app service.**
+    Open that service's Variables, copy the value, paste it here under the same
+    name. The cron service sends it with every request and the app refuses the
+    call if the two don't match. (Or set it once as a Railway project-level
+    shared variable and both services pick it up.)
 
 **Railway's cron is UTC.** `0 10 * * 1-5` is 5am Central while daylight saving
 is in effect. When it ends on 2 November 2026, change it to `0 11 * * 1-5` or
