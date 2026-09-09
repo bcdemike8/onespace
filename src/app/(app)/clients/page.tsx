@@ -9,6 +9,7 @@ import {
   updateClientAction,
   updatePartnerAction,
 } from "@/app/actions/projects";
+import { DomainsField } from "./DomainsField";
 import { NewClientForm } from "./NewClientForm";
 import { NewPartnerForm } from "./NewPartnerForm";
 
@@ -19,7 +20,10 @@ export default async function ClientsPage() {
 
   const [clients, partners] = await Promise.all([
     db.client.findMany({
-      include: { projects: { select: { id: true, name: true, status: true } } },
+      include: {
+        projects: { select: { id: true, name: true, status: true } },
+        domains: { select: { id: true, domain: true }, orderBy: { domain: "asc" } },
+      },
       orderBy: [{ archivedAt: "asc" }, { name: "asc" }],
     }),
     db.partner.findMany({
@@ -114,6 +118,8 @@ export default async function ClientsPage() {
                       Save
                     </button>
                   </form>
+
+                  <DomainsField clientId={client.id} domains={client.domains} />
 
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-ink-100 pt-3">
                     <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-500 tnum">

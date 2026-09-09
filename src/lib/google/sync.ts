@@ -1,0 +1,224 @@
+import "server-only";
+import type { Prisma } from "@prisma/client";
+import { db } from "@/lib/db";
+import { dayStart } from "@/lib/dates";
+import { listMeetings } from "@/lib/google/calendar";
+import { GoogleApiError, GoogleAuthError, googleConfigured } from "@/lib/google/auth";
+import {
+  buildWeights,
+  matchMeeting,
+  type MatchCandidate,
+} from "@/lib/google/match";
+
+/** Where the timesheet day comes from when converting a meeting's clock time. */
+export const ORG_TIMEZONE_KEY = "org.timezone";
+export const DEFAULT_TIMEZONE = "America/Chicago";
+
+/** How far back the first sync reaches. Brianna chose 1 August. */
+export const SYNC_FROM_KEY = "google.calendarFrom";
+export const DEFAULT_SYNC_FROM = "2026-08-01";
+
+export async function orgTimezone(): Promise<string> {
+  const row = await db.appSetting.findUnique({ where: { key: ORG_TIMEZONE_KEY } });
+  return row?.value || DEFAULT_TIMEZONE;
+}
+
+export async function calendarSyncFrom(): Promise<Date> {
+  const row = await db.appSetting.findUnique({ where: { key: SYNC_FROM_KEY } });
+  return dayStart(row?.value || DEFAULT_SYNC_FROM);
+}
+
+export interface SyncOutcome {
+  /** Meetings seen on a calendar, after filtering out non-meetings. */
+  seen: number;
+  created: number;
+  updated: number;
+  /** Already accepted or dismissed, so left exactly as they are. */
+  settled: number;
+  matched: number;
+  people: number;
+  failed: { name: string; error: string }[];
+}
+
+/**
+ * Everything the matcher needs about the current project list, fetched once
+ * and reused for every meeting on every calendar.
+ */
+async function loadCandidates(): Promise<MatchCandidate[]> {
+  const projects = await db.project.findMany({
+    where: { status: { in: ["ACTIVE", "ON_HOLD"] } },
+    select: {
+      id: true,
+      name: true,
+      ownerId: true,
+      client: {
+        select: { id: true, name: true, domains: { select: { domain: true } } },
+      },
+      tasks: {
+        where: { status: { not: "DONE" } },
+        select: { id: true, name: true },
+      },
+    },
+  });
+
+  return projects.map((p) => ({
+    projectId: p.id,
+    projectName: p.name,
+    clientId: p.client?.id ?? null,
+    clientName: p.client?.name ?? null,
+    domains: p.client?.domains.map((d) => d.domain) ?? [],
+    tasks: p.tasks,
+    ownerId: p.ownerId,
+  }));
+}
+
+/**
+ * Pull everyone's calendar and turn client meetings into pending suggestions.
+ *
+ * Deliberately never writes a time entry. A suggestion becomes time when the
+ * person whose calendar it came from says so, which is both what Brianna
+ * asked for and the only version that survives a mis-match: a wrong guess
+ * costs a click, not a corrected invoice.
+ */
+export async function syncCalendars(options?: {
+  /** Limit to one person, for the "sync me" button. */
+  userId?: string;
+  from?: Date;
+  to?: Date;
+}): Promise<SyncOutcome> {
+  const outcome: SyncOutcome = {
+    seen: 0,
+    created: 0,
+    updated: 0,
+    settled: 0,
+    matched: 0,
+    people: 0,
+    failed: [],
+  };
+
+  if (!googleConfigured()) {
+    throw new Error("Google isn't connected yet - add the service account credentials in Railway.");
+  }
+
+  const people = await db.user.findMany({
+    where: { isActive: true, ...(options?.userId ? { id: options.userId } : {}) },
+    select: { id: true, name: true, email: true },
+    orderBy: { name: "asc" },
+  });
+  if (people.length === 0) return outcome;
+
+  // "External" means outside every domain we sign in with, so nobody has to
+  // configure their own company's domain anywhere.
+  const ourDomains = new Set(
+    people
+      .map((p) => p.email.split("@")[1]?.toLowerCase())
+      .filter((d): d is string => Boolean(d)),
+  );
+  const allUsers = await db.user.findMany({ select: { email: true } });
+  for (const u of allUsers) {
+    const d = u.email.split("@")[1]?.toLowerCase();
+    if (d) ourDomains.add(d);
+  }
+
+  const candidates = await loadCandidates();
+  const weights = buildWeights(candidates);
+
+  const from = options?.from ?? (await calendarSyncFrom());
+  // A fortnight ahead: scheduled client calls are worth seeing before they
+  // happen, and they can't be accepted into a timesheet until they have.
+  const to = options?.to ?? new Date(Date.now() + 14 * 86_400_000);
+
+  for (const person of people) {
+    let meetings;
+    try {
+      meetings = await listMeetings(person.email, from, to);
+    } catch (e) {
+      outcome.failed.push({ name: person.name, error: describe(e) });
+      continue;
+    }
+
+    outcome.people += 1;
+
+    for (const m of meetings) {
+      outcome.seen += 1;
+
+      const externalDomains = [
+        ...new Set(
+          m.attendees
+            .map((a) => a.email.split("@")[1]?.toLowerCase())
+            .filter((d): d is string => Boolean(d) && !ourDomains.has(d)),
+        ),
+      ];
+
+      const match = matchMeeting(
+        {
+          title: m.title,
+          externalDomains,
+          organizerEmail: m.organizerEmail,
+          userId: person.id,
+        },
+        candidates,
+        weights,
+      );
+      if (match.projectId) outcome.matched += 1;
+
+      const existing = await db.meeting.findUnique({
+        where: { userId_googleId: { userId: person.id, googleId: m.googleId } },
+      });
+
+      // Once someone has ruled on a meeting, the sync stops having opinions
+      // about it. Re-suggesting something already dismissed - or re-pointing
+      // an accepted one at a different project - is how a sync becomes
+      // something people turn off.
+      if (existing && existing.status !== "PENDING") {
+        outcome.settled += 1;
+        continue;
+      }
+
+      const data = {
+        title: m.title,
+        description: m.description,
+        startsAt: m.startsAt,
+        endsAt: m.endsAt,
+        minutes: m.minutes,
+        organizerEmail: m.organizerEmail,
+        isOrganizer: m.isOrganizer,
+        // Prisma's Json input type won't take a typed interface array
+        // directly; the shape is GoogleAttendee[] and read back as such.
+        attendees: m.attendees as unknown as Prisma.InputJsonValue,
+        externalDomains,
+        suggestedClientId: match.clientId,
+        suggestedProjectId: match.projectId,
+        projectId: match.projectId,
+        taskId: match.taskId,
+        matchReason: match.reason,
+        confidence: match.confidence,
+        syncedAt: new Date(),
+      };
+
+      if (existing) {
+        await db.meeting.update({ where: { id: existing.id }, data });
+        outcome.updated += 1;
+      } else {
+        await db.meeting.create({
+          data: { userId: person.id, googleId: m.googleId, ...data },
+        });
+        outcome.created += 1;
+      }
+    }
+  }
+
+  return outcome;
+}
+
+function describe(e: unknown): string {
+  if (e instanceof GoogleAuthError) return e.message;
+  if (e instanceof GoogleApiError) {
+    if (e.status === 403) {
+      return `${e.message} (the calendar scope may be missing from the delegation grant)`;
+    }
+    if (e.status === 404) return "No primary calendar for that address.";
+    return e.message;
+  }
+  return e instanceof Error ? e.message : String(e);
+}

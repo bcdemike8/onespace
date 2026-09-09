@@ -7,7 +7,7 @@
 // it branches on a plain environment variable:
 //
 //   ONESPACE_ROLE unset or "web"  → migrate, then serve the app   (the default)
-//   ONESPACE_ROLE=cron            → send the daily Slack brief, then exit
+//   ONESPACE_ROLE=cron            → run the scheduled jobs, then exit
 //
 // The default is the web app deliberately: forgetting to set the variable gets
 // you a working site, not a site that quietly refuses to start.
@@ -29,9 +29,10 @@ function run(command, args) {
 }
 
 if (role === "cron") {
-  console.log("ONESPACE_ROLE=cron — sending the daily Slack brief.");
-  // Runs on import and exits on its own.
-  await import("./slack-digest.mjs");
+  console.log("ONESPACE_ROLE=cron — running scheduled jobs.");
+  // Runs on import and exits on its own. Which jobs is ONESPACE_JOB's call;
+  // unset means the calendar sync followed by the Slack brief.
+  await import("./cron.mjs");
 } else {
   if (role !== "web") {
     console.warn(`Unknown ONESPACE_ROLE "${role}" — starting the web app.`);

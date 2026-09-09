@@ -63,6 +63,15 @@ enum TaskStatus {
   DONE
 }
 
+/// Where a suggestion drawn from Google has got to. Nothing reaches a
+/// timesheet on a guess: a meeting sits here until the person it belongs to
+/// says yes.
+enum SuggestionStatus {
+  PENDING
+  ACCEPTED
+  DISMISSED
+}
+
 // ---------------------------------------------------------------- people
 
 model User {
@@ -93,6 +102,7 @@ model User {
   templateTasks TemplateTask[] @relation("TemplateDefaultAssignee")
   ownedProjects Project[]      @relation("ProjectOwner")
   statusUpdates StatusUpdate[] @relation("StatusUpdateAuthor")
+  meetings      Meeting[]
 
   @@index([isActive])
 }
@@ -120,6 +130,30 @@ model Client {
   updatedAt  DateTime  @updatedAt
 
   projects Project[]
+  domains  ClientDomain[]
+}
+
+/**
+ * An email domain that means "this client".
+ * Domains live on the client rather than the project because a client has one
+ * set of them however many engagements they run, and because it is sixty-odd
+ * rows to keep straight instead of a hundred and twenty. Which *project* a
+ * meeting or an email belongs to is a separate question, answered by the
+ * matcher and confirmed by a person.
+ */
+model ClientDomain {
+  id       String @id @default(cuid())
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  /// Lowercase, no "@" - "acme.com". Unique across all clients: one domain
+  /// cannot mean two customers, and a duplicate is a data error worth
+  /// refusing rather than resolving arbitrarily.
+  domain String @unique
+
+  createdAt DateTime @default(now())
+
+  @@index([clientId])
 }
 
 // A partner is who the work comes through — Outreach, Salesloft — as distinct
@@ -178,6 +212,7 @@ model Project {
   tasks         Task[]
   timeEntries   TimeEntry[]
   statusUpdates StatusUpdate[]
+  meetings      Meeting[]
 
   @@index([clientId])
   @@index([partnerId])
@@ -227,6 +262,7 @@ model Task {
 
   timeEntries TimeEntry[]
   timers      RunningTimer[]
+  meetings    Meeting[]
 
   @@index([projectId, orderIndex])
   @@index([assigneeId, status])
@@ -355,6 +391,8 @@ model TimeEntry {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  meeting Meeting?
+
   @@index([userId, date])
   @@index([userId, taskId, date])
   @@index([projectId, date])
@@ -373,6 +411,77 @@ model RunningTimer {
 
   notes     String?
   startedAt DateTime @default(now())
+}
+
+// ------------------------------------------------------- meetings from Google
+
+/**
+ * A meeting pulled off someone's Google Calendar, and where OneSpace thinks
+ * the time belongs.
+ * The row is kept whatever happens to it - accepted, dismissed, or still
+ * waiting - for two reasons. Re-syncing must not re-suggest something the
+ * person already said no to, and when a meeting is accepted the link back to
+ * the time entry is what stops a second sync booking the same hour twice.
+ */
+model Meeting {
+  id String @id @default(cuid())
+
+  /// Whose calendar this came from. A meeting with five people from here
+  /// produces five rows, one each, because each of them may book their own
+  /// time against a different project.
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Google's id for the event. Stable across edits, which is what makes a
+  /// re-sync an update rather than a duplicate.
+  googleId String
+
+  title       String
+  description String?
+
+  /// Real instants, not calendar days: a meeting has a clock time, and the
+  /// timesheet day is worked out from the person's zone when it is accepted.
+  startsAt DateTime
+  endsAt   DateTime
+  minutes  Int
+
+  /// Who called the meeting, and whether that was this person.
+  organizerEmail String?
+  isOrganizer    Boolean @default(false)
+
+  /// Every invitee, as [{ email, name, responseStatus }]. Kept whole so the
+  /// review screen can show who was actually in the room.
+  attendees Json
+
+  /// The outside domains among the attendees, lowercased. This is what the
+  /// matcher works from, and what makes an internal meeting recognisable.
+  externalDomains String[]
+
+  status SuggestionStatus @default(PENDING)
+
+  /// What the matcher proposed, and in one line why. The reason is shown to
+  /// the person: a suggestion you cannot see the basis of is one you either
+  /// accept blindly or ignore entirely.
+  suggestedClientId  String?
+  suggestedProjectId String?
+  projectId          String?
+  project            Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  taskId             String?
+  task               Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  matchReason        String?
+  confidence         Int      @default(0)
+
+  /// Set once accepted. Deleting the entry releases the meeting to be
+  /// suggested again rather than leaving it silently spent.
+  timeEntryId String?    @unique
+  timeEntry   TimeEntry? @relation(fields: [timeEntryId], references: [id], onDelete: SetNull)
+
+  syncedAt  DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, googleId])
+  @@index([userId, status, startsAt])
+  @@index([projectId])
 }
 
 /// Small key/value store for things there will only ever be one of. Right now

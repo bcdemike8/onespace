@@ -28,6 +28,33 @@ export function today(timeZone?: string): Date {
   return dayStart(parts);
 }
 
+/**
+ * The calendar day an instant falls on, in a named zone.
+ *
+ * A meeting is a moment in time; a timesheet row is a day. Which day a 7pm
+ * Central call belongs to depends on the zone you ask in - in UTC it is
+ * already tomorrow - so the conversion has to be explicit rather than
+ * whatever the server happens to be set to.
+ */
+export function dayInZone(instant: Date, timeZone: string): Date {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(instant);
+  return dayStart(parts);
+}
+
+/** Clock time in a named zone, e.g. "9:30 AM". */
+export function timeInZone(instant: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(instant);
+}
+
 export const addDays = (date: Date, n: number) =>
   new Date(date.getTime() + n * DAY_MS);
 

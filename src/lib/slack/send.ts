@@ -57,7 +57,7 @@ export async function sendDailyDigests(): Promise<DigestOutcome> {
   });
   const ids = people.map((p) => p.id);
 
-  const [tasks, owned, entries] = await Promise.all([
+  const [tasks, owned, entries, meetings] = await Promise.all([
     db.task.findMany({
       where: {
         status: { not: "DONE" },
@@ -90,7 +90,16 @@ export async function sendDailyDigests(): Promise<DigestOutcome> {
       where: { userId: { in: ids }, date: { gte: weekFrom, lte: weekEnd } },
       select: { userId: true, minutes: true, date: true },
     }),
+    // Only meetings that have actually happened: nobody can book time for
+    // this afternoon's call at five in the morning.
+    db.meeting.groupBy({
+      by: ["userId"],
+      where: { userId: { in: ids }, status: "PENDING", startsAt: { lte: new Date() } },
+      _count: true,
+    }),
   ]);
+
+  const waitingByUser = new Map(meetings.map((m) => [m.userId, m._count]));
 
   const outcome: DigestOutcome = { sent: 0, skipped: 0, failed: [], unlinked: [] };
 
@@ -133,11 +142,18 @@ export async function sendDailyDigests(): Promise<DigestOutcome> {
     // Quiet when there's genuinely nothing: no work due, nothing overdue, no
     // project of theirs in trouble, and their time is already up to date. A
     // 5am message that says "all clear" every day gets muted within a week.
+    const meetingsWaiting = waitingByUser.get(person.id) ?? 0;
+
     const nothingDue =
       overdue.length === 0 &&
       dueToday.length === 0 &&
       (!weekAhead || dueLater.length === 0);
-    if (nothingDue && attention.length === 0 && lastWorkedMinutes > 0) {
+    if (
+      nothingDue &&
+      attention.length === 0 &&
+      lastWorkedMinutes > 0 &&
+      meetingsWaiting === 0
+    ) {
       outcome.skipped += 1;
       continue;
     }
@@ -157,6 +173,7 @@ export async function sendDailyDigests(): Promise<DigestOutcome> {
       lastWorkedMinutes,
       lastWorkedLabel: longWeekday(previous),
       weekMinutes,
+      meetingsWaiting,
       appUrl: appUrl(),
     });
 

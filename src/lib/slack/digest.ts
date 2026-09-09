@@ -30,6 +30,8 @@ export interface DailyInput {
   lastWorkedMinutes: number;
   lastWorkedLabel: string;
   weekMinutes: number;
+  /** Meetings sitting on the calendar waiting to be turned into time. */
+  meetingsWaiting: number;
   appUrl: string;
 }
 
@@ -87,7 +89,7 @@ export function buildDailyDigest(input: DailyInput): SlackMessage {
   const {
     firstName, weekAhead, overdue, dueToday, dueLater,
     ownedNeedingAttention, lastWorkedMinutes, lastWorkedLabel,
-    weekMinutes, appUrl,
+    weekMinutes, meetingsWaiting, appUrl,
   } = input;
 
   const blocks: unknown[] = [];
@@ -131,6 +133,16 @@ export function buildDailyDigest(input: DailyInput): SlackMessage {
       ? `:hourglass: *Nothing logged ${lastWorkedLabel}.* ${formatHours(weekMinutes)}h this week so far.`
       : `:hourglass: ${formatHours(lastWorkedMinutes)}h logged ${lastWorkedLabel} · ${formatHours(weekMinutes)}h this week so far.`;
   blocks.push(section(timeLine));
+
+  // The nudge that makes the calendar sync worth having: unbooked meetings are
+  // the single biggest source of time that never gets billed.
+  if (meetingsWaiting > 0) {
+    blocks.push(
+      section(
+        `:calendar: *${meetingsWaiting} meeting${meetingsWaiting === 1 ? "" : "s"} waiting to be logged.* <${appUrl}/meetings|Review them>`,
+      ),
+    );
+  }
 
   blocks.push(context("Log from here with `/onespace log 1.5 Acme kickoff call`."));
   blocks.push(linkButton("Open my work", appUrl));

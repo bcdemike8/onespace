@@ -11,6 +11,7 @@ export const dynamic = "force-dynamic";
 const BASE_NAV: NavItem[] = [
   { href: "/", label: "My work", icon: "◎" },
   { href: "/timesheet", label: "Timesheet", icon: "▦" },
+  { href: "/meetings", label: "Meetings", icon: "◷" },
   { href: "/projects", label: "Projects", icon: "▤" },
   { href: "/reports", label: "Reports", icon: "◔" },
 ];
