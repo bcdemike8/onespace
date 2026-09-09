@@ -41,12 +41,33 @@ async function run(request: Request) {
     return NextResponse.json({ error: "kind must be 'daily'." }, { status: 400 });
   }
 
-  const result = await sendDailyDigests();
+  // This endpoint is the main way anyone checks whether the brief works, and
+  // an uncaught throw here renders as a blank 500 — which tells whoever is
+  // debugging it precisely nothing. Say what broke instead.
+  try {
+    const result = await sendDailyDigests();
 
-  // 200 even when individual sends failed: the run itself worked, and the body
-  // says who didn't get one. A 500 here would make Railway retry the whole
-  // batch and double-message everyone who did.
-  return NextResponse.json({ kind: "daily", ...result });
+    // 200 even when individual sends failed: the run itself worked, and the
+    // body says who didn't get one. A 500 here would make Railway retry the
+    // whole batch and double-message everyone who did.
+    return NextResponse.json({ kind: "daily", ...result });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error("Daily digest failed:", e);
+    return NextResponse.json(
+      {
+        error: "The digest run failed before anything was sent.",
+        // Prisma's messages open with a blank line, so take the first line
+        // that actually says something.
+        detail:
+          message
+            .split("\n")
+            .map((line) => line.trim())
+            .find(Boolean) ?? "No detail available.",
+      },
+      { status: 500 },
+    );
+  }
 }
 
 export const GET = run;
