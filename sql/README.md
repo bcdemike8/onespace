@@ -19,6 +19,8 @@ bottom.
 | `onespace-owners.sql` | Sets the owner on 125 projects — 59 from Everhour's Leads column, 66 inferred from who logged the most hours | Run |
 | `onespace-sow-templates.sql` | The eight Amplify implementation templates built from the signed SOWs | Run |
 | `onespace-client-domains.sql` | Maps clients to the email domains Google matching depends on. Section 2 reads your own unmatched meetings and tells you which domains are worth adding | Optional — the Clients page does the same thing one at a time |
+| `onespace-domain-worksheet.sql` | Read-only. Prints every unmapped client and partner as fill-in-the-blank lines, ordered by how much work each represents | Run first |
+| `onespace-partner-domains.sql` | Maps partners to their domains. A partner in a client meeting must not read as a second client | Optional — the Clients page does the same |
 | `onespace-cleanup.sql` | Moves Ricky Cookson's two projects to Brianna; merges "Factory Fix" into "FactoryFix, LLC" | |
 | `onespace-billing-types.sql` | Marks the 18 projects that only ever logged non-billable time | |
 | `onespace-subtasks.sql` | Reattaches 91 imported subtasks to their parents | |
