@@ -22,9 +22,16 @@ BEGIN;
 -- --------------------------------------------------- 1. partners that exist
 -- Created only if the name isn't already there. Rename them on the Clients
 -- page afterwards if you'd rather they read differently in reports.
+--
+-- Outreach and Skaled are on this list even though they may already be in
+-- OneSpace. An earlier version of this file assumed they were, and silently
+-- mapped nothing for them when they weren't - which left the two domains that
+-- account for most of the unmapped meetings still unmapped.
 
 create temp table new_partners (name text);
 insert into new_partners (name) values
+  ('Outreach'),
+  ('Skaled'),
   ('Murdoch Marketing'),
   ('Forerunners Group'),
   ('Apollo');
