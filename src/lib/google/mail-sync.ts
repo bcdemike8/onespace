@@ -4,6 +4,8 @@ import { dayStart } from "@/lib/dates";
 import { findThreadIds, getThread, type GmailMessage } from "@/lib/google/gmail";
 import { GoogleApiError, GoogleAuthError, googleConfigured } from "@/lib/google/auth";
 import { buildWeights, matchMeeting, type MatchCandidate } from "@/lib/google/match";
+import { extractRecapItems, looksLikeRecap } from "@/lib/mail/recap";
+import { dueFor } from "@/lib/when";
 
 export const MAIL_FROM_KEY = "google.mailFrom";
 export const DEFAULT_MAIL_FROM = "2026-08-01";
@@ -20,6 +22,9 @@ export interface MailSyncOutcome {
   updated: number;
   /** Threads whose newest message is theirs - the ones that need answering. */
   awaiting: number;
+  /** Recap emails read for action items, and how many those produced. */
+  recaps: number;
+  commitments: number;
   failed: { name: string; error: string }[];
 }
 
@@ -71,6 +76,8 @@ export async function syncMail(options?: {
     created: 0,
     updated: 0,
     awaiting: 0,
+    recaps: 0,
+    commitments: 0,
     failed: [],
   };
 
@@ -227,11 +234,76 @@ export async function syncMail(options?: {
       }
 
       await saveMessages(rowId, messages, fromUs);
+      const found = await readRecaps(rowId);
+      outcome.recaps += found.recaps;
+      outcome.commitments += found.items;
       outcome.threads += 1;
     }
   }
 
   return outcome;
+}
+
+/**
+ * Action items out of the recaps in a thread.
+ *
+ * A recap is the most considered statement of what was agreed that exists -
+ * the consultant wrote it after the call, having thought about it. Read once
+ * per message, marked, and never read again: re-reading would raise the same
+ * items after somebody dismissed them.
+ *
+ * Only mail we sent. A client's own "next steps" list is their commitment to
+ * keep, and putting it on a RevOptics plate would be wrong in both
+ * directions - we'd chase work that isn't ours and miss that they owe it.
+ */
+async function readRecaps(threadId: string): Promise<{ recaps: number; items: number }> {
+  const unread = await db.mailMessage.findMany({
+    where: { threadId, fromUs: true, recapReadAt: null },
+    select: { id: true, sentAt: true, body: true, thread: { select: { subject: true } } },
+    orderBy: { sentAt: "asc" },
+    take: 50,
+  });
+
+  let recaps = 0;
+  let items = 0;
+
+  for (const message of unread) {
+    const isRecap = looksLikeRecap(message.thread.subject, message.body);
+    const found = isRecap ? extractRecapItems(message.body) : [];
+
+    await db.$transaction(async (tx) => {
+      // Marked whether or not it was a recap: a message that isn't one now
+      // never will be, and re-testing every message on every sync is work
+      // that grows with the mailbox.
+      await tx.mailMessage.update({
+        where: { id: message.id },
+        data: { recapReadAt: new Date() },
+      });
+      if (found.length > 0) {
+        await tx.commitment.createMany({
+          data: found.map((item) => {
+            // Anchored to the day the recap went out, so "by Friday" in a
+            // mail from last week means that Friday.
+            const due = dueFor(item.text, message.sentAt);
+            return {
+              mailMessageId: message.id,
+              source: "RECAP_EMAIL" as const,
+              text: item.text,
+              speaker: item.owner,
+              suggestedTask: item.suggestedTask,
+              dueDate: due.date,
+              dueStated: due.stated,
+            };
+          }),
+        });
+      }
+    });
+
+    if (isRecap) recaps += 1;
+    items += found.length;
+  }
+
+  return { recaps, items };
 }
 
 async function saveMessages(

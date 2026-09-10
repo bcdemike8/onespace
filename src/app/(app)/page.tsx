@@ -2,7 +2,9 @@ import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import {
+  DAY_MS,
   addDays,
+  dayStart,
   formatMedium,
   relativeDueLabel,
   toISODate,
@@ -23,32 +25,43 @@ import {
 import { LogTimeForm, type LoggableProject } from "@/components/LogTimeForm";
 import { TaskListItem, type TaskListItemData } from "@/components/TaskListItem";
 import { deleteTimeEntryAction } from "@/app/actions/time";
+import { DayQueue, type QueueCommitment, type QueueProject } from "./DayQueue";
 
 export const dynamic = "force-dynamic";
 
-/** Buckets that answer "what should I do next?" without any thinking. */
-function bucketTasks(tasks: TaskListItemData[]) {
-  const now = today();
-  const endOfWeek = weekEnd(now);
+/**
+ * The three horizons a consultant actually plans in: today, the next few
+ * days, the rest of the week.
+ *
+ * Rolling windows rather than calendar weeks. "The next seven days" is what
+ * somebody means on a Thursday; "the rest of this week" on a Thursday is a
+ * day and a half and hides everything that matters. Overdue rides with today
+ * because that is when it needs doing.
+ */
+function bucketTasks(tasks: TaskListItemData[], now = today()) {
+  const inThree = addDays(now, 3);
+  const inSeven = addDays(now, 7);
 
-  const overdue: TaskListItemData[] = [];
-  const dueToday: TaskListItemData[] = [];
+  const todayOrLate: TaskListItemData[] = [];
+  const soon: TaskListItemData[] = [];
   const thisWeek: TaskListItemData[] = [];
   const later: TaskListItemData[] = [];
+  const undated: TaskListItemData[] = [];
 
   for (const task of tasks) {
-    if (!task.dueDate) later.push(task);
-    else if (task.dueDate < now) overdue.push(task);
-    else if (task.dueDate.getTime() === now.getTime()) dueToday.push(task);
-    else if (task.dueDate <= endOfWeek) thisWeek.push(task);
+    if (!task.dueDate) undated.push(task);
+    else if (task.dueDate <= now) todayOrLate.push(task);
+    else if (task.dueDate <= inThree) soon.push(task);
+    else if (task.dueDate <= inSeven) thisWeek.push(task);
     else later.push(task);
   }
 
   return [
-    { title: "Overdue", tasks: overdue, tone: "bad" as const },
-    { title: "Due today", tasks: dueToday, tone: "warn" as const },
-    { title: "Rest of this week", tasks: thisWeek, tone: "default" as const },
-    { title: "Later", tasks: later, tone: "default" as const },
+    { title: "Today", tasks: todayOrLate, tone: "warn" as const },
+    { title: "Next three days", tasks: soon, tone: "default" as const },
+    { title: "Rest of the week", tasks: thisWeek, tone: "default" as const },
+    { title: "After that", tasks: later, tone: "default" as const },
+    { title: "No date on them", tasks: undated, tone: "default" as const },
   ].filter((g) => g.tasks.length > 0);
 }
 
@@ -67,6 +80,9 @@ export default async function MyWorkPage() {
     projects,
     timer,
     ownedProjects,
+    pendingCommitments,
+    awaitingReply,
+    meetingsToLog,
   ] = await Promise.all([
       db.task.findMany({
         where: { assigneeId: user.id, status: { not: "DONE" } },
@@ -137,6 +153,58 @@ export default async function MyWorkPage() {
         },
         orderBy: [{ dueDate: "asc" }, { name: "asc" }],
       }),
+      // What the last fortnight of calls and recaps produced and nobody has
+      // said yes or no to yet. Older than that and the moment has passed:
+      // it either got done or it didn't, and a stale suggestion is noise.
+      db.commitment.findMany({
+        where: {
+          status: "PENDING",
+          createdAt: { gte: addDays(new Date(), -14) },
+          OR: [
+            { meeting: { userId: user.id } },
+            { mailMessage: { thread: { userId: user.id } } },
+          ],
+        },
+        orderBy: [{ dueDate: "asc" }, { createdAt: "desc" }],
+        take: 30,
+        select: {
+          id: true,
+          text: true,
+          suggestedTask: true,
+          speaker: true,
+          source: true,
+          dueDate: true,
+          dueStated: true,
+          meeting: {
+            select: { id: true, title: true, startsAt: true, projectId: true },
+          },
+          mailMessage: {
+            select: {
+              sentAt: true,
+              thread: { select: { id: true, subject: true, projectId: true } },
+            },
+          },
+        },
+      }),
+      // Threads whose last word is the client's. The clearest kind of
+      // overdue there is: somebody is waiting.
+      db.mailThread.findMany({
+        where: { userId: user.id, status: "OPEN", awaitingUs: true },
+        orderBy: { lastMessageAt: "asc" },
+        take: 8,
+        select: {
+          id: true,
+          subject: true,
+          lastFromName: true,
+          lastFrom: true,
+          lastMessageAt: true,
+          client: { select: { name: true } },
+        },
+      }),
+      // Meetings that happened and haven't been turned into time yet.
+      db.meeting.count({
+        where: { userId: user.id, status: "PENDING", startsAt: { lte: new Date() } },
+      }),
     ]);
 
   const ownedIds = ownedProjects.map((p) => p.id);
@@ -179,8 +247,35 @@ export default async function MyWorkPage() {
     assigneeName: null,
   }));
 
-  const groups = bucketTasks(tasks);
-  const overdueCount = groups.find((g) => g.title === "Overdue")?.tasks.length ?? 0;
+  const queue: QueueCommitment[] = pendingCommitments.map((c) => {
+    const meeting = c.meeting;
+    const mail = c.mailMessage;
+    return {
+      id: c.id,
+      text: c.text,
+      suggestedTask: c.suggestedTask,
+      speaker: c.speaker,
+      source: c.source,
+      dueDate: c.dueDate ? toISODate(c.dueDate) : null,
+      dueStated: c.dueStated,
+      originLabel: meeting
+        ? `${meeting.title} · ${formatMedium(dayStart(meeting.startsAt))}`
+        : mail
+          ? `${mail.thread.subject} · ${formatMedium(dayStart(mail.sentAt))}`
+          : "Source removed",
+      originHref: meeting ? "/meetings" : mail ? `/inbox/${mail.thread.id}` : null,
+      projectId: meeting?.projectId ?? mail?.thread.projectId ?? null,
+    };
+  });
+
+  const queueProjects: QueueProject[] = projects.map((p) => ({
+    id: p.id,
+    name: p.name,
+    clientName: p.client?.name ?? null,
+  }));
+
+  const groups = bucketTasks(tasks, now);
+  const overdueCount = tasks.filter((t) => t.dueDate && t.dueDate < now).length;
 
   const loggableProjects: LoggableProject[] = projects.map((p) => ({
     id: p.id,
@@ -224,6 +319,64 @@ export default async function MyWorkPage() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">
+          <DayQueue items={queue} projects={queueProjects} />
+
+          {awaitingReply.length > 0 ? (
+            <section className="mb-6">
+              <div className="mb-3 flex items-baseline justify-between">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-600">
+                  Waiting on your reply
+                </h2>
+                <span className="text-xs text-ink-500 tnum">
+                  {awaitingReply.length}
+                </span>
+              </div>
+              <ul className="card divide-y divide-ink-100">
+                {awaitingReply.map((thread) => {
+                  const waitingDays = Math.floor(
+                    (now.getTime() - dayStart(thread.lastMessageAt).getTime()) / DAY_MS,
+                  );
+                  return (
+                    <li key={thread.id} className="px-4 py-2.5">
+                      <Link
+                        href={`/inbox/${thread.id}`}
+                        className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 hover:text-brand-700"
+                      >
+                        <span className="text-sm font-medium text-ink-900">
+                          {thread.subject}
+                        </span>
+                        <span className="text-xs text-ink-500">
+                          {thread.lastFromName || thread.lastFrom}
+                          {thread.client ? ` · ${thread.client.name}` : ""}
+                        </span>
+                        <span
+                          className={`ml-auto text-xs tnum ${
+                            waitingDays >= 2 ? "font-medium text-warn-700" : "text-ink-500"
+                          }`}
+                        >
+                          {waitingDays === 0
+                            ? "today"
+                            : waitingDays === 1
+                              ? "1 day"
+                              : `${waitingDays} days`}
+                        </span>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ) : null}
+
+          {meetingsToLog > 0 ? (
+            <p className="mb-6 rounded-lg border border-ink-200 bg-ink-50 px-4 py-2.5 text-sm text-ink-600">
+              {meetingsToLog} meeting{meetingsToLog === 1 ? "" : "s"} still to log.{" "}
+              <Link href="/meetings" className="font-medium text-brand-700 hover:underline">
+                Deal with {meetingsToLog === 1 ? "it" : "them"}
+              </Link>
+            </p>
+          ) : null}
+
           {ownedProjects.length > 0 ? (
             <section className="mb-6">
               <div className="mb-3 flex items-baseline justify-between">
@@ -316,11 +469,7 @@ export default async function MyWorkPage() {
                   <div className="flex items-center justify-between border-b border-ink-200 bg-ink-50 px-4 py-2">
                     <h3
                       className={`text-xs font-semibold uppercase tracking-wide ${
-                        group.tone === "bad"
-                          ? "text-bad-700"
-                          : group.tone === "warn"
-                            ? "text-warn-700"
-                            : "text-ink-600"
+                        group.tone === "warn" ? "text-warn-700" : "text-ink-600"
                       }`}
                     >
                       {group.title}

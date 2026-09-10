@@ -1,7 +1,7 @@
 import "server-only";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import { dayStart } from "@/lib/dates";
+import { dayInZone, dayStart } from "@/lib/dates";
 import {
   getMeetingSummary,
   getRecording,
@@ -18,7 +18,9 @@ import {
   parseVtt,
   type Commitment,
 } from "@/lib/zoom/commitments";
+import { dueFor } from "@/lib/when";
 import { buildWeights, matchMeeting, type MatchCandidate } from "@/lib/google/match";
+import { orgTimezone } from "@/lib/google/sync";
 
 export const ZOOM_FROM_KEY = "zoom.from";
 export const DEFAULT_ZOOM_FROM = "2026-08-01";
@@ -101,6 +103,9 @@ export async function syncZoom(options?: {
   if (!zoomConfigured()) {
     throw new Error("Zoom isn't connected yet - add the Server-to-Server OAuth credentials in Railway.");
   }
+
+  // Which day a promise was made on depends on the zone the call was in.
+  const zone = await orgTimezone();
 
   const people = await db.user.findMany({
     where: { isActive: true, ...(options?.userId ? { id: options.userId } : {}) },
@@ -291,15 +296,27 @@ export async function syncZoom(options?: {
               },
             });
             if (found.commitments.length > 0) {
+              // "by Friday" is read against the day of the call, not against
+              // today: a promise made last Tuesday means that Friday, and
+              // reading it now would push the deadline out every sync.
+              const said = dayInZone(row!.startsAt, zone);
               await tx.commitment.createMany({
-                data: found.commitments.map((c) => ({
-                  meetingId: row!.id,
-                  text: c.text,
-                  speaker: c.speaker,
-                  atSeconds: c.atSeconds,
-                  suggestedTask: c.suggestedTask,
-                  fromSummary: found.fromSummary,
-                })),
+                data: found.commitments.map((c) => {
+                  const due = dueFor(c.text, said);
+                  return {
+                    meetingId: row!.id,
+                    source: found.fromSummary
+                      ? ("ZOOM_SUMMARY" as const)
+                      : ("TRANSCRIPT" as const),
+                    text: c.text,
+                    speaker: c.speaker,
+                    atSeconds: c.atSeconds,
+                    suggestedTask: c.suggestedTask,
+                    dueDate: due.date,
+                    dueStated: due.stated,
+                    fromSummary: found.fromSummary,
+                  };
+                }),
               });
             }
           });

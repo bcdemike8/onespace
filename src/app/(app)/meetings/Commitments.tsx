@@ -83,7 +83,10 @@ function CommitmentItem({
 
   return (
     <li className="rounded-md border border-ink-200 bg-white p-2">
-      <form action={action} className="flex flex-wrap items-center gap-2">
+      {/* Sibling forms rather than nested: a form inside a form is invalid
+          HTML and the parser drops the inner one. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <form action={action} className="contents">
         <input type="hidden" name="id" value={item.id} />
         <input type="hidden" name="projectId" value={projectId ?? ""} />
         <input
@@ -96,8 +99,9 @@ function CommitmentItem({
         <SubmitButton pendingLabel="Adding…" className="btn-primary btn-sm">
           Make a task
         </SubmitButton>
+        </form>
         <DismissButton id={item.id} />
-      </form>
+      </div>
 
       <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-ink-500">
         {item.fromSummary ? (

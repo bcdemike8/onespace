@@ -94,7 +94,7 @@ export function joinTurns(cues: TranscriptCue[]): TranscriptCue[] {
 // ------------------------------------------------------------------- rules
 
 /** How a promise starts. The subject has to be the speaker. */
-const PROMISE = [
+export const PROMISE = [
   /\bi(?:'| a)?m going to\b/i,
   /\bi(?:'|’)?ll\b/i,
   /\bi will\b/i,
@@ -108,7 +108,7 @@ const PROMISE = [
 ];
 
 /** Said in the room, done in the room. Not a task. */
-const IN_CALL = [
+export const IN_CALL = [
   /\b(share|sharing|stop sharing|present|pull up|pull that up|bring up|show you|scroll|zoom in|unmute|mute|record|screenshot)\b/i,
   /\b(see|hear|read) (you|your|that|this|it|the screen)\b/i,
   /\blet me (see|check|look|think|find|grab|pull)\b/i,
@@ -117,7 +117,7 @@ const IN_CALL = [
 ];
 
 /** Not a promise, whatever it looks like. */
-const NOT_A_PROMISE = [
+export const NOT_A_PROMISE = [
   /\bi (won'?t|can'?t|cannot|shouldn'?t|didn'?t|haven'?t)\b/i,
   /\bi(?:'|’)?m not\b/i,
   /\bwe (won'?t|can'?t|cannot)\b/i,
@@ -160,8 +160,11 @@ export function toTaskTitle(sentence: string): string {
   s = s.replace(HEDGES, "");
 
   // Trailing conversational tails.
+  // \b on both sides: without it the "ok" alternative matches the tail of
+  // "playbook" and "I'll draft the SDR playbook" becomes "Draft the SDR
+  // playbo". Same for "too" in "tattoo" and "as well" in anything.
   s = s.replace(
-    /[,;]?\s*(?:if that (?:works|helps)|okay|ok|alright|does that (?:work|sound good)|sound good|for you|as well|too)\s*[.?!]*$/i,
+    /[,;]?\s+\b(?:if that (?:works|helps)|okay|ok|alright|does that (?:work|sound good)|sound good|for you|as well|too)\b\s*[.?!]*$/i,
     "",
   );
   s = s.replace(/[.!?,;:\s]+$/, "");

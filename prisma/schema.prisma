@@ -88,6 +88,16 @@ enum SuggestionStatus {
   DISMISSED
 }
 
+/// Where a commitment was found. Three places produce them and they carry
+/// different weight: a recap the consultant wrote afterwards is the most
+/// considered statement of what was agreed, Zoom's own summary had the audio,
+/// and the transcript rules are the fallback that works everywhere.
+enum CommitmentSource {
+  TRANSCRIPT
+  ZOOM_SUMMARY
+  RECAP_EMAIL
+}
+
 // ---------------------------------------------------------------- people
 
 model User {
@@ -664,6 +674,13 @@ model MailMessage {
   /// re-imported as though the client had said something new.
   sentFromOneSpace Boolean @default(false)
 
+  /// Action items lifted out of a recap this message was.
+  commitments Commitment[]
+
+  /// Set once the recap rules have been over it, so a re-sync doesn't raise
+  /// the same items again after they were dismissed.
+  recapReadAt DateTime?
+
   @@unique([threadId, gmailMessageId])
   @@index([threadId, sentAt])
 }
@@ -679,17 +696,38 @@ model MailMessage {
  * not put words in someone's mouth on a project plan.
  */
 model Commitment {
-  id        String  @id @default(cuid())
-  meetingId String
-  meeting   Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  id String @id @default(cuid())
 
-  /// The sentence itself, as said.
+  /// The call it was said on. Null when it came out of a recap email
+  /// instead - a consultant writing up a call they had on the phone, or one
+  /// nobody recorded, still commits to things.
+  meetingId String?
+  meeting   Meeting? @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  /// The recap email it was written in. The other way round from meetingId:
+  /// exactly one of the two is set.
+  mailMessageId String?
+  mailMessage   MailMessage? @relation(fields: [mailMessageId], references: [id], onDelete: Cascade)
+
+  source CommitmentSource @default(TRANSCRIPT)
+
+  /// The sentence itself, as said or as written.
   text String
 
   /// Who said it, as the transcript names them, and how far into the call -
   /// enough to find the moment in the recording and check the context.
   speaker   String?
   atSeconds Int?
+
+  /// When they said they'd do it, read out of the sentence itself - "by
+  /// Friday", "end of next week". Null when nothing was said, in which case
+  /// the accept step falls back to three working days and says so.
+  dueDate DateTime?
+
+  /// True when dueDate came from the words rather than from that fallback.
+  /// The difference matters on screen: an invented date should read as a
+  /// question, not as a deadline somebody agreed to.
+  dueStated Boolean @default(false)
 
   /// A tidied version to use as the task name, since "yeah so I'll probably
   /// get that over to you tomorrow" is a promise but a poor task title.
@@ -707,6 +745,8 @@ model Commitment {
   createdAt DateTime @default(now())
 
   @@index([meetingId, status])
+  @@index([mailMessageId])
+  @@index([status, dueDate])
 }
 
 /// Small key/value store for things there will only ever be one of. Right now
