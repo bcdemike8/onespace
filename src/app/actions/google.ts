@@ -40,6 +40,15 @@ export async function syncCalendarAction(
       return { error: r.failed[0].error };
     }
 
+    // The one failure that looks like every other failure: no domains at all.
+    // Listing the domains it didn't recognise implies some are recognised,
+    // which sends you looking for a subtle mismatch that isn't there.
+    if (r.mappedDomains === 0) {
+      return {
+        error: `No client has an email domain yet, so nothing can match — ${r.seen} meetings were read and all of them skipped. Add domains on the Clients page, or run sql/onespace-client-domains-filled.sql.`,
+      };
+    }
+
     const bits = [
       `${r.created} new meeting${r.created === 1 ? "" : "s"}`,
       `${r.matched} matched to a project`,

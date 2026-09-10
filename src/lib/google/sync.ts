@@ -39,6 +39,12 @@ export interface SyncOutcome {
   /** Not stored: nobody in the room was on a domain mapped to a client. */
   skipped: number;
   /**
+   * How many client domains exist at all. Zero means nothing can ever match,
+   * which is a completely different problem from "these particular meetings
+   * were with strangers" and needs saying differently.
+   */
+  mappedDomains: number;
+  /**
    * The outside domains those skipped meetings were with, most frequent
    * first. This is the discovery path now that unrecognised meetings aren't
    * kept - it says what you'd gain by mapping one more domain.
@@ -101,6 +107,7 @@ export async function syncCalendars(options?: {
     settled: 0,
     matched: 0,
     skipped: 0,
+    mappedDomains: 0,
     unrecognised: [],
     people: 0,
     failed: [],
@@ -159,6 +166,8 @@ export async function syncCalendars(options?: {
       })
     ).map((d) => [d.domain, d.client.name]),
   );
+
+  outcome.mappedDomains = clientByDomain.size;
 
   // Domains not worth mentioning in the "you could map this" hint - already
   // decided against, or a partner, or a mail provider.
