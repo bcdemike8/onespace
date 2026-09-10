@@ -70,8 +70,14 @@ temporary:
 4. Switch the picker back to the **OneSpace project**, then **Manage policy** →
    *Override parent's policy* → a rule with enforcement **Off** → **Set
    policy**. Scoped to the project, so the rest of the org stays protected.
-5. Wait a minute and create the key.
-6. Set that project policy back to **Inherit**. The key keeps working.
+5. **There are two of them.** That search returns both
+   `iam.disableServiceAccountKeyCreation` (legacy, and the one the error
+   names) and `iam-managed.disableServiceAccountKeyCreation` (its
+   replacement), under near-identical titles. Google evaluates both
+   concurrently, so turning off one leaves the other blocking. Apply the same
+   project-scoped override to each.
+6. Wait a minute and create the key.
+7. Set both project policies back to **Inherit**. The key keeps working.
 
 The alternative is per-person OAuth instead of delegation: no policy change, but
 seven consent screens, a stored refresh token each, and a silent stop whenever
