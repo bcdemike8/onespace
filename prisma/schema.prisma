@@ -63,6 +63,14 @@ enum TaskStatus {
   DONE
 }
 
+/// Where a client email thread has got to as a piece of work.
+enum MailStatus {
+  /// Waiting on us. Shows on the inbox and counts as something to do.
+  OPEN
+  /// Dealt with - replied, or judged not to need one.
+  DONE
+}
+
 /// Where a suggestion drawn from Google has got to. Nothing reaches a
 /// timesheet on a guess: a meeting sits here until the person it belongs to
 /// says yes.
@@ -103,6 +111,7 @@ model User {
   ownedProjects Project[]      @relation("ProjectOwner")
   statusUpdates StatusUpdate[] @relation("StatusUpdateAuthor")
   meetings      Meeting[]
+  mailThreads   MailThread[]
 
   @@index([isActive])
 }
@@ -131,6 +140,7 @@ model Client {
 
   projects Project[]
   domains  ClientDomain[]
+  mail     MailThread[]
 }
 
 /**
@@ -213,6 +223,7 @@ model Project {
   timeEntries   TimeEntry[]
   statusUpdates StatusUpdate[]
   meetings      Meeting[]
+  mailThreads   MailThread[]
 
   @@index([clientId])
   @@index([partnerId])
@@ -263,6 +274,7 @@ model Task {
   timeEntries TimeEntry[]
   timers      RunningTimer[]
   meetings    Meeting[]
+  mailThreads MailThread[]
 
   @@index([projectId, orderIndex])
   @@index([assigneeId, status])
@@ -482,6 +494,104 @@ model Meeting {
   @@unique([userId, googleId])
   @@index([userId, status, startsAt])
   @@index([projectId])
+}
+
+// ------------------------------------------------------------ client email
+
+/**
+ * A Gmail thread with a client, treated as a piece of work rather than a
+ * message.
+ * Only threads involving a domain mapped to a client are ever fetched or
+ * stored. Google has no "read mail from these senders only" permission - the
+ * grant is the whole mailbox - so the narrowing is done here, on the way in,
+ * and everything else is left unread.
+ */
+model MailThread {
+  id String @id @default(cuid())
+
+  /// Whose mailbox. The same client thread reaching three people produces
+  /// three rows: each of them has their own reply to write and their own
+  /// time to book.
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  gmailThreadId String
+
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  /// Set when a person files the thread against a project, or the matcher is
+  /// confident enough to propose one.
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  taskId    String?
+  task      Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  subject       String
+  /// Sender of the newest message, for the list view.
+  lastFrom      String
+  lastFromName  String?
+  lastMessageAt DateTime
+  snippet       String
+
+  /// True when the newest message came from the client rather than from us.
+  /// This is the whole point of the inbox: a thread whose last word is
+  /// theirs is a thread somebody owes an answer to.
+  awaitingUs Boolean @default(true)
+
+  status MailStatus @default(OPEN)
+
+  matchReason String?
+  confidence  Int     @default(0)
+
+  syncedAt  DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages MailMessage[]
+
+  @@unique([userId, gmailThreadId])
+  @@index([userId, status, lastMessageAt])
+  @@index([projectId])
+  @@index([clientId])
+}
+
+/**
+ * One message in a thread. Stored so the thread can be read and answered
+ * without a round trip to Gmail for every open, and so a reply has something
+ * to quote.
+ */
+model MailMessage {
+  id       String     @id @default(cuid())
+  threadId String
+  thread   MailThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  gmailMessageId String
+
+  fromEmail String
+  fromName  String?
+  toEmails  String[]
+  ccEmails  String[]
+  sentAt    DateTime
+
+  /// Plain text. HTML mail is converted on the way in: rendering a client's
+  /// arbitrary HTML inside the app is an injection surface for no gain.
+  body String
+
+  /// The RFC Message-ID and References headers. Without them a reply arrives
+  /// in the client's mail app as a brand new conversation, which makes a
+  /// perfectly good answer look like it ignored the question.
+  messageIdHeader  String?
+  referencesHeader String?
+
+  /// Sent by someone at RevOptics rather than by the client.
+  fromUs Boolean @default(false)
+
+  /// Set on the message this app sent, so a reply written here is not
+  /// re-imported as though the client had said something new.
+  sentFromOneSpace Boolean @default(false)
+
+  @@unique([threadId, gmailMessageId])
+  @@index([threadId, sentAt])
 }
 
 /// Small key/value store for things there will only ever be one of. Right now

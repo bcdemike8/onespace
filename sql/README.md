@@ -18,6 +18,7 @@ bottom.
 | `onespace-setup.sql` | The original import: 54 Asana projects, their sections, tasks and estimates, plus clients, partners and people | Run |
 | `onespace-owners.sql` | Sets the owner on 125 projects — 59 from Everhour's Leads column, 66 inferred from who logged the most hours | Run |
 | `onespace-sow-templates.sql` | The eight Amplify implementation templates built from the signed SOWs | Run |
+| `onespace-client-domains.sql` | Maps clients to the email domains Google matching depends on. Section 2 reads your own unmatched meetings and tells you which domains are worth adding | Optional — the Clients page does the same thing one at a time |
 | `onespace-cleanup.sql` | Moves Ricky Cookson's two projects to Brianna; merges "Factory Fix" into "FactoryFix, LLC" | |
 | `onespace-billing-types.sql` | Marks the 18 projects that only ever logged non-billable time | |
 | `onespace-subtasks.sql` | Reattaches 91 imported subtasks to their parents | |

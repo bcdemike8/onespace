@@ -3,16 +3,17 @@
 //
 //   node scripts/cron.mjs
 //
-// Two jobs, run in this order because the brief is more useful once the
-// calendar has been read:
+// Three jobs, run in this order because the brief is more useful once the
+// calendar and the mailboxes have been read:
 //
 //   calendar  pull everyone's meetings and refresh the suggestions
+//   mail      pull client email and refresh the inbox
 //   digest    send the 5am Slack brief
 //
-// ONESPACE_JOB picks which. Unset means both, so the existing single cron
-// service keeps working and gains the calendar sync without being touched.
-// Set it to "calendar" on a second, more frequent service if you want
-// meetings to appear during the day rather than overnight.
+// ONESPACE_JOB picks which. Unset means all three, so the existing single cron
+// service keeps working and gains the two syncs without being touched. Set it
+// to "calendar" or "mail" on a second, more frequent service if you want
+// those to land during the day rather than overnight.
 //
 // Needs APP_URL (or RAILWAY_PUBLIC_DOMAIN) and CRON_SECRET.
 
@@ -60,7 +61,9 @@ async function call(name, path, describe) {
 
 const jobs = [];
 
-if (job === "calendar" || job === "both") {
+const wants = (name) => job === name || job === "both" || job === "all";
+
+if (wants("calendar")) {
   jobs.push(() =>
     call("calendar", "/api/cron/calendar-sync", (b) =>
       `${b.seen} meetings across ${b.people} calendars, ${b.created} new, ${b.matched} matched` +
@@ -71,7 +74,18 @@ if (job === "calendar" || job === "both") {
   );
 }
 
-if (job === "digest" || job === "both") {
+if (wants("mail")) {
+  jobs.push(() =>
+    call("mail", "/api/cron/mail-sync", (b) =>
+      `${b.threads} client threads across ${b.people} mailboxes, ${b.created} new, ${b.awaiting} waiting on a reply` +
+      (b.failed?.length
+        ? `, couldn't read ${b.failed.map((f) => `${f.name} (${f.error})`).join(", ")}`
+        : ""),
+    ),
+  );
+}
+
+if (wants("digest")) {
   jobs.push(() =>
     call("digest", "/api/cron/slack-digest", (b) =>
       `sent ${b.sent}, skipped ${b.skipped}` +
@@ -84,7 +98,7 @@ if (job === "digest" || job === "both") {
 }
 
 if (jobs.length === 0) {
-  console.error(`Unknown ONESPACE_JOB "${job}". Use calendar, digest, or leave it unset.`);
+  console.error(`Unknown ONESPACE_JOB "${job}". Use calendar, mail, digest, or leave it unset.`);
   process.exit(2);
 }
 

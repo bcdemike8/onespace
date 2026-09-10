@@ -111,6 +111,9 @@ to prove the request is allowed.
 - **Variables**:
   - `ONESPACE_ROLE` = `cron` — **this is the switch.** Without it the service
     starts the web app instead and no brief is ever sent.
+  - `ONESPACE_JOB` — leave it unset. Unset runs all three jobs in order:
+    the calendar sync, the mail sync, then the brief. Set it to `calendar`,
+    `mail` or `digest` on a second service to split them up.
   - `APP_URL` — your OneSpace address, e.g. `https://onespace-production-xxxx.up.railway.app`
   - `CRON_SECRET` — **the identical string you put on the OneSpace app service.**
     Open that service's Variables, copy the value, paste it here under the same
