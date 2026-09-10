@@ -146,7 +146,19 @@ export async function syncCalendars(options?: {
   // the room is not stored at all: Brianna's calendar carries roughly twice as
   // many internal, prospect and networking meetings as client ones, and a
   // suggestion list where most rows are noise is a list nobody reads.
-  const clientDomains = new Set(candidates.flatMap((c) => c.domains));
+  //
+  // Read from the domain table rather than from the candidate projects. A
+  // client whose only project has finished - or hasn't been created yet -
+  // still has domains, and their meetings are still real client time. Taking
+  // this from the live project list instead would silently drop them, which
+  // is a hard thing to notice and a worse thing to discover a month later.
+  const clientByDomain = new Map(
+    (
+      await db.clientDomain.findMany({
+        select: { domain: true, client: { select: { name: true } } },
+      })
+    ).map((d) => [d.domain, d.client.name]),
+  );
 
   // Domains not worth mentioning in the "you could map this" hint - already
   // decided against, or a partner, or a mail provider.
@@ -190,7 +202,7 @@ export async function syncCalendars(options?: {
       // stored for it is cleared out, so mapping a domain later and
       // re-syncing brings its meetings straight back - nothing here is a
       // decision you're stuck with.
-      if (!externalDomains.some((d) => clientDomains.has(d))) {
+      if (!externalDomains.some((d) => clientByDomain.has(d))) {
         await db.meeting.deleteMany({
           where: { userId: person.id, googleId: m.googleId, status: "PENDING" },
         });
@@ -212,6 +224,23 @@ export async function syncCalendars(options?: {
         weights,
         partnerDomains,
       );
+      // A client we recognise but can't place: their project is finished, or
+      // was never created. Saying which client it is turns a dead end into
+      // one obvious next step.
+      let reason = match.reason;
+      if (!match.projectId) {
+        const named = [
+          ...new Set(
+            externalDomains
+              .map((d) => clientByDomain.get(d))
+              .filter((n): n is string => Boolean(n)),
+          ),
+        ];
+        if (named.length > 0) {
+          reason = `${named.join(" and ")} were in the invite, but there's no open project for them - create one, or pick where this should go.`;
+        }
+      }
+
       if (match.projectId) outcome.matched += 1;
 
       const existing = await db.meeting.findUnique({
@@ -243,7 +272,7 @@ export async function syncCalendars(options?: {
         suggestedProjectId: match.projectId,
         projectId: match.projectId,
         taskId: match.taskId,
-        matchReason: match.reason,
+        matchReason: reason,
         confidence: match.confidence,
         syncedAt: new Date(),
       };
