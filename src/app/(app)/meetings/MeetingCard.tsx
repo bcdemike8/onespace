@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 import { acceptMeetingAction, dismissMeetingAction } from "@/app/actions/google";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ErrorNote } from "@/components/ui";
+import { Commitments, type CommitmentRow } from "./Commitments";
 
 export interface ProjectOption {
   id: string;
@@ -29,6 +30,10 @@ export interface MeetingRow {
   /** Set when the meeting's day sits in a closed month. */
   lockedNote: string | null;
   ownerName: string | null;
+  /** What Zoom says it actually ran for, when that differs from the booking. */
+  actualMinutes: number | null;
+  recordingUrl: string | null;
+  commitments: CommitmentRow[];
 }
 
 /** At or above this the suggestion reads as an answer rather than a question. */
@@ -66,7 +71,21 @@ export function MeetingCard({
           <div className="flex flex-wrap items-baseline gap-2">
             <h3 className="font-medium text-ink-900">{meeting.title}</h3>
             <span className="text-xs text-ink-500 tnum">
-              {meeting.dayLabel} · {meeting.timeLabel} · {formatMinutes(meeting.minutes)}
+              {meeting.dayLabel} · {meeting.timeLabel} ·{" "}
+              {meeting.actualMinutes !== null &&
+              meeting.actualMinutes !== meeting.minutes ? (
+                <>
+                  <span title="What Zoom says it actually ran for">
+                    {formatMinutes(meeting.actualMinutes)}
+                  </span>
+                  <span className="text-ink-400">
+                    {" "}
+                    (booked {formatMinutes(meeting.minutes)})
+                  </span>
+                </>
+              ) : (
+                formatMinutes(meeting.minutes)
+              )}
             </span>
           </div>
 
@@ -218,6 +237,12 @@ export function MeetingCard({
           <DismissButton id={meeting.id} />
         </div>
       ) : null}
+
+      <Commitments
+        items={meeting.commitments}
+        projectId={projectId || null}
+        recordingUrl={meeting.recordingUrl}
+      />
     </li>
   );
 }

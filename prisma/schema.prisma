@@ -74,6 +74,14 @@ enum MailStatus {
 /// Where a suggestion drawn from Google has got to. Nothing reaches a
 /// timesheet on a guess: a meeting sits here until the person it belongs to
 /// says yes.
+/// Where a meeting came from. A Zoom call that was never on anyone's
+/// calendar - an instant meeting, or a dial into a personal room - is real
+/// billable time that the calendar sync can never see.
+enum MeetingSource {
+  CALENDAR
+  ZOOM
+}
+
 enum SuggestionStatus {
   PENDING
   ACCEPTED
@@ -314,6 +322,7 @@ model Task {
   timers      RunningTimer[]
   meetings    Meeting[]
   mailThreads MailThread[]
+  commitment  Commitment?
 
   @@index([projectId, orderIndex])
   @@index([assigneeId, status])
@@ -484,8 +493,9 @@ model Meeting {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   /// Google's id for the event. Stable across edits, which is what makes a
-  /// re-sync an update rather than a duplicate.
-  googleId String
+  /// re-sync an update rather than a duplicate. Null for a Zoom call that was
+  /// never on a calendar.
+  googleId String?
 
   title       String
   description String?
@@ -527,10 +537,35 @@ model Meeting {
   timeEntryId String?    @unique
   timeEntry   TimeEntry? @relation(fields: [timeEntryId], references: [id], onDelete: SetNull)
 
+  source MeetingSource @default(CALENDAR)
+
+  /// Zoom's numeric meeting id, and the per-occurrence UUID. The id is lifted
+  /// out of the calendar invite's join link; the UUID identifies this
+  /// particular sitting of a recurring meeting.
+  zoomMeetingId String?
+  zoomUuid      String?
+
+  /// What Zoom says actually happened, as opposed to what was booked. A
+  /// 60-minute slot that ran 43 minutes is 43 minutes of billable time, and
+  /// one that overran to 75 is 75.
+  actualMinutes Int?
+
+  /// Where the recording lives. A link, never a copy - Zoom's retention and
+  /// access rules stay in force, and nothing about the call is duplicated
+  /// into this database.
+  recordingUrl String?
+
+  /// Set once the transcript has been read for commitments. The transcript
+  /// itself is not kept: only the sentences someone committed something in.
+  transcriptReadAt DateTime?
+
   syncedAt  DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  commitments Commitment[]
+
   @@unique([userId, googleId])
+  @@unique([userId, zoomUuid])
   @@index([userId, status, startsAt])
   @@index([projectId])
 }
@@ -631,6 +666,47 @@ model MailMessage {
 
   @@unique([threadId, gmailMessageId])
   @@index([threadId, sentAt])
+}
+
+/**
+ * Something a RevOptics person said they would do, on a call.
+ * "I'll send over the instructions", "let me book another session", "I'll get
+ * that ticket raised". The point of the Zoom integration: the transcript is
+ * read once, the promises are lifted out of it, and the person who made them
+ * gets them back as tasks. What was said is kept - the one sentence, with who
+ * said it and when in the call - and the rest of the transcript is not.
+ * Nothing here becomes a task on its own. A wrong guess should cost a click,
+ * not put words in someone's mouth on a project plan.
+ */
+model Commitment {
+  id        String  @id @default(cuid())
+  meetingId String
+  meeting   Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  /// The sentence itself, as said.
+  text String
+
+  /// Who said it, as the transcript names them, and how far into the call -
+  /// enough to find the moment in the recording and check the context.
+  speaker   String?
+  atSeconds Int?
+
+  /// A tidied version to use as the task name, since "yeah so I'll probably
+  /// get that over to you tomorrow" is a promise but a poor task title.
+  suggestedTask String
+
+  /// Where it came from: the transcript, or Zoom's own AI summary.
+  fromSummary Boolean @default(false)
+
+  status SuggestionStatus @default(PENDING)
+
+  /// Set when accepted, so a re-read can't raise the same task twice.
+  taskId String? @unique
+  task   Task?   @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([meetingId, status])
 }
 
 /// Small key/value store for things there will only ever be one of. Right now

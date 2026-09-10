@@ -3,11 +3,12 @@
 //
 //   node scripts/cron.mjs
 //
-// Three jobs, run in this order because the brief is more useful once the
-// calendar and the mailboxes have been read:
+// Four jobs, run in this order because the brief is more useful once the
+// calendar, the mailboxes and Zoom have been read:
 //
 //   calendar  pull everyone's meetings and refresh the suggestions
 //   mail      pull client email and refresh the inbox
+//   zoom      real call lengths, off-calendar calls, and commitments
 //   digest    send the 5am Slack brief
 //
 // ONESPACE_JOB picks which. Unset means all three, so the existing single cron
@@ -85,6 +86,17 @@ if (wants("mail")) {
   );
 }
 
+if (wants("zoom")) {
+  jobs.push(() =>
+    call("zoom", "/api/cron/zoom-sync", (b) =>
+      `${b.seen} calls across ${b.people} people, ${b.timed} timed, ${b.created} off-calendar, ${b.commitments} commitments` +
+      (b.failed?.length
+        ? `, couldn't read ${b.failed.map((f) => `${f.name} (${f.error})`).join(", ")}`
+        : ""),
+    ),
+  );
+}
+
 if (wants("digest")) {
   jobs.push(() =>
     call("digest", "/api/cron/slack-digest", (b) =>
@@ -98,7 +110,7 @@ if (wants("digest")) {
 }
 
 if (jobs.length === 0) {
-  console.error(`Unknown ONESPACE_JOB "${job}". Use calendar, mail, digest, or leave it unset.`);
+  console.error(`Unknown ONESPACE_JOB "${job}". Use calendar, mail, zoom, digest, or leave it unset.`);
   process.exit(2);
 }
 

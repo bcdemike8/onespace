@@ -6,6 +6,7 @@ import { getLockState } from "@/lib/lock";
 import { isLocked } from "@/lib/periods";
 import { orgTimezone } from "@/lib/google/sync";
 import { googleConfigured } from "@/lib/google/auth";
+import { zoomConfigured } from "@/lib/zoom/client";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { MeetingCard, type MeetingRow, type ProjectOption } from "./MeetingCard";
 import { SyncButton } from "./SyncButton";
@@ -54,7 +55,21 @@ export default async function MeetingsPage({
         taskId: true,
         matchReason: true,
         confidence: true,
+        actualMinutes: true,
+        recordingUrl: true,
         user: { select: { name: true } },
+        commitments: {
+          where: { status: "PENDING" },
+          orderBy: { atSeconds: "asc" },
+          select: {
+            id: true,
+            text: true,
+            speaker: true,
+            atSeconds: true,
+            suggestedTask: true,
+            fromSummary: true,
+          },
+        },
       },
     }),
     db.meeting.findMany({
@@ -114,7 +129,7 @@ export default async function MeetingsPage({
         dayLabel: formatMedium(day),
         timeLabel: timeInZone(m.startsAt, zone),
         minutes: m.minutes,
-        durationValue: durationValue(m.minutes),
+        durationValue: durationValue(m.actualMinutes ?? m.minutes),
         attendees,
         externalDomains: m.externalDomains,
         suggestedProjectId: m.suggestedProjectId,
@@ -125,6 +140,9 @@ export default async function MeetingsPage({
           ? `${formatMedium(day)} is in a closed month. Reopen the period on the timesheet to log this, or dismiss it.`
           : null,
         ownerName: everyone ? m.user.name : null,
+        actualMinutes: m.actualMinutes,
+        recordingUrl: m.recordingUrl,
+        commitments: m.commitments,
       };
     });
 
@@ -154,7 +172,7 @@ export default async function MeetingsPage({
             ? "Your calendar, waiting to become time entries."
             : `${rows.length} meeting${rows.length === 1 ? "" : "s"} to deal with.`
         }
-        actions={<SyncButton admin={admin} />}
+        actions={<SyncButton admin={admin} zoom={zoomConfigured()} />}
       />
 
       {admin ? (

@@ -266,6 +266,7 @@ export async function syncCalendars(options?: {
       }
 
       const data = {
+        zoomMeetingId: m.zoomMeetingId,
         title: m.title,
         description: m.description,
         startsAt: m.startsAt,

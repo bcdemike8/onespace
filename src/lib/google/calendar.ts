@@ -16,6 +16,8 @@ export interface GoogleAttendee {
 
 export interface GoogleMeeting {
   googleId: string;
+  /** Zoom's numeric meeting id, lifted out of the join link if there is one. */
+  zoomMeetingId: string | null;
   title: string;
   description: string | null;
   startsAt: Date;
@@ -31,6 +33,8 @@ interface RawEvent {
   status?: string;
   summary?: string;
   description?: string;
+  location?: string;
+  conferenceData?: { entryPoints?: { uri?: string }[] };
   eventType?: string;
   start?: { dateTime?: string; date?: string };
   end?: { dateTime?: string; date?: string };
@@ -103,6 +107,25 @@ export async function listMeetings(
   return out;
 }
 
+/**
+ * The Zoom meeting id in an invite, if there is one.
+ *
+ * Zoom puts the join link in a different place depending on how the meeting
+ * was created - the location field, the description, or a conference entry
+ * point - so all three are checked. This is what later lets a Zoom recording
+ * find the meeting it belongs to without guessing from timestamps.
+ */
+function zoomIdFrom(raw: RawEvent): string | null {
+  const haystack = [
+    raw.location ?? "",
+    raw.description ?? "",
+    ...(raw.conferenceData?.entryPoints ?? []).map((e) => e.uri ?? ""),
+  ].join(" ");
+
+  const m = haystack.match(/zoom\.us\/(?:j|w|s)\/(\d{9,12})/i);
+  return m ? m[1] : null;
+}
+
 /** One raw event, or null if it isn't work worth booking. */
 function toMeeting(raw: RawEvent): GoogleMeeting | null {
   if (!raw.id) return null;
@@ -147,6 +170,7 @@ function toMeeting(raw: RawEvent): GoogleMeeting | null {
     startsAt,
     endsAt,
     minutes,
+    zoomMeetingId: zoomIdFrom(raw),
     organizerEmail: raw.organizer?.email?.toLowerCase() ?? null,
     isOrganizer: Boolean(raw.organizer?.self),
     attendees,

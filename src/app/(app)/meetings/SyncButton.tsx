@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import { syncCalendarAction } from "@/app/actions/google";
+import { syncZoomAction } from "@/app/actions/zoom";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ErrorNote } from "@/components/ui";
 
@@ -9,8 +10,9 @@ import { ErrorNote } from "@/components/ui";
  * Pull the calendar on demand. The nightly sync does this on its own; the
  * button is for the first run and for "I just booked that, where is it".
  */
-export function SyncButton({ admin }: { admin: boolean }) {
+export function SyncButton({ admin, zoom }: { admin: boolean; zoom: boolean }) {
   const [state, action] = useActionState(syncCalendarAction, {} as { error?: string; message?: string });
+  const [zoomState, zoomAction] = useActionState(syncZoomAction, {} as { error?: string; message?: string });
 
   return (
     <div className="flex flex-wrap items-center justify-end gap-2">
@@ -30,6 +32,21 @@ export function SyncButton({ admin }: { admin: boolean }) {
         </form>
       ) : null}
 
+      {zoom ? (
+        <form action={zoomAction}>
+          <input type="hidden" name="scope" value={admin ? "all" : "me"} />
+          <SubmitButton pendingLabel="Reading Zoom…" className="btn-ghost btn-sm">
+            Sync Zoom
+          </SubmitButton>
+        </form>
+      ) : null}
+
+      {zoomState?.message ? (
+        <span className="w-full text-right text-xs text-ink-600 sm:w-auto">
+          {zoomState.message}
+        </span>
+      ) : null}
+
       {state?.message ? (
         <span className="w-full text-right text-xs text-ink-600 sm:w-auto">
           {state.message}
@@ -37,6 +54,7 @@ export function SyncButton({ admin }: { admin: boolean }) {
       ) : null}
       <div className="w-full">
         <ErrorNote message={state?.error} />
+        <ErrorNote message={zoomState?.error} />
       </div>
     </div>
   );
