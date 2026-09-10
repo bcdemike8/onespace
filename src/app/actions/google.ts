@@ -201,22 +201,11 @@ export async function reopenMeetingAction(formData: FormData): Promise<void> {
 const DOMAIN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/;
 
 /**
- * Attach one or more email domains to a client.
- *
- * Accepts what people actually paste - "@acme.com", "www.acme.com",
- * "someone@acme.com", a comma-separated list - and stores the bare domain.
+ * Whatever people actually paste, reduced to bare domains: "@acme.com",
+ * "www.acme.com", "someone@acme.com", a comma-separated list.
  */
-export async function addClientDomainsAction(
-  _prev: ActionState,
-  formData: FormData,
-): Promise<ActionState> {
-  await requireAdmin();
-
-  const clientId = String(formData.get("clientId") ?? "");
-  const raw = String(formData.get("domains") ?? "");
-  if (!clientId) return { error: "No client given." };
-
-  const wanted = [
+function parseDomains(raw: string): string[] {
+  return [
     ...new Set(
       raw
         .split(/[\s,;]+/)
@@ -227,6 +216,20 @@ export async function addClientDomainsAction(
         .map((d) => d.replace(/^www\./, "")),
     ),
   ];
+}
+
+/** Attach one or more email domains to a client. */
+export async function addClientDomainsAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  await requireAdmin();
+
+  const clientId = String(formData.get("clientId") ?? "");
+  const raw = String(formData.get("domains") ?? "");
+  if (!clientId) return { error: "No client given." };
+
+  const wanted = parseDomains(raw);
 
   if (wanted.length === 0) return { error: "Enter a domain, e.g. acme.com." };
 
@@ -260,6 +263,55 @@ export async function removeClientDomainAction(formData: FormData): Promise<void
   const id = String(formData.get("id") ?? "");
   if (!id) return;
   await db.clientDomain.delete({ where: { id } }).catch(() => {});
+  revalidatePath("/clients", "layout");
+}
+
+/**
+ * Domains belonging to a partner.
+ *
+ * Deliberately allowed to overlap with a client's: Skaled is both the partner
+ * work comes through and a customer in its own right, and the matcher wants to
+ * know both facts.
+ */
+export async function addPartnerDomainsAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  await requireAdmin();
+
+  const partnerId = String(formData.get("partnerId") ?? "");
+  const wanted = parseDomains(String(formData.get("domains") ?? ""));
+  if (!partnerId) return { error: "No partner given." };
+  if (wanted.length === 0) return { error: "Enter a domain, e.g. outreach.io." };
+
+  const bad = wanted.filter((d) => !DOMAIN.test(d));
+  if (bad.length > 0) {
+    return { error: `${bad.join(", ")} ${bad.length === 1 ? "isn't" : "aren't"} a domain.` };
+  }
+
+  const taken = await db.partnerDomain.findMany({
+    where: { domain: { in: wanted }, NOT: { partnerId } },
+    select: { domain: true, partner: { select: { name: true } } },
+  });
+  if (taken.length > 0) {
+    const list = taken.map((t) => `${t.domain} (${t.partner.name})`).join(", ");
+    return { error: `Already used by another partner: ${list}.` };
+  }
+
+  await db.partnerDomain.createMany({
+    data: wanted.map((domain) => ({ partnerId, domain })),
+    skipDuplicates: true,
+  });
+
+  revalidatePath("/clients", "layout");
+  return { ok: true };
+}
+
+export async function removePartnerDomainAction(formData: FormData): Promise<void> {
+  await requireAdmin();
+  const id = String(formData.get("id") ?? "");
+  if (!id) return;
+  await db.partnerDomain.delete({ where: { id } }).catch(() => {});
   revalidatePath("/clients", "layout");
 }
 

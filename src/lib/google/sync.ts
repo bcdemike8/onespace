@@ -122,6 +122,15 @@ export async function syncCalendars(options?: {
 
   const candidates = await loadCandidates();
   const weights = buildWeights(candidates);
+  // Domains that belong to a partner rather than a customer, so a partner
+  // sitting in on a client call doesn't read as a second client.
+  const partnerDomains = new Map(
+    (
+      await db.partnerDomain.findMany({
+        select: { domain: true, partner: { select: { name: true } } },
+      })
+    ).map((d) => [d.domain, d.partner.name]),
+  );
 
   const from = options?.from ?? (await calendarSyncFrom());
   // A fortnight ahead: scheduled client calls are worth seeing before they
@@ -159,6 +168,7 @@ export async function syncCalendars(options?: {
         },
         candidates,
         weights,
+        partnerDomains,
       );
       if (match.projectId) outcome.matched += 1;
 

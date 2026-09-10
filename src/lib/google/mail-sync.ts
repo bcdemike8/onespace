@@ -102,6 +102,15 @@ export async function syncMail(options?: {
 
   const candidates = await loadCandidates();
   const weights = buildWeights(candidates);
+  // Domains that belong to a partner rather than a customer, so a partner
+  // sitting in on a client call doesn't read as a second client.
+  const partnerDomains = new Map(
+    (
+      await db.partnerDomain.findMany({
+        select: { domain: true, partner: { select: { name: true } } },
+      })
+    ).map((d) => [d.domain, d.partner.name]),
+  );
   const from = options?.from ?? (await mailSyncFrom());
   const limit = options?.limit ?? 150;
 
@@ -151,6 +160,7 @@ export async function syncMail(options?: {
         },
         candidates,
         weights,
+        partnerDomains,
       );
 
       const fromUs = (address: string) => {

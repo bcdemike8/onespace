@@ -10,6 +10,7 @@ import {
   updatePartnerAction,
 } from "@/app/actions/projects";
 import { DomainsField } from "./DomainsField";
+import { PartnerDomainsField } from "./PartnerDomainsField";
 import { NewClientForm } from "./NewClientForm";
 import { NewPartnerForm } from "./NewPartnerForm";
 
@@ -27,7 +28,10 @@ export default async function ClientsPage() {
       orderBy: [{ archivedAt: "asc" }, { name: "asc" }],
     }),
     db.partner.findMany({
-      include: { projects: { select: { id: true, status: true } } },
+      include: {
+        projects: { select: { id: true, status: true } },
+        domains: { select: { id: true, domain: true }, orderBy: { domain: "asc" } },
+      },
       orderBy: [{ archivedAt: "asc" }, { name: "asc" }],
     }),
   ]);
@@ -56,7 +60,7 @@ export default async function ClientsPage() {
     <div>
       <PageHeader
         title="Clients & partners"
-        subtitle="A client is who the work is for; a partner is who it came through. Reports can group by either."
+        subtitle="A client is who the work is for; a partner is who it came through. Reports can group by either, and email domains on both are how meetings and mail find their project."
       />
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -197,6 +201,12 @@ export default async function ClientsPage() {
                         Save
                       </button>
                     </form>
+
+                    <PartnerDomainsField
+                      partnerId={partner.id}
+                      domains={partner.domains}
+                    />
+
                     <div className="mt-1 flex items-center gap-3">
                       <Link
                         href={`/reports?partners=${partner.id}&preset=this_year`}

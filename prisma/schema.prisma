@@ -178,6 +178,27 @@ model Partner {
   updatedAt  DateTime  @updatedAt
 
   projects Project[]
+  domains  PartnerDomain[]
+}
+
+/**
+ * An email domain belonging to a partner rather than a customer.
+ * Partners sit in on other people's meetings - Outreach turns up on a client
+ * implementation call, and the meeting is still the client's. Without knowing
+ * which domains are partners, two mapped domains in one room look like two
+ * customers and the meeting matches neither.
+ * A domain may be listed here *and* against a client: Skaled is both the
+ * partner work comes through and a customer in its own right. When both are
+ * in the room the customer wins; when only Skaled is, it is Skaled's meeting.
+ */
+model PartnerDomain {
+  id        String   @id @default(cuid())
+  partnerId String
+  partner   Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  domain    String   @unique
+  createdAt DateTime @default(now())
+
+  @@index([partnerId])
 }
 
 // --------------------------------------------------------------- projects

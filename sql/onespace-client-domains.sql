@@ -50,8 +50,20 @@ where m."projectId" is null
     'calendly.com','zoom.us','resource.calendar.google.com',
     'group.calendar.google.com','chorus.ai','gong.io','fathom.video'
   )
+  -- Partners already mapped on the Clients page. They sit in on other
+  -- people's calls, so they are not the answer to "who is this client".
+  and not exists (
+    select 1 from onespace."PartnerDomain" pd where pd.domain = d.domain
+  )
 group by d.domain
 order by 2 desc, 1;
+
+
+-- Two of these are almost certainly partners, not customers: the companies
+-- work comes *through* rather than the ones it is *for*. Map those on the
+-- Clients page under the partner, not here. A partner listed as a client
+-- makes every joint call look like two customers at once, and those meetings
+-- then match nothing.
 
 
 -- --------------------------------------------------------------- 3. the fill

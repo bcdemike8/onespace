@@ -153,6 +153,21 @@ hand.
 A domain can only belong to one client. If you try to add one that's taken,
 OneSpace names the client that already has it.
 
+### Partners get domains too, and it matters
+
+Partners have their own **Email domains** row in the list below the clients.
+Put `outreach.io` and `salesloft.com` there, not against a client.
+
+This is not tidiness. A partner sits in on client calls constantly, so if
+Outreach is registered as a client then every joint implementation call has two
+customers in the room and matches neither. Listed as a partner, they're set
+aside whenever a real customer is present, and the meeting lands where it
+should.
+
+A domain can be on both — Skaled is the partner work comes through *and* a
+customer in its own right. When Skaled and a customer are both in the room, the
+customer wins; when Skaled is the only outside party, it's Skaled's meeting.
+
 ---
 
 ## 5. Pull the first sync

@@ -138,6 +138,8 @@ export function matchMeeting(
   input: MatchInput,
   candidates: MatchCandidate[],
   weights: Map<string, number>,
+  /** Domain -> partner name, for domains that belong to a partner. */
+  partnerDomains: Map<string, string> = new Map(),
 ): MatchResult {
   const none = (reason: string): MatchResult => ({
     clientId: null,
@@ -152,10 +154,22 @@ export function matchMeeting(
   const titleWords = tokenize(input.title);
 
   // ------------------------------------------------------- 1. by domain
+  //
+  // A partner in the room is not a second customer. Outreach sits in on a
+  // client implementation call and the meeting is still the client's, so a
+  // partner domain is set aside whenever a real customer domain is also
+  // present. Only when the partner is the only outside party does it count -
+  // which is what makes a direct Skaled meeting land on Skaled.
+  const known = input.externalDomains.filter((d) =>
+    candidates.some((c) => c.domains.includes(d)),
+  );
+  const customerOnly = known.filter((d) => !partnerDomains.has(d));
+  const effective = customerOnly.length > 0 ? customerOnly : known;
+
   const byDomain = new Map<string, MatchCandidate[]>();
   for (const c of candidates) {
     for (const d of c.domains) {
-      if (input.externalDomains.includes(d)) {
+      if (effective.includes(d)) {
         const list = byDomain.get(d) ?? [];
         list.push(c);
         byDomain.set(d, list);
@@ -313,6 +327,20 @@ export function matchMeeting(
   if (input.externalDomains.length === 0) {
     return none("Internal - nobody outside RevOptics was invited.");
   }
+
+  const partnersPresent = [
+    ...new Set(
+      input.externalDomains
+        .map((d) => partnerDomains.get(d))
+        .filter((name): name is string => Boolean(name)),
+    ),
+  ];
+  if (partnersPresent.length > 0 && known.length === 0) {
+    return none(
+      `${partnersPresent.join(" and ")} were in the invite, but no customer was - pick the project this belongs to.`,
+    );
+  }
+
   return none(
     `Nobody recognised in the invite (${input.externalDomains.slice(0, 3).map(domainRoot).join(", ")}). Add the domain to a client to match these automatically.`,
   );
