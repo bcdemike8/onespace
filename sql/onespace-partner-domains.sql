@@ -14,15 +14,21 @@
 -- meeting lands on Skaled. That is the intended use, not a mistake.
 --
 -- Get the list of partner names from onespace-domain-worksheet.sql, section B.
+--
+-- Pre-filled with the two that turned up on the calendar: outreach.io on 25
+-- meetings, skaled.com on 52. If there is also a Skaled *client* in OneSpace,
+-- add skaled.com to it as well - a Skaled-only meeting then lands on Skaled,
+-- while Skaled-plus-a-customer still lands on the customer.
 
 BEGIN;
 
 create temp table partner_map (partner text, domain text);
 
 insert into partner_map (partner, domain) values
-  -- ('Outreach',   'outreach.io'),
-  -- ('Salesloft',  'salesloft.com'),
-  -- ('Skaled',     'skaled.com'),
+  ('Outreach',  'outreach.io'),
+  ('Skaled',    'skaled.com'),
+  -- Uncomment if you have a Salesloft partner record and meet with them.
+  -- ('Salesloft', 'salesloft.com'),
   ('__replace_me__', '__replace_me__');
 
 
