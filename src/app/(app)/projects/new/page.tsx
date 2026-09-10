@@ -18,7 +18,7 @@ export default async function NewProjectPage() {
     }),
     db.client.findMany({
       where: { archivedAt: null },
-      select: { id: true, name: true },
+      select: { id: true, name: true, domains: { select: { domain: true } } },
       orderBy: { name: "asc" },
     }),
     db.partner.findMany({
@@ -64,7 +64,11 @@ export default async function NewProjectPage() {
       />
       <NewProjectForm
         templates={options}
-        clients={clients}
+        clients={clients.map((c) => ({
+          id: c.id,
+          name: c.name,
+          domains: c.domains.map((d) => d.domain),
+        }))}
         partners={partners}
         people={people}
         defaultStart={toISODate(today())}

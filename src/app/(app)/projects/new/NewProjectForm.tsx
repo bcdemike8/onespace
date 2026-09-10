@@ -23,13 +23,19 @@ export function NewProjectForm({
   defaultStart,
 }: {
   templates: TemplateOption[];
-  clients: { id: string; name: string }[];
+  clients: { id: string; name: string; domains: string[] }[];
   partners: { id: string; name: string }[];
   people: { id: string; name: string }[];
   defaultStart: string;
 }) {
   const [state, action] = useActionState(createProjectAction, {});
   const [templateId, setTemplateId] = useState("");
+  const [clientId, setClientId] = useState("");
+
+  const client = useMemo(
+    () => clients.find((c) => c.id === clientId),
+    [clients, clientId],
+  );
 
   const selected = useMemo(
     () => templates.find((t) => t.id === templateId) ?? null,
@@ -145,15 +151,51 @@ export function NewProjectForm({
             <label className="label" htmlFor="clientId">
               Client
             </label>
-            <select id="clientId" name="clientId" className="input" defaultValue="">
+            <select
+              id="clientId"
+              name="clientId"
+              className="input"
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+            >
               <option value="">No client</option>
               {clients.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
+                  {c.domains.length === 0 ? " — no email domain yet" : ""}
                 </option>
               ))}
             </select>
           </div>
+
+          {clientId && client && client.domains.length === 0 ? (
+            <div>
+              <label className="label" htmlFor="clientDomains">
+                {client.name}&apos;s email domain
+              </label>
+              <input
+                id="clientDomains"
+                name="clientDomains"
+                className="input"
+                placeholder="acme.com"
+                autoComplete="off"
+              />
+              <p className="mt-1 text-xs text-ink-500">
+                Without it, none of {client.name}&apos;s meetings or email reach
+                OneSpace — those are only pulled in for domains mapped to a
+                client. Several is fine, comma-separated. You can add it later
+                on the Clients page.
+              </p>
+            </div>
+          ) : clientId && client ? (
+            <p className="text-xs text-ink-500">
+              Meetings and mail from{" "}
+              <span className="font-medium text-ink-700">
+                {client.domains.join(", ")}
+              </span>{" "}
+              come in against this project.
+            </p>
+          ) : null}
 
           <div>
             <label className="label" htmlFor="partnerId">

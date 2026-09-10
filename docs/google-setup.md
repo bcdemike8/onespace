@@ -145,10 +145,26 @@ for one client; paste them comma-separated.
 Paste whatever you have and it'll be tidied up: `@acme.com`, `www.acme.com`,
 `someone@acme.com` all become `acme.com`.
 
-**This is the setup everything else rests on.** A meeting or an email is
-recognised by the domain the other people are on. A client with no domain still
-works — their meetings just arrive unmatched and someone picks the project by
-hand.
+**This is the setup everything else rests on**, and it is not optional. A
+meeting or an email only comes into OneSpace at all if someone in it is on a
+domain mapped to a client. A client with no domain gets nothing: no meetings,
+no mail, and no warning beyond the sync saying it saw their domain and didn't
+recognise it.
+
+That strictness is the point. Most calendars carry far more internal,
+prospect and networking meetings than client ones, and a suggestion list where
+most rows are noise is a list nobody reads. Nothing is lost by it — map a
+domain later, re-sync, and its meetings arrive as if they had been there all
+along. Anything already logged is never touched.
+
+**New projects ask for it.** Creating a project for a client with no domain
+yet shows a field for it right there, because that is the one moment when
+whoever is typing definitely knows the answer.
+
+After each sync OneSpace names the unmapped domains it saw, most frequent
+first — that is how a new client gets noticed. Domains you have already
+decided against go in **Ignored domains**, which keeps them out of that list
+without affecting anything else.
 
 A domain can only belong to one client. If you try to add one that's taken,
 OneSpace names the client that already has it.

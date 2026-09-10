@@ -10,6 +10,7 @@ import {
   updatePartnerAction,
 } from "@/app/actions/projects";
 import { DomainsField } from "./DomainsField";
+import { IgnoredDomains } from "./IgnoredDomains";
 import { PartnerDomainsField } from "./PartnerDomainsField";
 import { NewClientForm } from "./NewClientForm";
 import { NewPartnerForm } from "./NewPartnerForm";
@@ -19,7 +20,7 @@ export const dynamic = "force-dynamic";
 export default async function ClientsPage() {
   await requireAdmin();
 
-  const [clients, partners] = await Promise.all([
+  const [clients, partners, ignored] = await Promise.all([
     db.client.findMany({
       include: {
         projects: { select: { id: true, name: true, status: true } },
@@ -33,6 +34,10 @@ export default async function ClientsPage() {
         domains: { select: { id: true, domain: true }, orderBy: { domain: "asc" } },
       },
       orderBy: [{ archivedAt: "asc" }, { name: "asc" }],
+    }),
+    db.ignoredDomain.findMany({
+      select: { id: true, domain: true, note: true },
+      orderBy: { domain: "asc" },
     }),
   ]);
 
@@ -233,6 +238,8 @@ export default async function ClientsPage() {
               <NewPartnerForm />
             </div>
           </section>
+
+          <IgnoredDomains domains={ignored} />
         </div>
       </div>
     </div>

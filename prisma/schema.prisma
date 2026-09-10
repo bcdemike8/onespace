@@ -182,6 +182,24 @@ model Partner {
 }
 
 /**
+ * A domain to stop asking about.
+ * Not every outside party is a client or a partner. Recruiters, vendors,
+ * networking contacts and the consultancy you swap referrals with all produce
+ * meetings that will never be billable to anyone, week after week. Left alone
+ * they arrive as suggestions forever and the list stops being worth reading.
+ * A meeting whose outside attendees are *all* ignored is not stored at all -
+ * so removing a domain from here and re-syncing brings its meetings straight
+ * back, rather than leaving a pile of dismissed rows nobody can find.
+ */
+model IgnoredDomain {
+  id        String   @id @default(cuid())
+  domain    String   @unique
+  /// Free text - "recruiters", "referral partner, never billable".
+  note      String?
+  createdAt DateTime @default(now())
+}
+
+/**
  * An email domain belonging to a partner rather than a customer.
  * Partners sit in on other people's meetings - Outreach turns up on a client
  * implementation call, and the meeting is still the client's. Without knowing

@@ -36,6 +36,14 @@ export interface SyncOutcome {
   /** Already accepted or dismissed, so left exactly as they are. */
   settled: number;
   matched: number;
+  /** Not stored: nobody in the room was on a domain mapped to a client. */
+  skipped: number;
+  /**
+   * The outside domains those skipped meetings were with, most frequent
+   * first. This is the discovery path now that unrecognised meetings aren't
+   * kept - it says what you'd gain by mapping one more domain.
+   */
+  unrecognised: { domain: string; meetings: number }[];
   people: number;
   failed: { name: string; error: string }[];
 }
@@ -92,6 +100,8 @@ export async function syncCalendars(options?: {
     updated: 0,
     settled: 0,
     matched: 0,
+    skipped: 0,
+    unrecognised: [],
     people: 0,
     failed: [],
   };
@@ -132,6 +142,23 @@ export async function syncCalendars(options?: {
     ).map((d) => [d.domain, d.partner.name]),
   );
 
+  // Every domain that identifies a customer. A meeting with none of these in
+  // the room is not stored at all: Brianna's calendar carries roughly twice as
+  // many internal, prospect and networking meetings as client ones, and a
+  // suggestion list where most rows are noise is a list nobody reads.
+  const clientDomains = new Set(candidates.flatMap((c) => c.domains));
+
+  // Domains not worth mentioning in the "you could map this" hint - already
+  // decided against, or a partner, or a mail provider.
+  const quiet = new Set([
+    ...(await db.ignoredDomain.findMany({ select: { domain: true } })).map((d) => d.domain),
+    ...partnerDomains.keys(),
+    "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "yahoo.com",
+    "icloud.com", "me.com", "aol.com", "calendly.com", "zoom.us",
+    "chorus.ai", "gong.io", "fathom.video", "apollo.io",
+  ]);
+  const unrecognised = new Map<string, number>();
+
   const from = options?.from ?? (await calendarSyncFrom());
   // A fortnight ahead: scheduled client calls are worth seeing before they
   // happen, and they can't be accepted into a timesheet until they have.
@@ -158,6 +185,21 @@ export async function syncCalendars(options?: {
             .filter((d): d is string => Boolean(d) && !ourDomains.has(d)),
         ),
       ];
+
+      // The rule: no client in the room, no suggestion. Anything already
+      // stored for it is cleared out, so mapping a domain later and
+      // re-syncing brings its meetings straight back - nothing here is a
+      // decision you're stuck with.
+      if (!externalDomains.some((d) => clientDomains.has(d))) {
+        await db.meeting.deleteMany({
+          where: { userId: person.id, googleId: m.googleId, status: "PENDING" },
+        });
+        outcome.skipped += 1;
+        for (const d of externalDomains) {
+          if (!quiet.has(d)) unrecognised.set(d, (unrecognised.get(d) ?? 0) + 1);
+        }
+        continue;
+      }
 
       const match = matchMeeting(
         {
@@ -217,6 +259,11 @@ export async function syncCalendars(options?: {
       }
     }
   }
+
+  outcome.unrecognised = [...unrecognised]
+    .map(([domain, meetings]) => ({ domain, meetings }))
+    .sort((a, b) => b.meetings - a.meetings || a.domain.localeCompare(b.domain))
+    .slice(0, 12);
 
   return outcome;
 }

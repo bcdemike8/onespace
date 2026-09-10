@@ -49,6 +49,7 @@ const projectSchema = z.object({
   billingType: z.enum(["HOURLY", "FIXED_FEE", "NON_BILLABLE"]).default("HOURLY"),
   // "C0123|general" — the id to store plus the name to show it by.
   slackChannel: z.string().trim().max(200).optional().nullable(),
+  clientDomains: z.string().trim().max(500).optional().nullable(),
 });
 
 /**
@@ -77,6 +78,7 @@ export async function createProjectAction(
     budgetAmount: formData.get("budgetAmount"),
     billRate: formData.get("billRate"),
     billingType: formData.get("billingType") ?? "HOURLY",
+    clientDomains: formData.get("clientDomains"),
   });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
@@ -121,6 +123,35 @@ export async function createProjectAction(
       billingType: d.billingType,
     },
   });
+
+  // Attach the client's email domains here, at the moment the project is
+  // created. Meetings and mail are only pulled in for domains mapped to a
+  // client, so a project whose client has no domain quietly gets none of
+  // either - and nobody notices for a month. Asking once, here, is the only
+  // point where the answer is obvious to whoever is typing.
+  if (d.clientId && d.clientDomains) {
+    const wanted = [
+      ...new Set(
+        d.clientDomains
+          .split(/[\s,;]+/)
+          .map((x) => x.trim().toLowerCase())
+          .filter(Boolean)
+          .map((x) => x.replace(/^https?:\/\//, "").split("/")[0])
+          .map((x) => (x.includes("@") ? x.slice(x.lastIndexOf("@") + 1) : x))
+          .map((x) => x.replace(/^www\./, "")),
+      ),
+    ].filter((x) => /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/.test(x));
+
+    if (wanted.length > 0) {
+      // skipDuplicates rather than a check: a domain already registered to
+      // another client is that client's, and silently moving it would be
+      // worse than doing nothing. The Clients page reports the clash.
+      await db.clientDomain.createMany({
+        data: wanted.map((domain) => ({ clientId: d.clientId!, domain })),
+        skipDuplicates: true,
+      });
+    }
+  }
 
   if (template) {
     // Sections first, so tasks can point at the copies rather than the originals.

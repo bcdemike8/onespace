@@ -45,10 +45,19 @@ export async function syncCalendarAction(
       `${r.matched} matched to a project`,
     ];
     if (r.settled > 0) bits.push(`${r.settled} already dealt with`);
+    if (r.skipped > 0) bits.push(`${r.skipped} skipped with no client in the room`);
     if (r.failed.length > 0) {
       bits.push(`couldn't read ${r.failed.map((f) => f.name).join(", ")}`);
     }
-    return { ok: true, message: `${bits.join(", ")}.` };
+    const hint =
+      r.unrecognised.length > 0
+        ? ` Most-seen unmapped domains: ${r.unrecognised
+            .slice(0, 5)
+            .map((u) => `${u.domain} (${u.meetings})`)
+            .join(", ")}.`
+        : "";
+
+    return { ok: true, message: `${bits.join(", ")}.${hint}` };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "The calendar sync failed." };
   }
@@ -312,6 +321,60 @@ export async function removePartnerDomainAction(formData: FormData): Promise<voi
   const id = String(formData.get("id") ?? "");
   if (!id) return;
   await db.partnerDomain.delete({ where: { id } }).catch(() => {});
+  revalidatePath("/clients", "layout");
+}
+
+// -------------------------------------------------------- ignored domains
+
+/**
+ * Domains to stop being reminded about.
+ *
+ * Meetings without a client in the room are never stored, so this doesn't
+ * gate anything. What it does is keep a domain out of the "you could map
+ * this" hint after the sync - the difference between a hint that names three
+ * real prospects and one that names the same four dead ends every morning.
+ */
+export async function addIgnoredDomainsAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  await requireAdmin();
+
+  const wanted = parseDomains(String(formData.get("domains") ?? ""));
+  const note = String(formData.get("note") ?? "").trim() || null;
+  if (wanted.length === 0) return { error: "Enter a domain, e.g. recruiters.com." };
+
+  const bad = wanted.filter((d) => !DOMAIN.test(d));
+  if (bad.length > 0) {
+    return { error: `${bad.join(", ")} ${bad.length === 1 ? "isn't" : "aren't"} a domain.` };
+  }
+
+  // Ignoring a domain that identifies a client would quietly stop that
+  // client's meetings appearing at all, which is a very confusing bug to
+  // chase. Refuse rather than let it happen.
+  const clash = await db.clientDomain.findMany({
+    where: { domain: { in: wanted } },
+    select: { domain: true, client: { select: { name: true } } },
+  });
+  if (clash.length > 0) {
+    const list = clash.map((c) => `${c.domain} (${c.client.name})`).join(", ");
+    return { error: `${list} identifies a client, so it's never in the hint anyway.` };
+  }
+
+  await db.ignoredDomain.createMany({
+    data: wanted.map((domain) => ({ domain, note })),
+    skipDuplicates: true,
+  });
+
+  revalidatePath("/clients", "layout");
+  return { ok: true };
+}
+
+export async function removeIgnoredDomainAction(formData: FormData): Promise<void> {
+  await requireAdmin();
+  const id = String(formData.get("id") ?? "");
+  if (!id) return;
+  await db.ignoredDomain.delete({ where: { id } }).catch(() => {});
   revalidatePath("/clients", "layout");
 }
 
