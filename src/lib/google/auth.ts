@@ -77,7 +77,17 @@ export function describeKey(raw: string): string {
   const hasEnd = /-----END [A-Z ]*PRIVATE KEY-----/.test(value);
 
   if (!hasBegin) {
-    return `GOOGLE_PRIVATE_KEY doesn't start with a BEGIN PRIVATE KEY line (${value.length} characters received). Copy the whole private_key value from the JSON file.`;
+    // The JSON has private_key_id on the line above private_key, and it is 40
+    // hex characters. Pasting the wrong one of those two is the single
+    // easiest mistake in this whole setup, so name it rather than describing
+    // the symptom.
+    if (/^[0-9a-f]{40}$/i.test(value)) {
+      return "That's the private_key_id, not the private_key - they sit on adjacent lines in the JSON. You want the one below it: about 1700 characters, starting with -----BEGIN PRIVATE KEY-----.";
+    }
+    if (value.includes("@") && value.includes("gserviceaccount.com")) {
+      return "That's the client_email, not the private key. GOOGLE_CLIENT_EMAIL takes that value; GOOGLE_PRIVATE_KEY takes the long private_key block.";
+    }
+    return `GOOGLE_PRIVATE_KEY doesn't start with a BEGIN PRIVATE KEY line (${value.length} characters received, expected around 1700). Copy the whole private_key value from the JSON file, BEGIN and END lines included.`;
   }
   if (!hasEnd) {
     return `GOOGLE_PRIVATE_KEY has its BEGIN line but no END line (${value.length} characters received, expected around 1700). It was cut short on the way in - Railway's raw .env editor truncates a value at the first real line break, so paste it into the single variable field instead.`;

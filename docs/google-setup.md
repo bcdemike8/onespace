@@ -100,10 +100,18 @@ GOOGLE_CLIENT_EMAIL    onespace@onespace-xxxxx.iam.gserviceaccount.com
 GOOGLE_PRIVATE_KEY     -----BEGIN PRIVATE KEY-----\nMIIEv...\n-----END PRIVATE KEY-----\n
 ```
 
-**The private key is the fiddly bit.** Copy the `private_key` value out of the
-JSON *exactly as it appears there*, including the `\n` sequences and the BEGIN
-and END lines. Don't try to turn the `\n`s into real line breaks — OneSpace
-converts them back. Don't include the surrounding quotes.
+**Take the value from `private_key`, not `private_key_id`.** They sit on
+adjacent lines in the JSON and the names differ by three characters. The one
+you want is about 1,700 characters and starts `-----BEGIN PRIVATE KEY-----`;
+`private_key_id` is 40 characters of hex. OneSpace names this specific mix-up
+if you make it.
+
+Copy the whole value including the BEGIN and END lines. The `\n` sequences can
+stay as they are — OneSpace accepts the key in any shape it arrives in:
+literal `\n`, real newlines, quotes, or line breaks lost altogether. The one
+thing it can't recover is a value cut short, which happens if you paste into
+Railway's raw `.env` editor with real line breaks in it — use the single
+variable field instead.
 
 Add the same two variables to the **cron service** as well, so the overnight
 sync can authenticate.
