@@ -51,6 +51,32 @@ Then, in that project:
    key** → **JSON** → Create. A `.json` file downloads. It is the only copy;
    Google will not show it again.
 
+#### If Google refuses to make the key
+
+**"Service account key creation is disabled"** — an org policy,
+`iam.disableServiceAccountKeyCreation`, which Google enables automatically for
+organisations created recently. Nothing is misconfigured; it needs one narrow
+exception.
+
+The policy blocks *creating* keys, not using them, so the exception can be
+temporary:
+
+1. Switch the console's resource picker from the project to your
+   **organization**.
+2. **IAM & Admin → IAM** → grant yourself **Organization Policy Administrator**.
+   A Workspace super admin can; without it the next screen is read-only.
+3. **IAM & Admin → Organization policies** → *Disable service account key
+   creation*.
+4. Switch the picker back to the **OneSpace project**, then **Manage policy** →
+   *Override parent's policy* → a rule with enforcement **Off** → **Set
+   policy**. Scoped to the project, so the rest of the org stays protected.
+5. Wait a minute and create the key.
+6. Set that project policy back to **Inherit**. The key keeps working.
+
+The alternative is per-person OAuth instead of delegation: no policy change, but
+seven consent screens, a stored refresh token each, and a silent stop whenever
+someone revokes access.
+
 Open that file. You need two values out of it: `client_email` and
 `private_key`.
 
@@ -178,5 +204,7 @@ account. Check their address on the People page.
 
 **"GOOGLE_PRIVATE_KEY isn't a readable key"** — the key got mangled on the way
 into Railway. Re-copy it from the JSON, including BEGIN and END.
+
+**"Service account key creation is disabled"** — an org policy. See step 1.
 
 **No client mail found** — almost always no domains mapped yet. Step 4.
