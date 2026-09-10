@@ -27,14 +27,66 @@ export const googleConfigured = () =>
   Boolean(process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY);
 
 /**
- * Railway variables are single-line, so the key arrives with literal "\n"
- * where the newlines should be. A PEM with the wrong line breaks fails to
- * parse with an error that says nothing useful about why.
+ * Rebuild a usable PEM from whatever the environment actually contains.
+ *
+ * This value is pasted by a person, through a dashboard, out of a JSON file,
+ * and arrives mangled in a different way nearly every time: literal "\n"
+ * where the newlines should be, or real newlines, or newlines collapsed into
+ * spaces, or the surrounding quotes kept, or the line breaks stripped
+ * entirely. Every one of those produces the same unhelpful parse failure.
+ *
+ * Rather than guess which, take the base64 between the BEGIN and END markers,
+ * throw away every scrap of whitespace in it, and lay a canonical PEM back
+ * out. The only thing that genuinely cannot be recovered is a value that was
+ * truncated on the way in - and `describeKey` below says so in as many words.
  */
-function privateKey(): string {
-  const raw = process.env.GOOGLE_PRIVATE_KEY ?? "";
-  const key = raw.includes("\\n") ? raw.replace(/\\n/g, "\n") : raw;
-  return key.trim().replace(/^"|"$/g, "");
+export function normalisePrivateKey(raw: string): string | null {
+  let value = raw.trim();
+
+  // Quotes survive a copy out of JSON, and some editors add their own.
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.slice(1, -1);
+  }
+  value = value.replace(/\\n/g, "\n").replace(/\\r/g, "");
+
+  const match = value.match(
+    /-----BEGIN ([A-Z ]*PRIVATE KEY)-----([\s\S]*?)-----END \1-----/,
+  );
+  if (!match) return null;
+
+  const label = match[1];
+  const body = match[2].replace(/\s+/g, "");
+  if (body.length === 0) return null;
+
+  const wrapped = body.match(/.{1,64}/g) ?? [];
+  return `-----BEGIN ${label}-----\n${wrapped.join("\n")}\n-----END ${label}-----\n`;
+}
+
+/**
+ * What the app received, in terms that point at the fix, and without ever
+ * putting key material in a log or an error message.
+ */
+export function describeKey(raw: string): string {
+  const value = raw.trim();
+  if (value.length === 0) return "GOOGLE_PRIVATE_KEY is empty or not set.";
+
+  const hasBegin = value.includes("BEGIN") && value.includes("PRIVATE KEY");
+  const hasEnd = /-----END [A-Z ]*PRIVATE KEY-----/.test(value);
+
+  if (!hasBegin) {
+    return `GOOGLE_PRIVATE_KEY doesn't start with a BEGIN PRIVATE KEY line (${value.length} characters received). Copy the whole private_key value from the JSON file.`;
+  }
+  if (!hasEnd) {
+    return `GOOGLE_PRIVATE_KEY has its BEGIN line but no END line (${value.length} characters received, expected around 1700). It was cut short on the way in - Railway's raw .env editor truncates a value at the first real line break, so paste it into the single variable field instead.`;
+  }
+  return `GOOGLE_PRIVATE_KEY has the right shape (${value.length} characters) but the key inside it didn't parse. It may have lost characters in the paste - re-copy it from the JSON file.`;
+}
+
+function privateKey(): string | null {
+  return normalisePrivateKey(process.env.GOOGLE_PRIVATE_KEY ?? "");
 }
 
 const b64url = (input: string | Buffer) => Buffer.from(input).toString("base64url");
@@ -84,15 +136,18 @@ export async function getAccessToken(
     }),
   );
 
+  const pem = privateKey();
+  if (!pem) {
+    throw new GoogleAuthError(describeKey(process.env.GOOGLE_PRIVATE_KEY ?? ""));
+  }
+
   let signature: string;
   try {
     const signer = createSign("RSA-SHA256");
     signer.update(`${header}.${claims}`);
-    signature = signer.sign(privateKey(), "base64url");
+    signature = signer.sign(pem, "base64url");
   } catch {
-    throw new GoogleAuthError(
-      "GOOGLE_PRIVATE_KEY isn't a readable key. Paste the whole private_key value from the JSON file, including the BEGIN and END lines.",
-    );
+    throw new GoogleAuthError(describeKey(process.env.GOOGLE_PRIVATE_KEY ?? ""));
   }
 
   const res = await fetch(TOKEN_URL, {
