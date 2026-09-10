@@ -2,7 +2,7 @@
 
 import { useActionState } from "react";
 import { syncCalendarAction } from "@/app/actions/google";
-import { syncZoomAction } from "@/app/actions/zoom";
+import { rereadTranscriptsAction, syncZoomAction } from "@/app/actions/zoom";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ErrorNote } from "@/components/ui";
 
@@ -13,6 +13,10 @@ import { ErrorNote } from "@/components/ui";
 export function SyncButton({ admin, zoom }: { admin: boolean; zoom: boolean }) {
   const [state, action] = useActionState(syncCalendarAction, {} as { error?: string; message?: string });
   const [zoomState, zoomAction] = useActionState(syncZoomAction, {} as { error?: string; message?: string });
+  const [rereadState, rereadAction] = useActionState(
+    rereadTranscriptsAction,
+    {} as { error?: string; message?: string },
+  );
 
   return (
     <div className="flex flex-wrap items-center justify-end gap-2">
@@ -41,6 +45,20 @@ export function SyncButton({ admin, zoom }: { admin: boolean; zoom: boolean }) {
         </form>
       ) : null}
 
+      {admin && zoom ? (
+        <form action={rereadAction}>
+          <SubmitButton pendingLabel="Clearing…" className="btn-ghost btn-sm">
+            Re-read transcripts
+          </SubmitButton>
+        </form>
+      ) : null}
+
+      {rereadState?.message ? (
+        <span className="w-full text-right text-xs text-ink-600 sm:w-auto">
+          {rereadState.message}
+        </span>
+      ) : null}
+
       {zoomState?.message ? (
         <span className="w-full text-right text-xs text-ink-600 sm:w-auto">
           {zoomState.message}
@@ -55,6 +73,7 @@ export function SyncButton({ admin, zoom }: { admin: boolean; zoom: boolean }) {
       <div className="w-full">
         <ErrorNote message={state?.error} />
         <ErrorNote message={zoomState?.error} />
+        <ErrorNote message={rereadState?.error} />
       </div>
     </div>
   );

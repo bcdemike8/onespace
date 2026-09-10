@@ -41,6 +41,10 @@ export interface ZoomOutcome {
   created: number;
   /** Calls skipped: no client in the room. */
   skipped: number;
+  /** Set when AI Companion couldn't be used and the weaker rules ran. */
+  summaryNote?: string;
+  /** Commitments that came from Zoom's summary rather than the transcript. */
+  fromSummary: number;
   /** Transcripts read for commitments. */
   transcripts: number;
   commitments: number;
@@ -98,12 +102,15 @@ export async function syncZoom(options?: {
     skipped: 0,
     transcripts: 0,
     commitments: 0,
+    fromSummary: 0,
     failed: [],
   };
 
   if (!zoomConfigured()) {
     throw new Error("Zoom isn't connected yet - add the Server-to-Server OAuth credentials in Railway.");
   }
+
+  summaryNote = null;
 
   // Which day a promise was made on depends on the zone the call was in.
   const zone = await orgTimezone();
@@ -328,11 +335,13 @@ export async function syncZoom(options?: {
           });
           outcome.transcripts += 1;
           outcome.commitments += found.commitments.length;
+          if (found.fromSummary) outcome.fromSummary += 1;
         }
       }
     }
   }
 
+  if (summaryNote) outcome.summaryNote = summaryNote;
   return outcome;
 }
 
@@ -375,6 +384,21 @@ interface Read {
  * The summary is preferred where it exists: Zoom had the audio and the speaker
  * labels, and its next steps are already phrased as actions.
  */
+/**
+ * The first reason AI Companion didn't answer, kept once per sync.
+ *
+ * Reported rather than swallowed: summary-derived next steps are markedly
+ * better than anything the transcript rules produce, so a sync quietly
+ * falling back for every call is worth knowing about.
+ *
+ * Reset at the top of syncZoom - the server is long-lived and a note from
+ * last week's run appearing on today's would be worse than no note.
+ */
+let summaryNote: string | null = null;
+const note = (reason: string) => {
+  if (!summaryNote) summaryNote = reason;
+};
+
 async function readCommitments(
   uuid: string,
   isOurs: (speaker: string | null) => boolean,
@@ -404,9 +428,16 @@ async function readCommitments(
         fromSummary: true,
       };
     }
-  } catch {
-    // AI Companion isn't on this plan, or not on this call. The transcript
-    // path below is the fallback, not an error.
+    // A summary with no next steps is a summary all the same - AI Companion
+    // ran and found nothing to do, which is a different world from it not
+    // being available, and the transcript rules are much the weaker reader.
+    if (!summary) note("Zoom returned no summary for some calls.");
+  } catch (e) {
+    // AI Companion isn't on this plan, the scope wasn't granted, or it
+    // wasn't on for this call. The transcript path below is the fallback,
+    // not an error - but which of those it is matters a great deal to the
+    // quality of what comes out, so it gets said rather than swallowed.
+    note(e instanceof ZoomError ? e.message : "Couldn't read Zoom's summary.");
   }
 
   if (!transcriptUrl) {

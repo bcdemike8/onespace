@@ -47,7 +47,15 @@ export async function syncZoomAction(
     if (r.failed.length > 0) {
       bits.push(`couldn't read ${r.failed.map((f) => f.name).join(", ")}`);
     }
-    return { ok: true, message: `${bits.join(", ")}.` };
+    let message = `${bits.join(", ")}.`;
+    if (r.transcripts > 0 && r.fromSummary === 0 && r.summaryNote) {
+      // Worth saying every time. The transcript rules are the fallback and
+      // they are visibly worse than AI Companion's next steps; someone
+      // reading "12 commitments found" should know which reader produced
+      // them before they trust the list.
+      message += ` AI Companion wasn't used, so the weaker transcript rules ran - ${r.summaryNote}`;
+    }
+    return { ok: true, message };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "The Zoom sync failed." };
   }
@@ -171,4 +179,49 @@ export async function dismissCommitmentAction(formData: FormData): Promise<void>
   }
   await db.commitment.update({ where: { id }, data: { status: "DISMISSED" } });
   refresh();
+}
+
+/**
+ * Throw away what the transcript rules found and read them again.
+ *
+ * The rules are the feature, and a rules change makes everything already
+ * raised the output of a version nobody believes any more. Rather than ask
+ * people to dismiss thirty rows by hand, this clears the pending ones and
+ * unsets the read marker so the next Zoom sync goes back to Zoom for the
+ * transcripts - which are still there, because Zoom keeps them; OneSpace is
+ * the one that doesn't.
+ *
+ * Accepted commitments are left alone. They are real tasks now, and somebody
+ * decided that. Dismissed ones are left too, so a promise already turned
+ * down doesn't come back a second time.
+ */
+export async function rereadTranscriptsAction(
+  _prev: ActionState,
+  _formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+  if (!isAdmin(user)) return { error: "Only an admin can re-read transcripts." };
+
+  const cleared = await db.$transaction(async (tx) => {
+    const removed = await tx.commitment.deleteMany({
+      where: {
+        status: "PENDING",
+        source: { in: ["TRANSCRIPT", "ZOOM_SUMMARY"] },
+      },
+    });
+    // Only meetings there is still a transcript to go back for: the sync
+    // finds one by Zoom UUID, so a calendar-only meeting has nothing to
+    // re-read and clearing its marker would just cost a lookup.
+    await tx.meeting.updateMany({
+      where: { zoomUuid: { not: null }, transcriptReadAt: { not: null } },
+      data: { transcriptReadAt: null },
+    });
+    return removed.count;
+  });
+
+  refresh();
+  return {
+    ok: true,
+    message: `Cleared ${cleared} unconfirmed commitment${cleared === 1 ? "" : "s"}. Run Sync Zoom to read the transcripts again.`,
+  };
 }
