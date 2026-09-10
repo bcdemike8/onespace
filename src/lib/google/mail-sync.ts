@@ -6,6 +6,7 @@ import { GoogleApiError, GoogleAuthError, googleConfigured } from "@/lib/google/
 import { buildWeights, matchMeeting, type MatchCandidate } from "@/lib/google/match";
 import { extractRecapItems, looksLikeRecap } from "@/lib/mail/recap";
 import { dueFor } from "@/lib/when";
+import { backfillDueDates } from "@/lib/commitments/backfill";
 
 export const MAIL_FROM_KEY = "google.mailFrom";
 export const DEFAULT_MAIL_FROM = "2026-08-01";
@@ -89,6 +90,10 @@ export async function syncMail(options?: {
     select: { domain: true, clientId: true },
   });
   if (domainRows.length === 0) return outcome;
+
+  // Commitments found before dates existed have none. Once per sync, not
+  // once per thread, and cheap enough to leave running.
+  await backfillDueDates();
 
   const clientByDomain = new Map(domainRows.map((d) => [d.domain, d.clientId]));
   const domains = domainRows.map((d) => d.domain);

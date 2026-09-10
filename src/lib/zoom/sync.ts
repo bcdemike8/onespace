@@ -19,6 +19,7 @@ import {
   type Commitment,
 } from "@/lib/zoom/commitments";
 import { dueFor } from "@/lib/when";
+import { backfillDueDates } from "@/lib/commitments/backfill";
 import { buildWeights, matchMeeting, type MatchCandidate } from "@/lib/google/match";
 import { orgTimezone } from "@/lib/google/sync";
 
@@ -106,6 +107,11 @@ export async function syncZoom(options?: {
 
   // Which day a promise was made on depends on the zone the call was in.
   const zone = await orgTimezone();
+
+  // Commitments found before dates existed have none. Reading them out of
+  // the sentence costs nothing and is the difference between the day view
+  // working on the first run and every row reading "no date given".
+  await backfillDueDates();
 
   const people = await db.user.findMany({
     where: { isActive: true, ...(options?.userId ? { id: options.userId } : {}) },
