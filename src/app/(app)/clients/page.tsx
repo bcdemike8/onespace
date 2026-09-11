@@ -11,6 +11,7 @@ import {
 } from "@/app/actions/projects";
 import { DomainsField } from "./DomainsField";
 import { IgnoredDomains } from "./IgnoredDomains";
+import { DeleteClient } from "./DeleteClient";
 import { PartnerDomainsField } from "./PartnerDomainsField";
 import { NewClientForm } from "./NewClientForm";
 import { NewPartnerForm } from "./NewPartnerForm";
@@ -25,6 +26,10 @@ export default async function ClientsPage() {
       include: {
         projects: { select: { id: true, name: true, status: true } },
         domains: { select: { id: true, domain: true }, orderBy: { domain: "asc" } },
+        // What would be orphaned by a delete. Counted here so the Delete
+        // control can refuse before anyone types anything, rather than
+        // after.
+        _count: { select: { mail: true } },
       },
       orderBy: [{ archivedAt: "asc" }, { name: "asc" }],
     }),
@@ -53,10 +58,11 @@ export default async function ClientsPage() {
     },
   });
 
-  const byProject = new Map<string, { minutes: number; cents: number }>();
+  const byProject = new Map<string, { minutes: number; cents: number; entries: number }>();
   for (const e of entries) {
-    const acc = byProject.get(e.projectId) ?? { minutes: 0, cents: 0 };
+    const acc = byProject.get(e.projectId) ?? { minutes: 0, cents: 0, entries: 0 };
     acc.minutes += e.minutes;
+    acc.entries += 1;
     if (e.billable) acc.cents += Math.round((e.minutes * e.billRateCents) / 60);
     byProject.set(e.projectId, acc);
   }
@@ -83,10 +89,12 @@ export default async function ClientsPage() {
                   return {
                     minutes: acc.minutes + (t?.minutes ?? 0),
                     cents: acc.cents + (t?.cents ?? 0),
+                    entries: acc.entries + (t?.entries ?? 0),
                   };
                 },
-                { minutes: 0, cents: 0 },
+                { minutes: 0, cents: 0, entries: 0 },
               );
+              const entryCount = totals.entries;
               const active = client.projects.filter(
                 (p) => p.status === "ACTIVE",
               ).length;
@@ -167,10 +175,24 @@ export default async function ClientsPage() {
                         <button
                           type="submit"
                           className="text-xs text-ink-400 hover:text-ink-700"
+                          title={
+                            client.archivedAt
+                              ? "Start matching their meetings and mail again"
+                              : "Stop new meetings and mail arriving for them. Keeps every hour logged; one click to undo."
+                          }
                         >
                           {client.archivedAt ? "Restore" : "Archive"}
                         </button>
                       </form>
+                      <DeleteClient
+                        id={client.id}
+                        name={client.name}
+                        attached={{
+                          projects: client.projects.length,
+                          timeEntries: entryCount,
+                          mailThreads: client._count.mail,
+                        }}
+                      />
                     </div>
                   </div>
                 </section>

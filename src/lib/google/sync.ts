@@ -162,6 +162,10 @@ export async function syncCalendars(options?: {
   const clientByDomain = new Map(
     (
       await db.clientDomain.findMany({
+        // Archived clients are finished. Their domains stay on record, so
+        // nothing already logged loses its client and un-archiving brings
+        // them straight back, but no new meeting is suggested for them.
+        where: { client: { archivedAt: null } },
         select: { domain: true, client: { select: { name: true } } },
       })
     ).map((d) => [d.domain, d.client.name]),

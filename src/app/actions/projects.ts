@@ -453,6 +453,15 @@ export async function updateClientAction(formData: FormData) {
   refresh();
 }
 
+/**
+ * Archive a client, or bring one back.
+ *
+ * Archiving means finished, and now behaves like it: their domains stop
+ * matching, so no new meeting or email thread is suggested for them. Nothing
+ * already logged changes, the domains stay on record, and un-archiving
+ * restores the lot in one click. This is the right answer for almost every
+ * client who is no longer active - delete is for mistakes, not for endings.
+ */
 export async function toggleClientArchivedAction(formData: FormData) {
   await requireAdmin();
   const id = String(formData.get("id") ?? "");
@@ -463,7 +472,90 @@ export async function toggleClientArchivedAction(formData: FormData) {
     where: { id },
     data: { archivedAt: client.archivedAt ? null : new Date() },
   });
+  refresh();
   revalidatePath("/clients", "layout");
+}
+
+/**
+ * What would be lost, or orphaned, if this client went.
+ *
+ * Not exported: every export from a "use server" file becomes an endpoint
+ * any signed-in user can call, and this one takes an id straight from its
+ * caller. The Clients page counts the same things in its own query.
+ */
+async function clientFootprint(clientId: string) {
+  const [projects, timeEntries, meetings, mailThreads] = await Promise.all([
+    db.project.count({ where: { clientId } }),
+    db.timeEntry.count({ where: { project: { clientId } } }),
+    db.meeting.count({ where: { project: { clientId } } }),
+    db.mailThread.count({ where: { clientId } }),
+  ]);
+  return { projects, timeEntries, meetings, mailThreads };
+}
+
+/**
+ * Delete a client outright.
+ *
+ * Only ever for a mistake - a typo, a duplicate, a company that turned out
+ * not to be a client. Anything with real history is archived instead, and
+ * this refuses rather than offering a way round it.
+ *
+ * The refusal matters more than the deletion. Project.clientId is SET NULL,
+ * so deleting a client with projects would not fail and would not warn: the
+ * projects survive with no client, every hour ever logged against them
+ * silently drops out of that client's reports, and nobody finds out until
+ * an invoice is short. Checking first is the whole feature.
+ */
+export async function deleteClientAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  await requireAdmin();
+
+  const id = String(formData.get("id") ?? "");
+  const typed = String(formData.get("confirmName") ?? "").trim();
+
+  const client = await db.client.findUnique({
+    where: { id },
+    select: { id: true, name: true },
+  });
+  if (!client) return { error: "That client is no longer here." };
+
+  // Typing the name is the only guard against a misplaced click on a row
+  // that looks like the one above it.
+  if (typed !== client.name) {
+    return {
+      error: `Type the client's name exactly - ${client.name} - to confirm.`,
+    };
+  }
+
+  const has = await clientFootprint(id);
+  const blockers: string[] = [];
+  if (has.projects > 0) {
+    blockers.push(`${has.projects} project${has.projects === 1 ? "" : "s"}`);
+  }
+  if (has.timeEntries > 0) {
+    blockers.push(`${has.timeEntries} logged time ${has.timeEntries === 1 ? "entry" : "entries"}`);
+  }
+  if (has.meetings > 0) {
+    blockers.push(`${has.meetings} meeting${has.meetings === 1 ? "" : "s"}`);
+  }
+  if (has.mailThreads > 0) {
+    blockers.push(`${has.mailThreads} email thread${has.mailThreads === 1 ? "" : "s"}`);
+  }
+
+  if (blockers.length > 0) {
+    return {
+      error: `${client.name} has ${blockers.join(", ")}. Deleting would leave that work with no client and quietly drop it out of their reports. Archive them instead - it stops new meetings and mail, and keeps the history.`,
+    };
+  }
+
+  // Only the domains come with it, and those are meaningless without it.
+  await db.client.delete({ where: { id } });
+
+  refresh();
+  revalidatePath("/clients", "layout");
+  return { ok: true };
 }
 
 

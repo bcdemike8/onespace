@@ -87,6 +87,9 @@ export async function syncMail(options?: {
   }
 
   const domainRows = await db.clientDomain.findMany({
+    // Archived clients are finished - no new mail is fetched for them. The
+    // domains stay on record so un-archiving restores everything at once.
+    where: { client: { archivedAt: null } },
     select: { domain: true, clientId: true },
   });
   if (domainRows.length === 0) return outcome;
