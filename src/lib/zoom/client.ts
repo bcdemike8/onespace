@@ -283,9 +283,15 @@ export async function getMeetingSummary(uuid: string): Promise<ZoomSummary | nul
   try {
     return await zoomRequest<ZoomSummary>(`/meetings/${id}/meeting_summary`);
   } catch (e) {
-    // 404 means no summary for this call; 400/403 means the plan doesn't have
-    // AI Companion at all. Neither is worth failing a sync over.
-    if (e instanceof ZoomError && [400, 403, 404].includes(e.status)) return null;
+    // 404 is the ordinary case: this call has no summary. Swallow it.
+    //
+    // 400 and 403 are not ordinary and used to be swallowed with it, which
+    // meant a missing scope or a plan without AI Companion came back
+    // indistinguishable from "no summary on this one" - and the sync then
+    // told people to go and switch AI Companion on, which for a scope
+    // problem is the wrong advice entirely. They are rethrown so the caller
+    // can report what Zoom actually said.
+    if (e instanceof ZoomError && e.status === 404) return null;
     throw e;
   }
 }

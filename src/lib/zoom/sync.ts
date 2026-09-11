@@ -436,7 +436,7 @@ async function readCommitments(
     // nothing to do is a world away from AI Companion not being available -
     // the first means trust the silence, the second means fix your Zoom.
     if (!summary) {
-      note("Zoom has no AI Companion summary for those calls - check it's switched on for meetings.");
+      note("Zoom has no AI Companion summary for those calls - either it wasn't on when they happened, or it isn't on this plan.");
     } else {
       note("AI Companion summarised the call but listed no next steps.");
     }
