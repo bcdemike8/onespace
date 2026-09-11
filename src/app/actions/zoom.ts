@@ -280,3 +280,30 @@ export async function diagnoseZoomAction(
     return { error: e instanceof Error ? e.message : "Couldn't ask Zoom about this call." };
   }
 }
+
+/**
+ * Read one call now, rather than running the whole sync to find out.
+ *
+ * The loop this replaces was: change a setting, run Sync Zoom, wait for it
+ * to work through five transcripts, read an aggregate number, guess. This
+ * reads the call in front of you and says what happened to that one.
+ */
+export async function readCallAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+  if (!isAdmin(user)) return { error: "Only an admin can re-read a call." };
+
+  const id = String(formData.get("id") ?? "");
+  const { readMeetingNow } = await import("@/lib/zoom/sync");
+
+  try {
+    const message = await readMeetingNow(id);
+    refresh();
+    revalidatePath(`/meetings/${id}`);
+    return { ok: true, message };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Couldn't read that call." };
+  }
+}

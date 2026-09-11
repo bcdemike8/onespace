@@ -6,6 +6,7 @@ import {
   ZoomError,
 } from "@/lib/zoom/client";
 import { pickTranscript } from "@/lib/zoom/files";
+import { aiConfigured } from "@/lib/ai/summarise";
 
 /**
  * What Zoom actually has for one call, in plain sentences.
@@ -85,6 +86,15 @@ export async function describeZoomCall(uuid: string): Promise<string> {
       `AI Companion: ${e instanceof ZoomError ? e.message : "couldn't be read."}`,
     );
   }
+
+  // Last, because it's about this service rather than about the call - but
+  // it is the difference between a write-up and a list of scraped sentences,
+  // and it is invisible from every other screen.
+  lines.push(
+    aiConfigured()
+      ? "Claude: connected."
+      : "Claude: not connected on this service. ANTHROPIC_API_KEY needs to be set in Railway on the app service and the cron service both - a transcript still gets read, but by the old pattern rules, and no write-up is stored.",
+  );
 
   return lines.join(" ");
 }

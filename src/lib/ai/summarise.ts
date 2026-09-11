@@ -209,22 +209,43 @@ export function renderSummary(read: {
   return out.join("\n");
 }
 
+export interface AiAttempt {
+  /** The write-up, when there is one. */
+  read: AiRead | null;
+  /** Why there isn't, in words. Null when there is. */
+  reason: string | null;
+}
+
 /**
  * Summarise a transcript and lift the action items out of it.
  *
- * Returns null when no API key is set, so the caller falls back to the
- * regex rules rather than the sync failing. Throws on a real API failure,
- * which the caller reports - a quota problem should be visible, not
- * silently degrade every call to the weaker reader.
+ * Every way of not producing a write-up says which way it was. This used to
+ * return a bare null for three quite different situations - no API key, a
+ * transcript too short to be worth reading, an answer that wouldn't parse -
+ * and the caller could only fall through to the old pattern rules and store
+ * nothing, leaving the meeting with an empty write-up panel and no clue as
+ * to why. Throws on a real API failure, which the caller reports: a quota
+ * problem should be loud, not a month of quietly worse summaries.
  */
 export async function readTranscript(
   transcript: string,
   context: { title: string; when: Date; client: string | null },
-): Promise<AiRead | null> {
-  if (!aiConfigured()) return null;
+): Promise<AiAttempt> {
+  if (!aiConfigured()) {
+    return {
+      read: null,
+      reason:
+        "Claude isn't connected on this service, so no write-up was made - the call was scanned with the old pattern rules instead. Set ANTHROPIC_API_KEY in Railway on both the app service and the cron service, then use Re-read transcripts on the meetings list.",
+    };
+  }
 
   const body = transcript.trim();
-  if (body.length < 200) return null;
+  if (body.length < 200) {
+    return {
+      read: null,
+      reason: `The transcript for this call is only ${body.length} characters - too little to write anything up from. Zoom produces one of these when a call is mostly silence, or when it ended before anyone spoke.`,
+    };
+  }
 
   const client = new Anthropic();
 
@@ -279,7 +300,10 @@ export async function readTranscript(
   } catch {
     // The schema makes this close to impossible, but a malformed answer
     // should cost this one meeting rather than the whole sync.
-    return null;
+    return {
+      read: null,
+      reason: "Claude's answer for this call didn't parse. Worth trying again.",
+    };
   }
 
   const groups = (raw: { heading?: string; bullets?: string[] }[] | undefined): AiSection[] =>
@@ -301,10 +325,13 @@ export async function readTranscript(
     }));
 
   return {
-    overview: (parsed.overview ?? "").trim(),
-    sections: groups(parsed.sections),
-    outline: groups(parsed.outline),
-    actionItems,
-    model: MODEL,
+    read: {
+      overview: (parsed.overview ?? "").trim(),
+      sections: groups(parsed.sections),
+      outline: groups(parsed.outline),
+      actionItems,
+      model: MODEL,
+    },
+    reason: null,
   };
 }

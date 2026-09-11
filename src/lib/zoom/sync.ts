@@ -165,24 +165,7 @@ export async function syncZoom(options?: {
   const ourDomains = new Set(
     allUsers.map((u) => u.email.split("@")[1]?.toLowerCase()).filter(Boolean) as string[],
   );
-  // Transcript speaker names are Zoom display names, which rarely match a
-  // OneSpace record exactly. Matching on the full name and on first-plus-last
-  // catches "Brianna Dunbar-DeMike" and "Brianna DeMike" alike; anyone not
-  // recognised is treated as the other side, which is the safe way round.
-  const ourNames = new Set<string>();
-  for (const u of allUsers) {
-    const n = u.name.toLowerCase().trim();
-    ourNames.add(n);
-    const parts = n.split(/\s+/);
-    if (parts.length > 1) ourNames.add(`${parts[0]} ${parts[parts.length - 1]}`);
-  }
-  const isOurs = (speaker: string | null) => {
-    if (!speaker) return false;
-    const s = speaker.toLowerCase().trim().replace(/\s*\(.*\)$/, "");
-    if (ourNames.has(s)) return true;
-    const parts = s.split(/\s+/);
-    return parts.length > 1 && ourNames.has(`${parts[0]} ${parts[parts.length - 1]}`);
-  };
+  const isOurs = await speakerMatcher();
 
   const clientByDomain = new Map(
     (
@@ -353,72 +336,7 @@ export async function syncZoom(options?: {
           client: clientOf(row!.projectId ?? row!.suggestedProjectId),
         });
         {
-          await db.$transaction(async (tx) => {
-            await tx.meeting.update({
-              where: { id: row!.id },
-              data: {
-                recordingUrl: found.recordingUrl ?? undefined,
-                // Only when it really was read. Marking a call read after a
-                // refused scope or a failed download would bury it: the
-                // sync never looks at a read call again, so the transcript
-                // would stay unread long after the thing blocking it had
-                // been fixed.
-                transcriptReadAt: found.retry ? undefined : new Date(),
-                transcriptNote: found.note ?? null,
-                // The summary is what replaces the transcript. It is the
-                // only durable record of the call OneSpace keeps.
-                summary: found.ai ? renderSummary(found.ai.read) : undefined,
-                // Through JSON to satisfy Prisma's Json input type, which
-                // won't take an interface with named fields directly.
-                summaryJson: found.ai
-                  ? (JSON.parse(
-                      JSON.stringify({
-                        overview: found.ai.read.overview,
-                        sections: found.ai.read.sections,
-                        outline: found.ai.read.outline,
-                        actionItems: found.ai.read.actionItems.map((i) => ({
-                          task: i.task,
-                          owner: i.owner,
-                          ours: i.ours,
-                          when: i.when,
-                        })),
-                      }),
-                    ) as Prisma.InputJsonValue)
-                  : undefined,
-                summaryModel: found.ai?.model || undefined,
-                summarisedAt: found.ai ? new Date() : undefined,
-              },
-            });
-            if (found.commitments.length > 0) {
-              // "by Friday" is read against the day of the call, not against
-              // today: a promise made last Tuesday means that Friday, and
-              // reading it now would push the deadline out every sync.
-              const said = dayInZone(row!.startsAt, zone);
-              await tx.commitment.createMany({
-                data: found.commitments.map((c) => {
-                  // Where a reader isolated the timing phrase, parse that -
-                  // "by Friday" alone cannot be misread, while the sentence
-                  // it sat in carries other numbers and dates that can.
-                  const due = dueFor(c.when ?? c.text, said);
-                  return {
-                    meetingId: row!.id,
-                    source: found.ai
-                      ? ("AI_SUMMARY" as const)
-                      : found.fromSummary
-                        ? ("ZOOM_SUMMARY" as const)
-                        : ("TRANSCRIPT" as const),
-                    text: c.text,
-                    speaker: c.speaker,
-                    atSeconds: c.atSeconds,
-                    suggestedTask: c.suggestedTask,
-                    dueDate: due.date,
-                    dueStated: due.stated,
-                    fromSummary: found.fromSummary,
-                  };
-                }),
-              });
-            }
-          });
+          await storeRead(row!.id, row!.startsAt, found, zone);
           // The budget exists to bound how long the model spends, so only a
           // real read counts against it. A call with no recording costs one
           // cheap API call and shouldn't push a readable one into tomorrow.
@@ -439,6 +357,175 @@ export async function syncZoom(options?: {
 
   if (summaryNote) outcome.summaryNote = summaryNote;
   return outcome;
+}
+
+/**
+ * Is this speaker one of ours?
+ *
+ * Transcript speaker names are Zoom display names, which rarely match a
+ * OneSpace record exactly. Matching on the full name and on first-plus-last
+ * catches "Brianna Dunbar-DeMike" and "Brianna DeMike" alike; anyone not
+ * recognised is treated as the other side, which is the safe way round - a
+ * client's promise wrongly landing on a RevOptics to-do list is worse than
+ * one of ours being missed.
+ */
+async function speakerMatcher(): Promise<(speaker: string | null) => boolean> {
+  const users = await db.user.findMany({ select: { name: true } });
+
+  const names = new Set<string>();
+  for (const u of users) {
+    const n = u.name.toLowerCase().trim();
+    names.add(n);
+    const parts = n.split(/\s+/);
+    if (parts.length > 1) names.add(`${parts[0]} ${parts[parts.length - 1]}`);
+  }
+
+  return (speaker: string | null) => {
+    if (!speaker) return false;
+    const s = speaker.toLowerCase().trim().replace(/\s*\(.*\)$/, "");
+    if (names.has(s)) return true;
+    const parts = s.split(/\s+/);
+    return parts.length > 1 && names.has(`${parts[0]} ${parts[parts.length - 1]}`);
+  };
+}
+
+/**
+ * Write what a read produced onto the meeting.
+ *
+ * Shared by the sync and by reading one call on demand, so the two can't
+ * drift into storing different things.
+ */
+async function storeRead(
+  meetingId: string,
+  startsAt: Date,
+  found: Read,
+  zone: string,
+): Promise<void> {
+  await db.$transaction(async (tx) => {
+    await tx.meeting.update({
+      where: { id: meetingId },
+      data: {
+        recordingUrl: found.recordingUrl ?? undefined,
+        // Only when it really was read. Marking a call read after a refused
+        // scope or a failed download would bury it: the sync never looks at
+        // a read call again, so the transcript would stay unread long after
+        // the thing blocking it had been fixed.
+        transcriptReadAt: found.retry ? undefined : new Date(),
+        transcriptNote: found.note ?? null,
+        // The summary is what replaces the transcript. It is the only
+        // durable record of the call OneSpace keeps.
+        summary: found.ai ? renderSummary(found.ai.read) : undefined,
+        // Through JSON to satisfy Prisma's Json input type, which won't take
+        // an interface with named fields directly.
+        summaryJson: found.ai
+          ? (JSON.parse(
+              JSON.stringify({
+                overview: found.ai.read.overview,
+                sections: found.ai.read.sections,
+                outline: found.ai.read.outline,
+                actionItems: found.ai.read.actionItems.map((i) => ({
+                  task: i.task,
+                  owner: i.owner,
+                  ours: i.ours,
+                  when: i.when,
+                })),
+              }),
+            ) as Prisma.InputJsonValue)
+          : undefined,
+        summaryModel: found.ai?.model || undefined,
+        summarisedAt: found.ai ? new Date() : undefined,
+      },
+    });
+
+    if (found.commitments.length === 0) return;
+
+    // "by Friday" is read against the day of the call, not against today: a
+    // promise made last Tuesday means that Friday, and reading it now would
+    // push the deadline out every sync.
+    const said = dayInZone(startsAt, zone);
+    await tx.commitment.createMany({
+      data: found.commitments.map((c) => {
+        // Where a reader isolated the timing phrase, parse that - "by
+        // Friday" alone cannot be misread, while the sentence it sat in
+        // carries other numbers and dates that can.
+        const due = dueFor(c.when ?? c.text, said);
+        return {
+          meetingId,
+          source: found.ai
+            ? ("AI_SUMMARY" as const)
+            : found.fromSummary
+              ? ("ZOOM_SUMMARY" as const)
+              : ("TRANSCRIPT" as const),
+          text: c.text,
+          speaker: c.speaker,
+          atSeconds: c.atSeconds,
+          suggestedTask: c.suggestedTask,
+          dueDate: due.date,
+          dueStated: due.stated,
+          fromSummary: found.fromSummary,
+        };
+      }),
+    });
+  });
+}
+
+/**
+ * Read one call, now, whatever it says about having been read already.
+ *
+ * The sync is the right tool for two hundred calls and the wrong one for
+ * checking whether a change worked: it reads five transcripts, takes a
+ * minute, and reports in aggregate. This reads exactly the call in front of
+ * you and says what happened to it.
+ *
+ * Pending commitments on the meeting are cleared first, so reading twice
+ * doesn't leave the same suggestion sitting there twice. Anything already
+ * turned into a task or dismissed is left alone - those are decisions
+ * somebody made.
+ */
+export async function readMeetingNow(meetingId: string): Promise<string> {
+  const meeting = await db.meeting.findUnique({
+    where: { id: meetingId },
+    select: {
+      id: true,
+      title: true,
+      startsAt: true,
+      zoomUuid: true,
+      projectId: true,
+      suggestedProjectId: true,
+      project: { select: { client: { select: { name: true } } } },
+    },
+  });
+  if (!meeting) throw new Error("That meeting is no longer here.");
+  if (!meeting.zoomUuid) {
+    throw new Error(
+      "This meeting has never been matched to a Zoom call, so there's nothing to read. Run Sync Zoom on the meetings list first.",
+    );
+  }
+
+  summaryNote = null;
+  const zone = await orgTimezone();
+  const isOurs = await speakerMatcher();
+
+  await db.commitment.deleteMany({
+    where: { meetingId: meeting.id, status: "PENDING" },
+  });
+
+  const found = await readCommitments(meeting.zoomUuid, isOurs, {
+    title: meeting.title,
+    when: meeting.startsAt,
+    client: meeting.project?.client?.name ?? null,
+  });
+
+  await storeRead(meeting.id, meeting.startsAt, found, zone);
+
+  if (found.ai) {
+    return `Read by Claude. ${found.ai.read.sections.length} sections, ${found.commitments.length} thing${found.commitments.length === 1 ? "" : "s"} you said you'd do.`;
+  }
+  if (found.note) return found.note;
+  if (found.commitments.length > 0) {
+    return `No write-up, but the old pattern rules found ${found.commitments.length} commitment${found.commitments.length === 1 ? "" : "s"}.`;
+  }
+  return summaryNote ?? "Nothing to read on this call.";
 }
 
 /**
@@ -659,53 +746,57 @@ async function readCommitments(
 
     const cues = parseVtt(file.text);
 
-    if (aiConfigured()) {
-      try {
-        const read = await readTranscript(plainText(cues), context);
-        if (read) {
-          return {
-            recordingUrl,
-            fromSummary: false,
-            note: null,
-            retry: false,
-            didRead: true,
-            ai: { read, model: read.model, items: read.actionItems },
-            // Only ours become suggested tasks. The client's own undertakings
-            // are in the summary, where they belong - they are worth knowing
-            // and they are not RevOptics work.
-            commitments: read.actionItems
-              .filter((i) => i.ours)
-              .map((i) => ({
-                text: i.quote || i.task,
-                speaker: i.owner,
-                atSeconds: 0,
-                suggestedTask: i.task,
-                when: i.when,
-              })),
-          };
-        }
-      } catch (e) {
-        // A quota or key problem should be visible, not quietly degrade every
-        // call to the weaker reader for a month.
-        const message = e instanceof Error ? `Claude couldn't read the transcript: ${e.message}` : "Claude couldn't read the transcript.";
-        note(message);
-        // Worth another go once the key or the quota is sorted out, rather
-        // than leaving the call with rule-scraped commitments forever.
-        return { ...nothing(message, true), recordingUrl };
+    let whyNoWriteUp: string | null = null;
+    try {
+      const attempt = await readTranscript(plainText(cues), context);
+      if (attempt.read) {
+        const read = attempt.read;
+        return {
+          recordingUrl,
+          fromSummary: false,
+          note: null,
+          retry: false,
+          didRead: true,
+          ai: { read, model: read.model, items: read.actionItems },
+          // Only ours become suggested tasks. The client's own undertakings
+          // are in the summary, where they belong - they are worth knowing
+          // and they are not RevOptics work.
+          commitments: read.actionItems
+            .filter((i) => i.ours)
+            .map((i) => ({
+              text: i.quote || i.task,
+              speaker: i.owner,
+              atSeconds: 0,
+              suggestedTask: i.task,
+              when: i.when,
+            })),
+        };
       }
+      // No write-up, and now we know why rather than falling through in
+      // silence. This is the state the Laurel call was left in: a
+      // transcript read fine, the old rules ran, and the meeting showed
+      // the same empty panel as a call that was never recorded.
+      whyNoWriteUp = attempt.reason;
+      if (whyNoWriteUp) note(whyNoWriteUp);
+    } catch (e) {
+      // A quota or key problem should be visible, not quietly degrade every
+      // call to the weaker reader for a month.
+      const message = e instanceof Error ? `Claude couldn't read the transcript: ${e.message}` : "Claude couldn't read the transcript.";
+      note(message);
+      // Worth another go once the key or the quota is sorted out, rather
+      // than leaving the call with rule-scraped commitments forever.
+      return { ...nothing(message, true), recordingUrl };
     }
 
-    // No Claude. The rules are a poor substitute but they are what there is.
-    if (!aiConfigured()) {
-      note("ANTHROPIC_API_KEY isn't set, so the weaker transcript rules ran instead of Claude.");
-    }
+    // The old pattern rules. A poor substitute, but they are what there is.
     return {
       recordingUrl,
       commitments: extractCommitments(cues, isOurs),
       fromSummary: false,
-      note: null,
-      // Rule-scraped is second best, but it is read. Re-reading would raise
-      // every dismissed commitment again.
+      note: whyNoWriteUp,
+      // Rule-scraped is second best, but it is read. Re-reading on every
+      // sync would raise every dismissed commitment again - the way back is
+      // Re-read transcripts, which clears the pending ones first.
       retry: false,
       didRead: true,
     };
