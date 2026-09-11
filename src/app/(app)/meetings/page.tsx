@@ -82,7 +82,8 @@ export default async function MeetingsPage({
         title: true,
         startsAt: true,
         minutes: true,
-        project: { select: { name: true } },
+        summary: true,
+        project: { select: { id: true, name: true } },
         user: { select: { name: true } },
       },
     }),
@@ -222,16 +223,36 @@ export default async function MeetingsPage({
           <h2 className="mb-2 text-sm font-semibold text-ink-900">Recently logged</h2>
           <ul className="card divide-y divide-ink-100">
             {recent.map((m) => (
-              <li key={m.id} className="flex flex-wrap items-center gap-2 px-4 py-2 text-sm">
-                <span className="text-ink-800">{m.title}</span>
-                <span className="text-xs text-ink-500">
-                  {formatMedium(dayInZone(m.startsAt, zone))}
-                  {m.project ? ` · ${m.project.name}` : ""}
-                  {everyone ? ` · ${m.user.name}` : ""}
-                </span>
-                <span className="ml-auto">
-                  <ReopenButton id={m.id} />
-                </span>
+              <li key={m.id} className="px-4 py-2 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-ink-800">{m.title}</span>
+                  <span className="text-xs text-ink-500">
+                    {formatMedium(dayInZone(m.startsAt, zone))}
+                    {m.project ? ` · ${m.project.name}` : ""}
+                    {everyone ? ` · ${m.user.name}` : ""}
+                  </span>
+                  <span className="ml-auto">
+                    <ReopenButton id={m.id} />
+                  </span>
+                </div>
+                {m.summary ? (
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-xs text-ink-500 hover:text-ink-800">
+                      What the call was about
+                    </summary>
+                    <p className="mt-1 whitespace-pre-wrap border-l-2 border-ink-200 pl-2 text-sm leading-relaxed text-ink-700">
+                      {m.summary}
+                    </p>
+                    {m.project ? (
+                      <Link
+                        href={`/projects/${m.project.id}`}
+                        className="mt-1 inline-block text-xs text-brand-700 hover:underline"
+                      >
+                        All calls on {m.project.name} →
+                      </Link>
+                    ) : null}
+                  </details>
+                ) : null}
               </li>
             ))}
           </ul>

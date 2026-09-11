@@ -79,7 +79,7 @@ export default async function ProjectPage({
     admin ? slackChannelOptions() : Promise.resolve([]),
   ]);
 
-  const [entries, people, clients, partners, timeByTask] = await Promise.all([
+  const [entries, people, clients, partners, timeByTask, calls] = await Promise.all([
     db.timeEntry.findMany({
       where: { projectId: id },
       select: {
@@ -115,6 +115,22 @@ export default async function ProjectPage({
       by: ["taskId"],
       where: { projectId: id },
       _sum: { minutes: true },
+    }),
+    // Calls filed against this project, for the summaries. The summary is
+    // the durable record of what was said - more useful here, months
+    // later, than on the meeting card it was confirmed from.
+    db.meeting.findMany({
+      where: { projectId: id, summary: { not: null } },
+      orderBy: { startsAt: "desc" },
+      take: 40,
+      select: {
+        id: true,
+        title: true,
+        startsAt: true,
+        summary: true,
+        recordingUrl: true,
+        user: { select: { name: true } },
+      },
     }),
   ]);
 
@@ -452,6 +468,43 @@ export default async function ProjectPage({
               ]}
             />
           </section>
+
+          {calls.length > 0 ? (
+            <section className="card overflow-hidden">
+              <h2 className="border-b border-ink-200 px-4 py-2.5 text-sm font-semibold text-ink-900">
+                Calls
+              </h2>
+              <ul className="max-h-[32rem] divide-y divide-ink-100 overflow-y-auto">
+                {calls.map((call) => (
+                  <li key={call.id} className="px-4 py-3">
+                    <details>
+                      <summary className="cursor-pointer list-none">
+                        <span className="text-sm font-medium text-ink-900">
+                          {call.title}
+                        </span>
+                        <span className="ml-2 text-xs text-ink-500">
+                          {formatMedium(call.startsAt)} · {call.user.name}
+                        </span>
+                      </summary>
+                      <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-ink-700">
+                        {call.summary}
+                      </p>
+                      {call.recordingUrl ? (
+                        <a
+                          href={call.recordingUrl}
+                          target="_blank"
+                          rel="noopener"
+                          className="mt-2 inline-block text-xs text-brand-700 hover:underline"
+                        >
+                          Recording ↗
+                        </a>
+                      ) : null}
+                    </details>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
 
           <section className="card overflow-hidden">
             <h2 className="border-b border-ink-200 px-4 py-2.5 text-sm font-semibold text-ink-900">
