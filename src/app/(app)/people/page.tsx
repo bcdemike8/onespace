@@ -147,13 +147,22 @@ export default async function PeoplePage() {
                       >
                         Report →
                       </Link>
-                      <ResetPasswordForm userId={person.id} />
                       <button type="submit" className="btn-secondary btn-sm">
                         Save
                       </button>
                     </div>
                   </div>
                 </form>
+
+                {/* Outside the form above, not inside it. A form nested in a
+                    form is invalid HTML: the parser throws the inner one
+                    away, and every press of Set silently submitted the
+                    surrounding "save this person" form instead - which
+                    ignores the password field, so the password never
+                    changed and nothing said so. */}
+                <div className="mt-2 flex justify-end">
+                  <ResetPasswordForm userId={person.id} />
+                </div>
 
                 {person.id !== admin.id ? (
                   <form

@@ -17,7 +17,8 @@
     "db:studio": "prisma studio",
     "seed": "tsx prisma/seed.ts",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check:forms": "node scripts/check-nested-forms.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

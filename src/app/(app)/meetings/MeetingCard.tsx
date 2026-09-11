@@ -225,14 +225,22 @@ export function MeetingCard({
               <span className="text-xs text-ink-400">Non-billable project</span>
             )}
 
-            <span className="ml-auto">
-              <DismissButton id={meeting.id} />
-            </span>
           </div>
 
           <ErrorNote message={state?.error} />
         </form>
       )}
+
+      {/* Outside the form, not inside it. A form nested in a form is
+          invalid HTML - the parser drops the inner one, so pressing this
+          submitted the surrounding "log this time" form instead. Which
+          meant the one button whose whole job is "don't log this" was
+          logging it. */}
+      {!meeting.lockedNote ? (
+        <div className="mt-2 flex justify-end">
+          <DismissButton id={meeting.id} />
+        </div>
+      ) : null}
 
       {meeting.lockedNote ? (
         <div className="mt-3">
