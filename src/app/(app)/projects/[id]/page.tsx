@@ -19,6 +19,7 @@ import {
   renameSectionAction,
 } from "@/app/actions/tasks";
 import { TimeEntryRow } from "@/components/TimeEntryRow";
+import { CallSummary, asSummaryDoc } from "@/components/CallSummary";
 import { saveProjectAsTemplateAction } from "@/app/actions/templates";
 import { ProjectSettings } from "./ProjectSettings";
 import {
@@ -128,6 +129,7 @@ export default async function ProjectPage({
         title: true,
         startsAt: true,
         summary: true,
+        summaryJson: true,
         recordingUrl: true,
         user: { select: { name: true } },
       },
@@ -486,9 +488,18 @@ export default async function ProjectPage({
                           {formatMedium(call.startsAt)} · {call.user.name}
                         </span>
                       </summary>
-                      <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-ink-700">
-                        {call.summary}
-                      </p>
+                      <div className="mt-2">
+                        {asSummaryDoc(call.summaryJson) ? (
+                          <CallSummary
+                            doc={asSummaryDoc(call.summaryJson)!}
+                            text={call.summary}
+                          />
+                        ) : (
+                          <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink-700">
+                            {call.summary}
+                          </p>
+                        )}
+                      </div>
                       {call.recordingUrl ? (
                         <a
                           href={call.recordingUrl}

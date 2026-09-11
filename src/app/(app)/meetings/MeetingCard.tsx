@@ -5,6 +5,7 @@ import { acceptMeetingAction, dismissMeetingAction } from "@/app/actions/google"
 import { SubmitButton } from "@/components/SubmitButton";
 import { ErrorNote } from "@/components/ui";
 import { Commitments, type CommitmentRow } from "./Commitments";
+import { CallSummary, type SummaryDoc } from "@/components/CallSummary";
 
 export interface ProjectOption {
   id: string;
@@ -35,6 +36,7 @@ export interface MeetingRow {
   recordingUrl: string | null;
   /** What the call was about, written from the transcript. */
   summary: string | null;
+  summaryDoc: SummaryDoc | null;
   commitments: CommitmentRow[];
 }
 
@@ -253,9 +255,15 @@ export function MeetingCard({
           <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-ink-600">
             What the call was about
           </summary>
-          <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-ink-700">
-            {meeting.summary}
-          </p>
+          <div className="mt-2">
+            {meeting.summaryDoc ? (
+              <CallSummary doc={meeting.summaryDoc} text={meeting.summary} />
+            ) : (
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink-700">
+                {meeting.summary}
+              </p>
+            )}
+          </div>
         </details>
       ) : null}
 

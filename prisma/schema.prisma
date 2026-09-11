@@ -574,6 +574,11 @@ model Meeting {
   /// of a client conversation, so it is shown only to the person whose
   /// meeting it is and to admins, exactly as the meeting itself is.
   summary      String?
+  /// The same write-up with its structure kept - overview, headed sections,
+  /// action items, outline - so the page can lay it out rather than print a
+  /// wall of text. `summary` stays as the rendered version, which is what
+  /// gets pasted into a recap email.
+  summaryJson  Json?
   /// Which model wrote it, so a change of model is visible in the data.
   summaryModel String?
   summarisedAt DateTime?

@@ -37,22 +37,63 @@ export interface AiActionItem {
   quote: string;
 }
 
+/** A headed group of bullets, in both the summary and the outline. */
+export interface AiSection {
+  heading: string;
+  bullets: string[];
+}
+
 export interface AiRead {
-  /** A few lines on what the call was about. */
-  summary: string;
+  /** One sentence: who met, and what came of it. */
+  overview: string;
+  /** The substance, in two to four themed groups. */
+  sections: AiSection[];
+  /** A second, finer pass following the shape of the call. */
+  outline: AiSection[];
   actionItems: AiActionItem[];
   model: string;
 }
 
+const SECTIONS = {
+  type: "array",
+  items: {
+    type: "object",
+    additionalProperties: false,
+    required: ["heading", "bullets"],
+    properties: {
+      heading: {
+        type: "string",
+        description:
+          "Title Case, two or three words, specific to this call - 'Access Control', 'Classification Design', 'Blockers And Plans'. Never a generic label like 'Discussion' or 'Notes'.",
+      },
+      bullets: {
+        type: "array",
+        items: { type: "string" },
+        description: "Complete sentences. Three to five per heading.",
+      },
+    },
+  },
+} as const;
+
 const SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["summary", "action_items"],
+  required: ["overview", "sections", "outline", "action_items"],
   properties: {
-    summary: {
+    overview: {
       type: "string",
       description:
-        "Three to six sentences on what the call was about and what was decided. Plain prose, no bullet points, no preamble.",
+        "One sentence naming both companies and saying what the call achieved and what blocked it. 'Canopy and RevOptics configured Outreach Amplify research agents and a BDR access profile, but encountered a layout issue that prevented displaying agent results.'",
+    },
+    sections: {
+      ...SECTIONS,
+      description:
+        "Two to four themed groups covering what was decided and what is outstanding.",
+    },
+    outline: {
+      ...SECTIONS,
+      description:
+        "Three to five groups following the shape of the call itself - what was covered, in the order it came up. Finer grained than sections, and may repeat their ground from a different angle.",
     },
     action_items: {
       type: "array",
@@ -64,7 +105,7 @@ const SCHEMA = {
           task: {
             type: "string",
             description:
-              "The undertaking as a short instruction, starting with a verb. 'Send the sequence spec to Dana', not 'Brianna said she would send the spec'.",
+              "A complete instruction, starting with a verb, carrying enough detail to act on months later. 'Submit an Outreach support request explaining that the AI research agents run successfully but their custom fields do not appear when adding research-agent tiles to account or prospect layouts.' Not 'Submit a ticket'.",
           },
           owner: {
             type: ["string", "null"],
@@ -78,7 +119,7 @@ const SCHEMA = {
           when: {
             type: ["string", "null"],
             description:
-              "The timing exactly as spoken - 'by Friday', 'next week', 'end of the month'. Null if no timing was given. Never invent one.",
+              "The timing exactly as spoken - 'by Friday', 'before the Tuesday check-in'. Null if none was given. Never invent one.",
           },
           quote: {
             type: "string",
@@ -91,40 +132,82 @@ const SCHEMA = {
   },
 } as const;
 
-const SYSTEM = `You are reading the transcript of a client call at RevOptics, a
-RevOps consultancy that delivers through Outreach.io and Salesloft. Two jobs:
-summarise the call, and list what people undertook to do after it.
+const SYSTEM = `You are writing up a client call at RevOptics, a RevOps
+consultancy that delivers through Outreach.io and Salesloft. The reader is
+whoever picks this account up in three months, having not been there.
 
-On the summary: what the call was for, what was decided, and anything left
-open. Three to six sentences. Write it for someone who wasn't there and needs
-to pick the work up. No preamble, no "in this call".
+Produce four things.
 
-On action items, the bar is precision. A missed one costs little - the person
-was on the call. A wrong one puts words in someone's mouth on a project plan,
-and two of those and nobody trusts the list again.
+OVERVIEW. One sentence. Name both companies, say what the call achieved, and
+name the blocker if there was one.
 
-Include only real undertakings that outlive the call:
-- sending, sharing or writing something
-- building, changing or configuring something
-- booking a meeting, chasing a person, raising a ticket
-- looking into something afterwards
+SECTIONS. Two to four themed groups, each with a Title Case heading specific
+to this call - "Access Control", "Classification Design", "Blockers And
+Plans" - and three to five complete sentences under it. This is the
+substance: what was decided, configured, agreed or left open.
 
-Leave out:
-- anything done during the call itself ("let me share my screen", "I'll walk
-  you through this")
-- narration of the agenda ("we're kicking off", "we'll cover X today")
-- aims and hopes rather than undertakings ("the goal is to get you live")
-- anything hedged into meaninglessness ("we might possibly look at that")
-- pleasantries, and anything you are not sure about
+OUTLINE. Three to five groups following the shape of the call, in the order
+things came up. Finer grained than the sections, and it may cover the same
+ground from a different angle.
 
-Record both sides. Set "ours" false for the client's own commitments - they
-are real and worth seeing, but they are not RevOptics work.
+ACTION ITEMS. What people undertook to do afterwards.
 
-"when" is what was actually said, word for word. If nobody said when, it is
-null. Never infer a deadline.
+Throughout:
 
-If the call produced nothing anyone has to do, return an empty list. That is
-a normal and useful answer.`;
+Keep the specifics. Custom field numbers, tool names, people's names, dates
+and times as spoken, the exact wording of a decision. "Stored results in
+Custom 23" is worth more than "stored the results". A summary that drops the
+field number is a summary somebody has to re-listen to the call to use.
+
+Name who said or did what, using the names in the transcript.
+
+Write complete sentences, not fragments. Past tense for what happened.
+
+Action items are instructions, not descriptions - start with a verb and carry
+enough detail to act on cold. "Submit an Outreach support request explaining
+that the research agents run but their custom fields don't appear in layout
+configuration" rather than "Submit a ticket". Where one depends on something
+else, say so: "After receiving the updated configuration, import it in
+Outreach before the Tuesday check-in."
+
+Record both sides. Set "ours" false for the client's own commitments - real
+and worth seeing, but not RevOptics work.
+
+Leave out anything done during the call itself, narration of the agenda,
+aims rather than undertakings, and anything hedged into meaninglessness. If
+nothing was undertaken, return an empty list; that is a useful answer.`;
+
+/** The write-up as text, for pasting into a recap email. */
+export function renderSummary(read: {
+  overview: string;
+  sections: AiSection[];
+  outline: AiSection[];
+  actionItems: AiActionItem[];
+}): string {
+  const out: string[] = ["Overview", read.overview];
+
+  for (const s of read.sections) {
+    out.push("", s.heading, ...s.bullets.map((b) => `- ${b}`));
+  }
+
+  if (read.actionItems.length > 0) {
+    out.push("", "Action Items");
+    for (const a of read.actionItems) {
+      const who = a.owner ? ` (@${a.owner})` : "";
+      const when = a.when ? ` — ${a.when}` : "";
+      out.push(`- ${a.task}${when}${who}`);
+    }
+  }
+
+  if (read.outline.length > 0) {
+    out.push("", "Outline");
+    for (const s of read.outline) {
+      out.push("", s.heading, ...s.bullets.map((b) => `- ${b}`));
+    }
+  }
+
+  return out.join("\n");
+}
 
 /**
  * Summarise a transcript and lift the action items out of it.
@@ -180,7 +263,9 @@ export async function readTranscript(
     .join("");
 
   let parsed: {
-    summary?: string;
+    overview?: string;
+    sections?: { heading?: string; bullets?: string[] }[];
+    outline?: { heading?: string; bullets?: string[] }[];
     action_items?: {
       task?: string;
       owner?: string | null;
@@ -197,16 +282,29 @@ export async function readTranscript(
     return null;
   }
 
-  const summary = (parsed.summary ?? "").trim();
+  const groups = (raw: { heading?: string; bullets?: string[] }[] | undefined): AiSection[] =>
+    (raw ?? [])
+      .map((g) => ({
+        heading: (g.heading ?? "").trim(),
+        bullets: (g.bullets ?? []).map((b) => b.trim()).filter(Boolean),
+      }))
+      .filter((g) => g.heading && g.bullets.length > 0);
+
   const actionItems: AiActionItem[] = (parsed.action_items ?? [])
     .filter((i) => typeof i.task === "string" && i.task.trim().length > 2)
     .map((i) => ({
-      task: i.task!.trim().slice(0, 200),
+      task: i.task!.trim().slice(0, 400),
       owner: i.owner?.trim() || null,
       ours: i.ours !== false,
       when: i.when?.trim() || null,
       quote: (i.quote ?? "").trim().slice(0, 2000),
     }));
 
-  return { summary, actionItems, model: MODEL };
+  return {
+    overview: (parsed.overview ?? "").trim(),
+    sections: groups(parsed.sections),
+    outline: groups(parsed.outline),
+    actionItems,
+    model: MODEL,
+  };
 }

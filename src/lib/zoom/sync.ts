@@ -19,7 +19,13 @@ import {
   type Commitment,
 } from "@/lib/zoom/commitments";
 import { dueFor } from "@/lib/when";
-import { aiConfigured, readTranscript, type AiActionItem } from "@/lib/ai/summarise";
+import {
+  aiConfigured,
+  readTranscript,
+  renderSummary,
+  type AiActionItem,
+  type AiRead,
+} from "@/lib/ai/summarise";
 import { backfillDueDates } from "@/lib/commitments/backfill";
 import { buildWeights, matchMeeting, type MatchCandidate } from "@/lib/google/match";
 import { orgTimezone } from "@/lib/google/sync";
@@ -349,7 +355,24 @@ export async function syncZoom(options?: {
                 transcriptReadAt: new Date(),
                 // The summary is what replaces the transcript. It is the
                 // only durable record of the call OneSpace keeps.
-                summary: found.ai?.summary || undefined,
+                summary: found.ai ? renderSummary(found.ai.read) : undefined,
+                // Through JSON to satisfy Prisma's Json input type, which
+                // won't take an interface with named fields directly.
+                summaryJson: found.ai
+                  ? (JSON.parse(
+                      JSON.stringify({
+                        overview: found.ai.read.overview,
+                        sections: found.ai.read.sections,
+                        outline: found.ai.read.outline,
+                        actionItems: found.ai.read.actionItems.map((i) => ({
+                          task: i.task,
+                          owner: i.owner,
+                          ours: i.ours,
+                          when: i.when,
+                        })),
+                      }),
+                    ) as Prisma.InputJsonValue)
+                  : undefined,
                 summaryModel: found.ai?.model || undefined,
                 summarisedAt: found.ai ? new Date() : undefined,
               },
@@ -431,7 +454,7 @@ interface Read {
   commitments: Found[];
   fromSummary: boolean;
   /** Set when Claude read the transcript rather than the rules. */
-  ai?: { summary: string; model: string; items: AiActionItem[] } | null;
+  ai?: { read: AiRead; model: string; items: AiActionItem[] } | null;
 }
 
 /**
@@ -525,7 +548,7 @@ async function readCommitments(
         return {
           recordingUrl,
           fromSummary: false,
-          ai: { summary: read.summary, model: read.model, items: read.actionItems },
+          ai: { read, model: read.model, items: read.actionItems },
           // Only ours become suggested tasks. The client's own undertakings
           // are in the summary, where they belong - they are worth knowing
           // and they are not RevOptics work.

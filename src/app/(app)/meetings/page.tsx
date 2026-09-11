@@ -8,6 +8,7 @@ import { orgTimezone } from "@/lib/google/sync";
 import { googleConfigured } from "@/lib/google/auth";
 import { zoomConfigured } from "@/lib/zoom/client";
 import { EmptyState, PageHeader } from "@/components/ui";
+import { asSummaryDoc } from "@/components/CallSummary";
 import { MeetingCard, type MeetingRow, type ProjectOption } from "./MeetingCard";
 import { SyncButton } from "./SyncButton";
 import { ReopenButton } from "./ReopenButton";
@@ -58,6 +59,7 @@ export default async function MeetingsPage({
         actualMinutes: true,
         recordingUrl: true,
         summary: true,
+        summaryJson: true,
         user: { select: { name: true } },
         commitments: {
           where: { status: "PENDING" },
@@ -145,6 +147,7 @@ export default async function MeetingsPage({
         actualMinutes: m.actualMinutes,
         recordingUrl: m.recordingUrl,
         summary: m.summary,
+        summaryDoc: asSummaryDoc(m.summaryJson),
         commitments: m.commitments,
       };
     });
