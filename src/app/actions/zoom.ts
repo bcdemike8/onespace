@@ -47,6 +47,11 @@ export async function syncZoomAction(
     if (r.failed.length > 0) {
       bits.push(`couldn't read ${r.failed.map((f) => f.name).join(", ")}`);
     }
+    if (r.transcriptsLeft > 0) {
+      bits.push(
+        `${r.transcriptsLeft} more transcript${r.transcriptsLeft === 1 ? "" : "s"} still to read - run it again, or leave them to tonight`,
+      );
+    }
     let message = `${bits.join(", ")}.`;
     if (r.transcripts > 0 && r.fromSummary === 0 && r.summaryNote) {
       // Worth saying every time. The transcript rules are the fallback and

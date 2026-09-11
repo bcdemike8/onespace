@@ -46,6 +46,8 @@ export interface ZoomOutcome {
   summaryNote?: string;
   /** Commitments that came from Zoom's summary rather than the transcript. */
   fromSummary: number;
+  /** Transcripts found but left for the next run, to keep this one quick. */
+  transcriptsLeft: number;
   /** Transcripts read for commitments. */
   transcripts: number;
   commitments: number;
@@ -90,6 +92,16 @@ async function loadCandidates(): Promise<MatchCandidate[]> {
  *   3. Calls that never touched a calendar - instant meetings, dials into a
  *      personal room - which the calendar sync can't see at all.
  */
+/**
+ * How many transcripts one sync will read.
+ *
+ * A model reading an hour of conversation takes tens of seconds, and the
+ * sync runs inside a web request. Twelve keeps a manual run comfortably
+ * under any timeout while still clearing a normal week in one press; a
+ * backlog takes a few runs, or one night of cron.
+ */
+const TRANSCRIPTS_PER_RUN = 12;
+
 export async function syncZoom(options?: {
   userId?: string;
   from?: Date;
@@ -102,6 +114,7 @@ export async function syncZoom(options?: {
     created: 0,
     skipped: 0,
     transcripts: 0,
+    transcriptsLeft: 0,
     commitments: 0,
     fromSummary: 0,
     failed: [],
@@ -307,7 +320,15 @@ export async function syncZoom(options?: {
       // The recording, and the promises inside it. Read once per meeting: a
       // transcript doesn't change, and re-reading would raise every
       // commitment again after someone had dismissed it.
-      if (!row.transcriptReadAt) {
+      //
+      // Bounded per run, because a model reading an hour of conversation
+      // takes tens of seconds and a six-week backlog would hold the request
+      // open for twenty minutes. What's left is picked up by the next sync
+      // and by the nightly cron, and the result says how many remain so
+      // nobody thinks it has finished when it hasn't.
+      if (!row.transcriptReadAt && outcome.transcripts >= TRANSCRIPTS_PER_RUN) {
+        outcome.transcriptsLeft += 1;
+      } else if (!row.transcriptReadAt) {
         const found = await readCommitments(zm.uuid, isOurs, {
           title: row!.title,
           when: row!.startsAt,
