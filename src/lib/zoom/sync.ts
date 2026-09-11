@@ -416,7 +416,10 @@ async function readCommitments(
       transcriptUrl = transcript?.download_url ?? null;
     }
   } catch {
-    return null;
+    // No cloud recording. That used to end the read here, which was wrong:
+    // AI Companion summarises calls that were never cloud recorded, and its
+    // next steps are the better source anyway. Carry on to the summary with
+    // no recording link and no transcript.
   }
 
   try {
@@ -441,7 +444,8 @@ async function readCommitments(
   }
 
   if (!transcriptUrl) {
-    // Nothing to read, but the recording link is still worth keeping.
+    // The summary didn't answer and there is no transcript. The recording
+    // link is still worth keeping if there was one.
     return recordingUrl ? { recordingUrl, commitments: [], fromSummary: false } : null;
   }
 
