@@ -95,18 +95,24 @@ async function loadCandidates(): Promise<MatchCandidate[]> {
 /**
  * How many transcripts one sync will read.
  *
- * A model reading an hour of conversation takes tens of seconds, and the
- * sync runs inside a web request. Twelve keeps a manual run comfortably
- * under any timeout while still clearing a normal week in one press; a
- * backlog takes a few runs, or one night of cron.
+ * A model reading an hour of conversation takes tens of seconds, so five
+ * is a couple of minutes - short enough for a button to wait on and for
+ * any proxy between here and the caller to stay patient.
+ *
+ * The cron doesn't get a bigger number, it gets more goes: it calls this
+ * endpoint again while anything is left, so each HTTP request stays short
+ * and the backlog still drains in one night. Raising the cap instead would
+ * mean tuning a timeout on every hop, and losing the whole run when one of
+ * them disagreed.
  */
-const TRANSCRIPTS_PER_RUN = 12;
+const TRANSCRIPTS_PER_REQUEST = 5;
 
 export async function syncZoom(options?: {
   userId?: string;
   from?: Date;
   to?: Date;
 }): Promise<ZoomOutcome> {
+  const transcriptBudget = TRANSCRIPTS_PER_REQUEST;
   const outcome: ZoomOutcome = {
     people: 0,
     seen: 0,
@@ -326,7 +332,7 @@ export async function syncZoom(options?: {
       // open for twenty minutes. What's left is picked up by the next sync
       // and by the nightly cron, and the result says how many remain so
       // nobody thinks it has finished when it hasn't.
-      if (!row.transcriptReadAt && outcome.transcripts >= TRANSCRIPTS_PER_RUN) {
+      if (!row.transcriptReadAt && outcome.transcripts >= transcriptBudget) {
         outcome.transcriptsLeft += 1;
       } else if (!row.transcriptReadAt) {
         const found = await readCommitments(zm.uuid, isOurs, {

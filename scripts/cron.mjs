@@ -87,14 +87,49 @@ if (wants("mail")) {
 }
 
 if (wants("zoom")) {
-  jobs.push(() =>
-    call("zoom", "/api/cron/zoom-sync", (b) =>
-      `${b.seen} calls across ${b.people} people, ${b.timed} timed, ${b.created} off-calendar, ${b.commitments} commitments` +
-      (b.failed?.length
-        ? `, couldn't read ${b.failed.map((f) => `${f.name} (${f.error})`).join(", ")}`
-        : ""),
-    ),
-  );
+  // Called until the transcript backlog is empty rather than once.
+  //
+  // Reading a transcript with a model takes tens of seconds, and the sync
+  // only reads a handful per request so that no hop between here and the
+  // app has to wait minutes for a response. Overnight there is no hurry
+  // and nobody watching, so this keeps going until nothing is left -
+  // which is how a six-week catch-up clears in one night instead of a
+  // fortnight of one-a-day.
+  jobs.push(async () => {
+    let totals = { seen: 0, commitments: 0, transcripts: 0 };
+    let ok = true;
+
+    for (let pass = 1; pass <= 60; pass++) {
+      let left = 0;
+      const done = await call("zoom", "/api/cron/zoom-sync", (b) => {
+        left = b.transcriptsLeft ?? 0;
+        totals.seen = b.seen ?? 0;
+        totals.commitments += b.commitments ?? 0;
+        totals.transcripts += b.transcripts ?? 0;
+        return (
+          `pass ${pass}: ${b.seen} calls across ${b.people} people, ${b.timed} timed, ` +
+          `${b.created} off-calendar, ${b.commitments} commitments` +
+          (left > 0 ? `, ${left} transcripts still to read` : "") +
+          (b.failed?.length
+            ? `, couldn't read ${b.failed.map((f) => `${f.name} (${f.error})`).join(", ")}`
+            : "")
+        );
+      });
+
+      if (!done) {
+        ok = false;
+        break;
+      }
+      if (left === 0) break;
+    }
+
+    if (totals.transcripts > 0) {
+      console.log(
+        `zoom: ${totals.transcripts} transcripts read in total, ${totals.commitments} commitments found`,
+      );
+    }
+    return ok;
+  });
 }
 
 if (wants("digest")) {
