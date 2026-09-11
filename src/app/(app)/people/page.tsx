@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { addDays, today } from "@/lib/dates";
+import { addDays, formatMedium, today } from "@/lib/dates";
 import { centsToInput, formatHours, formatMoney } from "@/lib/format";
 import { PageHeader } from "@/components/ui";
 import {
@@ -126,10 +126,18 @@ export default async function PeoplePage() {
                         cost
                       </span>
                       {!person.isActive ? (
-                        <span className="chip bg-ink-100 text-ink-500">
-                          Deactivated
+                        <span className="chip bg-bad-50 text-bad-700">
+                          Deactivated — they can&apos;t sign in
                         </span>
-                      ) : null}
+                      ) : person.lastSignedInAt ? (
+                        <span>
+                          Last signed in {formatMedium(person.lastSignedInAt)}
+                        </span>
+                      ) : (
+                        <span className="chip bg-warn-50 text-warn-700">
+                          Never signed in
+                        </span>
+                      )}
                     </div>
 
                     <div className="flex flex-wrap items-center gap-3">

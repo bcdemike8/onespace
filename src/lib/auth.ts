@@ -20,6 +20,12 @@ export async function createSession(userId: string) {
     data: { tokenHash: sha256(token), userId, expiresAt },
   });
 
+  // Recorded so an admin can tell "wrong password" from "never tried".
+  await db.user.update({
+    where: { id: userId },
+    data: { lastSignedInAt: new Date() },
+  });
+
   (await cookies()).set(COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",

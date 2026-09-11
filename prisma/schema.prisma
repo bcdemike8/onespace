@@ -120,6 +120,11 @@ model User {
   /// workspace is linked, or when someone has no Slack account.
   slackUserId String? @unique
 
+  /// The last time this person actually got in. Null means never, which is
+  /// the single most useful fact when somebody says "it doesn't work" - it
+  /// separates "their password is wrong" from "they never tried".
+  lastSignedInAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

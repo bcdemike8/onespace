@@ -37,7 +37,7 @@ export async function createPersonAction(
   });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-  const password = String(formData.get("password") ?? "");
+  const password = String(formData.get("password") ?? "").trim();
   if (password.length < 8) {
     return { error: "Set a starting password of at least 8 characters." };
   }
@@ -149,7 +149,7 @@ export async function resetPasswordAction(
 ): Promise<ActionState> {
   await requireAdmin();
   const id = String(formData.get("id") ?? "");
-  const password = String(formData.get("password") ?? "");
+  const password = String(formData.get("password") ?? "").trim();
   if (password.length < 8) return { error: "Use at least 8 characters." };
 
   await db.user.update({
@@ -171,8 +171,8 @@ export async function changeOwnPasswordAction(
   const user = await requireUser();
 
   const current = String(formData.get("current") ?? "");
-  const next = String(formData.get("password") ?? "");
-  const confirm = String(formData.get("confirm") ?? "");
+  const next = String(formData.get("password") ?? "").trim();
+  const confirm = String(formData.get("confirm") ?? "").trim();
 
   if (!(await verifyPassword(current, user.passwordHash))) {
     return { error: "Your current password isn't right." };
