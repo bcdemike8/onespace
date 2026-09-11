@@ -8,7 +8,7 @@ import { orgTimezone } from "@/lib/google/sync";
 import { googleConfigured } from "@/lib/google/auth";
 import { zoomConfigured } from "@/lib/zoom/client";
 import { EmptyState, PageHeader } from "@/components/ui";
-import { asSummaryDoc } from "@/components/CallSummary";
+import { asSummaryDoc } from "@/lib/summary";
 import { MeetingCard, type MeetingRow, type ProjectOption } from "./MeetingCard";
 import { SyncButton } from "./SyncButton";
 import { ReopenButton } from "./ReopenButton";

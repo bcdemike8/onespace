@@ -19,7 +19,8 @@ import {
   renameSectionAction,
 } from "@/app/actions/tasks";
 import { TimeEntryRow } from "@/components/TimeEntryRow";
-import { CallSummary, asSummaryDoc } from "@/components/CallSummary";
+import { CallSummary } from "@/components/CallSummary";
+import { asSummaryDoc } from "@/lib/summary";
 import { saveProjectAsTemplateAction } from "@/app/actions/templates";
 import { ProjectSettings } from "./ProjectSettings";
 import {

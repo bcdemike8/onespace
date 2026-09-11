@@ -18,7 +18,9 @@
     "seed": "tsx prisma/seed.ts",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "check:forms": "node scripts/check-nested-forms.mjs"
+    "check:forms": "node scripts/check-nested-forms.mjs",
+    "check:client": "node scripts/check-client-imports.mjs",
+    "check": "npm run check:forms && npm run check:client && npm run typecheck"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

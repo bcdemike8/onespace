@@ -5,7 +5,8 @@ import { acceptMeetingAction, dismissMeetingAction } from "@/app/actions/google"
 import { SubmitButton } from "@/components/SubmitButton";
 import { ErrorNote } from "@/components/ui";
 import { Commitments, type CommitmentRow } from "./Commitments";
-import { CallSummary, type SummaryDoc } from "@/components/CallSummary";
+import { CallSummary } from "@/components/CallSummary";
+import type { SummaryDoc } from "@/lib/summary";
 
 export interface ProjectOption {
   id: string;
