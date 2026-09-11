@@ -3,8 +3,19 @@ import { isAdmin, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { formatMedium } from "@/lib/dates";
 import { googleConfigured } from "@/lib/google/auth";
+import {
+  asReplyFilter,
+  attributeRows,
+  filterLabel,
+  filterOptions,
+  inboxHref,
+  replyWhere,
+  whichWhere,
+  type ReplyFilter,
+} from "@/lib/inbox-filters";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { MailSyncButton } from "./MailSyncButton";
+import { ProjectFilter, ReplyFilterTabs } from "./InboxFilters";
 
 export const dynamic = "force-dynamic";
 
@@ -23,19 +34,107 @@ function ago(date: Date): string {
 export default async function InboxPage({
   searchParams,
 }: {
-  searchParams: Promise<{ who?: string; show?: string }>;
+  searchParams: Promise<{
+    who?: string;
+    show?: string;
+    which?: string;
+    reply?: string;
+  }>;
 }) {
   const user = await requireUser();
   const admin = isAdmin(user);
   const params = await searchParams;
   const everyone = admin && params.who === "all";
   const showDone = params.show === "done";
+  const reply = asReplyFilter(params.reply);
+  const which = params.which;
+
+  // Everything in the tab the person is looking at. The dropdown and the
+  // reply tabs are both built from this, so neither one hides choices the
+  // other would have offered.
+  const scope = {
+    ...(everyone ? {} : { userId: user.id }),
+    status: (showDone ? "DONE" : "OPEN") as "DONE" | "OPEN",
+  };
+
+  const current = {
+    who: params.who,
+    show: params.show,
+    which,
+    reply: params.reply,
+  };
+
+  if (!googleConfigured()) {
+    return (
+      <>
+        <PageHeader title="Inbox" subtitle="Client email that needs an answer." />
+        <EmptyState
+          title="Google isn't connected yet"
+          body="Once an admin adds the service account credentials in Railway, client email lands here as work to do."
+        />
+      </>
+    );
+  }
+
+  const [grouped, byReply] = await Promise.all([
+    db.mailThread.groupBy({
+      by: ["clientId", "projectId"],
+      where: scope,
+      _count: { _all: true },
+    }),
+    db.mailThread.groupBy({
+      by: ["awaitingUs"],
+      where: scope,
+      _count: { _all: true },
+    }),
+  ]);
+
+  const projectIds = [
+    ...new Set(grouped.map((g) => g.projectId).filter((id): id is string => Boolean(id))),
+  ];
+  const projects = projectIds.length
+    ? await db.project.findMany({
+        where: { id: { in: projectIds } },
+        select: { id: true, name: true, clientId: true },
+      })
+    : [];
+
+  const rows = attributeRows(
+    grouped.map((g) => ({
+      clientId: g.clientId,
+      projectId: g.projectId,
+      count: g._count._all,
+    })),
+    new Map(projects.map((p) => [p.id, p.clientId])),
+  );
+
+  const clientIds = [
+    ...new Set(rows.map((r) => r.clientId).filter((id): id is string => Boolean(id))),
+  ];
+  const clients = clientIds.length
+    ? await db.client.findMany({
+        where: { id: { in: clientIds } },
+        select: { id: true, name: true },
+      })
+    : [];
+
+  const groups = filterOptions(rows, {
+    clients: new Map(clients.map((c) => [c.id, c.name])),
+    projects: new Map(projects.map((p) => [p.id, p.name])),
+  });
+
+  const waitingCount =
+    byReply.find((r) => r.awaitingUs)?._count._all ?? 0;
+  const repliedCount =
+    byReply.find((r) => !r.awaitingUs)?._count._all ?? 0;
+  const replyCounts: Record<ReplyFilter, number> = {
+    all: waitingCount + repliedCount,
+    waiting: waitingCount,
+    replied: repliedCount,
+  };
 
   const threads = await db.mailThread.findMany({
-    where: {
-      ...(everyone ? {} : { userId: user.id }),
-      status: showDone ? "DONE" : "OPEN",
-    },
+    where: { ...scope, ...whichWhere(which), ...replyWhere(reply) },
     orderBy: [{ awaitingUs: "desc" }, { lastMessageAt: "desc" }],
     take: 200,
     select: {
@@ -54,19 +153,8 @@ export default async function InboxPage({
     },
   });
 
-  if (!googleConfigured()) {
-    return (
-      <>
-        <PageHeader title="Inbox" subtitle="Client email that needs an answer." />
-        <EmptyState
-          title="Google isn't connected yet"
-          body="Once an admin adds the service account credentials in Railway, client email lands here as work to do."
-        />
-      </>
-    );
-  }
-
-  const waiting = threads.filter((t) => t.awaitingUs).length;
+  const filtered = Boolean(which) || reply !== "all";
+  const whichLabel = filterLabel(groups, which);
 
   return (
     <>
@@ -75,22 +163,22 @@ export default async function InboxPage({
         subtitle={
           showDone
             ? "Threads you've dealt with."
-            : waiting === 0
+            : waitingCount === 0
               ? "Client email that needs an answer."
-              : `${waiting} thread${waiting === 1 ? "" : "s"} waiting on you.`
+              : `${waitingCount} thread${waitingCount === 1 ? "" : "s"} waiting on you.`
         }
         actions={<MailSyncButton admin={admin} />}
       />
 
-      <div className="mb-4 flex flex-wrap gap-2 text-sm">
+      <div className="mb-3 flex flex-wrap gap-2 text-sm">
         <Link
-          href={everyone ? "/inbox?who=all" : "/inbox"}
+          href={inboxHref(current, { show: null })}
           className={showDone ? "btn-ghost btn-sm" : "btn-secondary btn-sm"}
         >
           To answer
         </Link>
         <Link
-          href={everyone ? "/inbox?who=all&show=done" : "/inbox?show=done"}
+          href={inboxHref(current, { show: "done" })}
           className={showDone ? "btn-secondary btn-sm" : "btn-ghost btn-sm"}
         >
           Done
@@ -98,13 +186,13 @@ export default async function InboxPage({
         {admin ? (
           <span className="ml-auto flex gap-2">
             <Link
-              href={showDone ? "/inbox?show=done" : "/inbox"}
+              href={inboxHref(current, { who: null })}
               className={everyone ? "btn-ghost btn-sm" : "btn-secondary btn-sm"}
             >
               Mine
             </Link>
             <Link
-              href={showDone ? "/inbox?who=all&show=done" : "/inbox?who=all"}
+              href={inboxHref(current, { who: "all" })}
               className={everyone ? "btn-secondary btn-sm" : "btn-ghost btn-sm"}
             >
               Everyone
@@ -113,13 +201,41 @@ export default async function InboxPage({
         ) : null}
       </div>
 
+      <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+        <ProjectFilter groups={groups} current={current} />
+        <ReplyFilterTabs current={current} counts={replyCounts} />
+        {filtered ? (
+          <Link
+            href={inboxHref(current, { which: null, reply: null })}
+            className="text-xs text-ink-500 underline decoration-ink-300 hover:text-ink-800"
+          >
+            Clear
+          </Link>
+        ) : null}
+      </div>
+
+      {filtered && threads.length > 0 ? (
+        <p className="mb-2 text-xs text-ink-500">
+          {threads.length} of {replyCounts.all}
+          {whichLabel ? ` · ${whichLabel}` : ""}
+        </p>
+      ) : null}
+
       {threads.length === 0 ? (
         <EmptyState
-          title={showDone ? "Nothing here yet" : "Nothing waiting"}
+          title={
+            filtered
+              ? "Nothing matches that"
+              : showDone
+                ? "Nothing here yet"
+                : "Nothing waiting"
+          }
           body={
-            showDone
-              ? "Threads you've replied to or marked done show up here."
-              : "No client email is waiting on a reply. Sync if you're expecting something — only mail from domains mapped to a client is pulled in."
+            filtered
+              ? "No thread in this tab matches the client and reply state you picked. Clear the filters to see the rest."
+              : showDone
+                ? "Threads you've replied to or marked done show up here."
+                : "No client email is waiting on a reply. Sync if you're expecting something — only mail from domains mapped to a client is pulled in."
           }
         />
       ) : (
@@ -133,12 +249,11 @@ export default async function InboxPage({
                 <div className="flex flex-wrap items-baseline gap-2">
                   {t.awaitingUs ? (
                     <span
-                      aria-label="Waiting on a reply"
-                      title="Waiting on a reply"
+                      aria-hidden="true"
                       className="inline-block h-2 w-2 shrink-0 rounded-full bg-warn-500"
                     />
                   ) : (
-                    <span className="inline-block h-2 w-2 shrink-0" />
+                    <span aria-hidden="true" className="inline-block h-2 w-2 shrink-0" />
                   )}
                   <span className="font-medium text-ink-900">{t.subject}</span>
                   <span className="text-xs text-ink-500">
@@ -153,6 +268,15 @@ export default async function InboxPage({
                 <p className="mt-1 line-clamp-2 pl-4 text-sm text-ink-600">{t.snippet}</p>
 
                 <div className="mt-1 flex flex-wrap items-center gap-2 pl-4 text-xs">
+                  {t.awaitingUs ? (
+                    <span className="chip bg-warn-50 text-warn-700">
+                      Waiting on you
+                    </span>
+                  ) : (
+                    <span className="chip bg-ink-100 text-ink-600">
+                      You replied last
+                    </span>
+                  )}
                   {t.client ? (
                     <span className="chip bg-ink-100 text-ink-700">{t.client.name}</span>
                   ) : null}
