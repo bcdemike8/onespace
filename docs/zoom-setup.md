@@ -61,14 +61,18 @@ a 401 that looks like a typo.
 |---|---|
 | `user:read:admin` | Find each person's Zoom account by email |
 | `report:read:admin` | What a meeting actually did, and who was on it |
-| `cloud_recording:read:list_recording_files:admin` | The recording and its transcript |
+| `cloud_recording:read:list_recording_files:admin` | The recording, its transcript and its captions |
 | `meeting_summary:read:admin` | AI Companion's summary, if your plan has it |
 
 On newer apps these appear as granular scopes with longer names; search for
 `report`, `recording` and `summary` and take the admin-level read ones.
 
-`meeting_summary` is optional. Without it OneSpace reads the transcript
-instead, which is the fallback path either way.
+`meeting_summary` is optional, and with Claude connected it does very little:
+the transcript is the better source and is read first. It only matters for
+calls that have no transcript at all.
+
+`cloud_recording` is not optional. Without it every call reports that it has
+no transcript, whatever Zoom's own web page shows you.
 
 ## 3. Activate it
 
@@ -114,9 +118,14 @@ nothing.
 Every one shows the sentence it came from, so you can check rather than trust.
 Nothing becomes a task without someone pressing the button.
 
-If your plan has AI Companion, its next-steps list is used instead of the
-transcript rules — Zoom had the audio and the speaker labels, and its steps are
-already phrased as actions.
+**The transcript comes first.** Where there's a transcript and
+`ANTHROPIC_API_KEY` is set, Claude reads it and that is the write-up. Zoom's
+own AI Companion next steps are the fallback for calls with no transcript —
+useful, but they produce no write-up, only a list of steps.
+
+Closed captions count as a transcript. They're the same WebVTT file produced
+by live transcription rather than after the fact, so an account with captions
+on and audio transcript off still gets read.
 
 ---
 
@@ -134,9 +143,23 @@ Account ID is on the app's credentials page.
 **Real durations aren't appearing** — the reports API needs a paid plan. On a
 plan without it the sync says so rather than silently using booked times.
 
+**"No transcript" on a call where you can see one in Zoom** — open the call in
+**Meetings**, click into it, and press **Ask Zoom what it has**. It asks Zoom
+live and prints every step: whether the recording exists, which files are on
+it, whether the transcript downloads, and whether AI Companion has a summary.
+The answer is nearly always one of: the app is missing
+`cloud_recording:read:list_recording_files:admin`; the scope was added after
+the app was activated and it hasn't been activated again; the call was
+recorded to the laptop rather than the cloud; or Zoom hasn't finished
+producing the file yet.
+
+A call that couldn't be read is **not** marked as read — once the scope is
+fixed, the next sync picks it up on its own. The reason is shown on the call
+itself, under where the write-up would be.
+
 **No commitments from a call that definitely had some** — check the meeting was
-cloud recorded *with* transcription enabled. Local recordings aren't reachable
-by the API at all.
+cloud recorded *with* transcription or captions enabled. Local recordings
+aren't reachable by the API at all.
 
 ---
 
@@ -158,24 +181,3 @@ dollars. Priced at a level where the right answer is to use the good model.
 
 **Without the key** nothing breaks — the old pattern rules run instead, and
 the sync says which reader it used. They are the fallback, not the plan.
-
----
-
-## Reading calls with Claude
-
-Set `ANTHROPIC_API_KEY` in Railway, on the app service and the cron service
-both, and every synced call with a transcript gets read rather than
-pattern-matched.
-
-Per meeting you get a few lines on what the call was about and what was
-decided, stored on the meeting itself; and the action items, each with who
-owes it, the timing they actually said, and the sentence it came from. Both
-sides are read — a client saying "I'll get you the credentials" shows up in
-the summary but never becomes a RevOptics task.
-
-**Cost.** An hour of talk is roughly ten thousand tokens in and a few hundred
-out — cents per call, a couple of dollars a month at forty calls. Priced at a
-level where the right answer is to use the good model rather than a cheap one.
-
-**Without the key** nothing breaks: the pattern rules run instead and the sync
-says which reader it used. They are the fallback, not the plan.

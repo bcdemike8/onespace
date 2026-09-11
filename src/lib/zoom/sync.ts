@@ -12,6 +12,7 @@ import {
   ZoomError,
   type ZoomPastMeeting,
 } from "@/lib/zoom/client";
+import { pickTranscript, type TranscriptPick } from "@/lib/zoom/files";
 import {
   extractCommitments,
   fromNextSteps,
@@ -56,6 +57,12 @@ export interface ZoomOutcome {
   transcriptsLeft: number;
   /** Transcripts read for commitments. */
   transcripts: number;
+  /**
+   * Calls that couldn't be read for a reason somebody can fix - a refused
+   * scope, a download Zoom wouldn't serve, a transcript still processing.
+   * Left unread deliberately, so they come back once it's sorted.
+   */
+  retryable: number;
   commitments: number;
   failed: { name: string; error: string }[];
 }
@@ -127,6 +134,7 @@ export async function syncZoom(options?: {
     skipped: 0,
     transcripts: 0,
     transcriptsLeft: 0,
+    retryable: 0,
     commitments: 0,
     fromSummary: 0,
     failed: [],
@@ -346,13 +354,19 @@ export async function syncZoom(options?: {
           when: row!.startsAt,
           client: clientOf(row!.projectId ?? row!.suggestedProjectId),
         });
-        if (found) {
+        {
           await db.$transaction(async (tx) => {
             await tx.meeting.update({
               where: { id: row!.id },
               data: {
                 recordingUrl: found.recordingUrl ?? undefined,
-                transcriptReadAt: new Date(),
+                // Only when it really was read. Marking a call read after a
+                // refused scope or a failed download would bury it: the
+                // sync never looks at a read call again, so the transcript
+                // would stay unread long after the thing blocking it had
+                // been fixed.
+                transcriptReadAt: found.retry ? undefined : new Date(),
+                transcriptNote: found.note ?? null,
                 // The summary is what replaces the transcript. It is the
                 // only durable record of the call OneSpace keeps.
                 summary: found.ai ? renderSummary(found.ai.read) : undefined,
@@ -407,7 +421,11 @@ export async function syncZoom(options?: {
               });
             }
           });
-          outcome.transcripts += 1;
+          // The budget exists to bound how long the model spends, so only a
+          // real read counts against it. A call with no recording costs one
+          // cheap API call and shouldn't push a readable one into tomorrow.
+          if (found.didRead) outcome.transcripts += 1;
+          if (found.retry) outcome.retryable += 1;
           outcome.commitments += found.commitments.length;
           if (found.fromSummary) outcome.fromSummary += 1;
         }
@@ -455,14 +473,27 @@ interface Read {
   fromSummary: boolean;
   /** Set when Claude read the transcript rather than the rules. */
   ai?: { read: AiRead; model: string; items: AiActionItem[] } | null;
+  /**
+   * Why there's no write-up, when there isn't one. Kept on the meeting so
+   * the answer to "I can see the transcript in Zoom" is on the call itself
+   * rather than in a number at the top of the page.
+   */
+  note?: string | null;
+  /**
+   * Can this call be usefully looked at again?
+   *
+   * A call with no cloud recording is settled - looking again next week
+   * will find the same nothing, and re-asking Zoom about two hundred of
+   * them every sync is how a sync starts taking ten minutes. A refused
+   * scope or a transcript Zoom is still processing is not settled: those
+   * become readable once somebody fixes the scope or Zoom finishes, so the
+   * call is left unread and picked up on a later run.
+   */
+  retry: boolean;
+  /** True when Claude actually read a transcript - the expensive path. */
+  didRead: boolean;
 }
 
-/**
- * Zoom's own next steps if the plan produced them, otherwise the transcript.
- *
- * The summary is preferred where it exists: Zoom had the audio and the speaker
- * labels, and its next steps are already phrased as actions.
- */
 /**
  * The first reason AI Companion didn't answer, kept once per sync.
  *
@@ -478,30 +509,131 @@ const note = (reason: string) => {
   if (!summaryNote) summaryNote = reason;
 };
 
+/**
+ * Read one call: the transcript through Claude, and what was promised on it.
+ *
+ * The order matters and it used to be the other way round. Zoom's AI
+ * Companion next steps, where the plan produces them, used to answer first
+ * and return - which meant that on exactly the calls Zoom had summarised,
+ * Claude never saw the transcript and no write-up was stored. The whole
+ * point of connecting Claude was that every call gets a write-up in
+ * OneSpace, so the transcript goes first whenever there is one and Zoom's
+ * own summary is the fallback for calls that have none.
+ */
 async function readCommitments(
   uuid: string,
   isOurs: (speaker: string | null) => boolean,
   context: { title: string; when: Date; client: string | null },
-): Promise<Read | null> {
+): Promise<Read> {
+  const nothing = (note: string | null, retry: boolean): Read => ({
+    recordingUrl: null,
+    commitments: [],
+    fromSummary: false,
+    note,
+    retry,
+    didRead: false,
+  });
+
   let recordingUrl: string | null = null;
-  let transcriptUrl: string | null = null;
+  let transcript: TranscriptPick = {
+    url: null,
+    kind: null,
+    reason: null,
+    processing: false,
+  };
 
   try {
     const rec = await getRecording(uuid);
     if (rec) {
       recordingUrl = rec.share_url ?? null;
-      const transcript = rec.recording_files?.find(
-        (f) => f.recording_type === "audio_transcript" || f.file_type === "TRANSCRIPT",
-      );
-      transcriptUrl = transcript?.download_url ?? null;
+      transcript = pickTranscript(rec.recording_files);
+    } else {
+      transcript = {
+        url: null,
+        kind: null,
+        processing: false,
+        reason:
+          "This call wasn't recorded to the cloud, so there's no transcript to read. Local recordings stay on the laptop and Zoom can't reach them.",
+      };
     }
-  } catch {
-    // No cloud recording. That used to end the read here, which was wrong:
-    // AI Companion summarises calls that were never cloud recorded, and its
-    // next steps are the better source anyway. Carry on to the summary with
-    // no recording link and no transcript.
+  } catch (e) {
+    // This used to be swallowed whole, which is the bug behind a transcript
+    // being visible in Zoom and absent here: a refused scope arrived as
+    // silence and came out the other end as "no transcript". A permission
+    // problem is fixable and says so, and the call is left to be read again
+    // once it's fixed.
+    const message = e instanceof ZoomError ? e.message : "Couldn't ask Zoom about this call's recording.";
+    const fixable = !(e instanceof ZoomError) || e.status !== 404;
+    note(message);
+    return nothing(message, fixable);
   }
 
+  // ------------------------------------------------- the transcript, read
+  if (transcript.url) {
+    const file = await zoomDownload(transcript.url);
+
+    if (!file.text) {
+      // A download that failed is not a call without a transcript. Say which
+      // it was, and come back to it.
+      note(file.reason ?? "Couldn't download the transcript.");
+      return { ...nothing(file.reason, true), recordingUrl };
+    }
+
+    const cues = parseVtt(file.text);
+
+    if (aiConfigured()) {
+      try {
+        const read = await readTranscript(plainText(cues), context);
+        if (read) {
+          return {
+            recordingUrl,
+            fromSummary: false,
+            note: null,
+            retry: false,
+            didRead: true,
+            ai: { read, model: read.model, items: read.actionItems },
+            // Only ours become suggested tasks. The client's own undertakings
+            // are in the summary, where they belong - they are worth knowing
+            // and they are not RevOptics work.
+            commitments: read.actionItems
+              .filter((i) => i.ours)
+              .map((i) => ({
+                text: i.quote || i.task,
+                speaker: i.owner,
+                atSeconds: 0,
+                suggestedTask: i.task,
+                when: i.when,
+              })),
+          };
+        }
+      } catch (e) {
+        // A quota or key problem should be visible, not quietly degrade every
+        // call to the weaker reader for a month.
+        const message = e instanceof Error ? `Claude couldn't read the transcript: ${e.message}` : "Claude couldn't read the transcript.";
+        note(message);
+        // Worth another go once the key or the quota is sorted out, rather
+        // than leaving the call with rule-scraped commitments forever.
+        return { ...nothing(message, true), recordingUrl };
+      }
+    }
+
+    // No Claude. The rules are a poor substitute but they are what there is.
+    if (!aiConfigured()) {
+      note("ANTHROPIC_API_KEY isn't set, so the weaker transcript rules ran instead of Claude.");
+    }
+    return {
+      recordingUrl,
+      commitments: extractCommitments(cues, isOurs),
+      fromSummary: false,
+      note: null,
+      // Rule-scraped is second best, but it is read. Re-reading would raise
+      // every dismissed commitment again.
+      retry: false,
+      didRead: true,
+    };
+  }
+
+  // ------------------------------------- no transcript: Zoom's own summary
   try {
     const summary = await getMeetingSummary(uuid);
     if (summary?.next_steps && summary.next_steps.length > 0) {
@@ -509,6 +641,9 @@ async function readCommitments(
         recordingUrl,
         commitments: fromNextSteps(summary.next_steps),
         fromSummary: true,
+        note: transcript.reason,
+        retry: false,
+        didRead: true,
       };
     }
     // Three outcomes, three different answers, and telling them apart is
@@ -522,58 +657,20 @@ async function readCommitments(
     }
   } catch (e) {
     // AI Companion isn't on this plan, the scope wasn't granted, or it
-    // wasn't on for this call. The transcript path below is the fallback,
-    // not an error - but which of those it is matters a great deal to the
-    // quality of what comes out, so it gets said rather than swallowed.
+    // wasn't on for this call. Not fatal - there was no transcript either
+    // way - but which of those it is matters to what comes out.
     note(e instanceof ZoomError ? e.message : "Couldn't read Zoom's summary.");
-  }
-
-  if (!transcriptUrl) {
-    // The summary didn't answer and there is no transcript. The recording
-    // link is still worth keeping if there was one.
-    return recordingUrl ? { recordingUrl, commitments: [], fromSummary: false } : null;
-  }
-
-  const vtt = await zoomDownload(transcriptUrl);
-  if (!vtt) return { recordingUrl, commitments: [], fromSummary: false };
-
-  // Claude, when it's configured. It reads the conversation rather than
-  // pattern-matching sentences out of it, which is the difference between
-  // knowing that "I'll send the spec once Dana signs off" is conditional
-  // and not knowing what a Dana is.
-  if (aiConfigured()) {
-    try {
-      const read = await readTranscript(plainText(parseVtt(vtt)), context);
-      if (read) {
-        return {
-          recordingUrl,
-          fromSummary: false,
-          ai: { read, model: read.model, items: read.actionItems },
-          // Only ours become suggested tasks. The client's own undertakings
-          // are in the summary, where they belong - they are worth knowing
-          // and they are not RevOptics work.
-          commitments: read.actionItems
-            .filter((i) => i.ours)
-            .map((i) => ({
-              text: i.quote || i.task,
-              speaker: i.owner,
-              atSeconds: 0,
-              suggestedTask: i.task,
-              when: i.when,
-            })),
-        };
-      }
-    } catch (e) {
-      // A quota or key problem should be visible, not quietly degrade every
-      // call to the weaker reader for a month.
-      note(e instanceof Error ? `Claude couldn't read the transcript: ${e.message}` : "Claude couldn't read the transcript.");
-    }
   }
 
   return {
     recordingUrl,
-    commitments: extractCommitments(parseVtt(vtt), isOurs),
+    commitments: [],
     fromSummary: false,
+    note: transcript.reason,
+    // A transcript Zoom is still producing will be there next time; a call
+    // that was never recorded will not.
+    retry: transcript.processing,
+    didRead: !transcript.processing,
   };
 }
 

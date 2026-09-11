@@ -52,13 +52,19 @@ export async function syncZoomAction(
         `${r.transcriptsLeft} more transcript${r.transcriptsLeft === 1 ? "" : "s"} still to read - run it again, or leave them to tonight`,
       );
     }
+    if (r.retryable > 0) {
+      bits.push(
+        `${r.retryable} couldn't be read and will be tried again`,
+      );
+    }
     let message = `${bits.join(", ")}.`;
-    if (r.transcripts > 0 && r.fromSummary === 0 && r.summaryNote) {
-      // Worth saying every time. The transcript rules are the fallback and
-      // they are visibly worse than AI Companion's next steps; someone
-      // reading "12 commitments found" should know which reader produced
-      // them before they trust the list.
-      message += ` AI Companion wasn't used, so the weaker transcript rules ran - ${r.summaryNote}`;
+    // The reason, whatever it was. This used to be shown only when a
+    // transcript had been read and Zoom's summary hadn't answered, which is
+    // precisely the case where it matters least: a sync that read nothing
+    // at all said nothing about why, and "no transcript" was left looking
+    // like a fact about the calls rather than a thing to go and fix.
+    if (r.summaryNote && (r.retryable > 0 || r.transcripts === 0 || r.fromSummary === 0)) {
+      message += ` ${r.summaryNote}`;
     }
     return { ok: true, message };
   } catch (e) {
@@ -219,7 +225,7 @@ export async function rereadTranscriptsAction(
     // re-read and clearing its marker would just cost a lookup.
     await tx.meeting.updateMany({
       where: { zoomUuid: { not: null }, transcriptReadAt: { not: null } },
-      data: { transcriptReadAt: null },
+      data: { transcriptReadAt: null, transcriptNote: null },
     });
     return removed.count;
   });
@@ -229,4 +235,42 @@ export async function rereadTranscriptsAction(
     ok: true,
     message: `Cleared ${cleared} unconfirmed commitment${cleared === 1 ? "" : "s"}. Run Sync Zoom to read the transcripts again.`,
   };
+}
+
+/**
+ * Ask Zoom, now, what it has for one call.
+ *
+ * "I can see the transcript in Zoom" and "OneSpace says there isn't one"
+ * can both be true, and the gap between them is always something specific:
+ * a scope the app was never granted, a scope granted after the app was
+ * activated, a recording that lives on a laptop, captions rather than an
+ * audio transcript, a file Zoom hasn't finished making. Guessing at which
+ * from here costs a day each time. This asks and prints the answer.
+ */
+export async function diagnoseZoomAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+  if (!isAdmin(user)) return { error: "Only an admin can check a call in Zoom." };
+
+  const id = String(formData.get("id") ?? "");
+  const meeting = await db.meeting.findUnique({
+    where: { id },
+    select: { zoomUuid: true, title: true },
+  });
+  if (!meeting) return { error: "That meeting is no longer here." };
+  if (!meeting.zoomUuid) {
+    return {
+      error:
+        "This meeting has no Zoom id, so it was never matched to a Zoom call. Only calls the Zoom sync has seen can be looked up.",
+    };
+  }
+
+  const { describeZoomCall } = await import("@/lib/zoom/diagnose");
+  try {
+    return { ok: true, message: await describeZoomCall(meeting.zoomUuid) };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Couldn't ask Zoom about this call." };
+  }
 }

@@ -592,6 +592,12 @@ model Meeting {
   /// itself is not kept: only the sentences someone committed something in.
   transcriptReadAt DateTime?
 
+  /// Why there's no write-up, when there isn't one. "This call wasn't
+  /// recorded to the cloud" and "Zoom refused the download" look identical
+  /// from the meetings list, and only one of them is worth doing anything
+  /// about.
+  transcriptNote   String?
+
   syncedAt  DateTime @default(now())
   updatedAt DateTime @updatedAt
 

@@ -15,6 +15,7 @@ import { orgTimezone } from "@/lib/google/sync";
 import { PageHeader } from "@/components/ui";
 import { CallSummary } from "@/components/CallSummary";
 import { asSummaryDoc } from "@/lib/summary";
+import { DiagnoseZoom } from "./DiagnoseZoom";
 import { MeetingCard, type MeetingRow, type ProjectOption } from "../MeetingCard";
 
 export const dynamic = "force-dynamic";
@@ -245,11 +246,13 @@ export default async function MeetingPage({
             {meeting.summary}
           </p>
         ) : (
-          <p className="text-sm text-ink-500">
-            No write-up for this one. Summaries come from a cloud recording
-            with transcription switched on — a call without one has nothing to
-            read.
-          </p>
+          <>
+            <p className="text-sm text-ink-500">
+              {meeting.transcriptNote ??
+                "No write-up for this one. Summaries come from a cloud recording with transcription switched on — a call without one has nothing to read."}
+            </p>
+            {admin && meeting.zoomUuid ? <DiagnoseZoom id={meeting.id} /> : null}
+          </>
         )}
       </section>
 

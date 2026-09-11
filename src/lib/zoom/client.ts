@@ -9,8 +9,23 @@ import "server-only";
 //
 // No SDK. This is five REST calls and a token exchange.
 
+import { looksLikeVtt } from "@/lib/zoom/files";
+
 const TOKEN_URL = "https://zoom.us/oauth/token";
 const API = "https://api.zoom.us/v2";
+
+/**
+ * How long any one Zoom call gets.
+ *
+ * Without this a connection that opens and then says nothing holds the sync
+ * open indefinitely - and the sync is a button somebody is watching, or a
+ * cron with a hundred calls behind it. A transcript is a file rather than a
+ * JSON reply and gets longer.
+ */
+const TIMEOUT_MS = 30_000;
+const DOWNLOAD_TIMEOUT_MS = 120_000;
+
+const timeout = (ms: number) => AbortSignal.timeout(ms);
 
 export const zoomConfigured = () =>
   Boolean(
@@ -46,7 +61,11 @@ async function accessToken(): Promise<string> {
     `${TOKEN_URL}?grant_type=account_credentials&account_id=${encodeURIComponent(
       process.env.ZOOM_ACCOUNT_ID!,
     )}`,
-    { method: "POST", headers: { Authorization: `Basic ${basic}` } },
+    {
+      method: "POST",
+      headers: { Authorization: `Basic ${basic}` },
+      signal: timeout(TIMEOUT_MS),
+    },
   ).catch(() => null);
 
   if (!res) throw new ZoomError("Couldn't reach Zoom.");
@@ -97,6 +116,7 @@ export async function zoomRequest<T>(
 
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
+    signal: timeout(TIMEOUT_MS),
   }).catch(() => null);
   if (!res) throw new ZoomError("Couldn't reach Zoom.");
 
@@ -130,19 +150,71 @@ function explainApi(status: number, code: number | undefined, message: string | 
   return message ?? `Zoom returned ${status}.`;
 }
 
+export interface Downloaded {
+  /** The file, when it arrived and looks like what was asked for. */
+  text: string | null;
+  /** Why it didn't, in words that name the next move. */
+  reason: string | null;
+}
+
 /**
  * Download a recording asset - the transcript, in practice.
  *
- * These URLs need the bearer token like any other call, and return the file
- * itself rather than JSON.
+ * Two attempts, because each fails in a different situation and the pair
+ * covers both.
+ *
+ * The bearer header is the documented way. But a download_url redirects to
+ * whichever storage host holds the file, and the Fetch standard strips
+ * Authorization when a redirect crosses origins - so the request that
+ * actually fetches the bytes arrives with no credentials, and Zoom answers
+ * it with a sign-in page. Carrying the token in the query survives that,
+ * and is what Zoom's own examples do.
+ *
+ * A sign-in page comes back as HTTP 200, so the status is not enough to go
+ * on: the body has to be checked as well. This used to return null for
+ * every one of these failures, which the sync then reported as the call
+ * having no transcript - indistinguishable from a call that genuinely had
+ * none, and the reason a transcript sitting in Zoom could not be read.
  */
-export async function zoomDownload(downloadUrl: string): Promise<string | null> {
+export async function zoomDownload(downloadUrl: string): Promise<Downloaded> {
   const token = await accessToken();
-  const res = await fetch(downloadUrl, {
-    headers: { Authorization: `Bearer ${token}` },
-  }).catch(() => null);
-  if (!res || !res.ok) return null;
-  return res.text();
+
+  const withToken = new URL(downloadUrl);
+  withToken.searchParams.set("access_token", token);
+
+  const attempts: { url: string; init: RequestInit }[] = [
+    {
+      url: downloadUrl,
+      init: {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: timeout(DOWNLOAD_TIMEOUT_MS),
+      },
+    },
+    { url: withToken.toString(), init: { signal: timeout(DOWNLOAD_TIMEOUT_MS) } },
+  ];
+
+  let lastReason = "Couldn't reach Zoom to download the transcript.";
+
+  for (const attempt of attempts) {
+    const res = await fetch(attempt.url, attempt.init).catch(() => null);
+    if (!res) continue;
+
+    if (!res.ok) {
+      lastReason =
+        res.status === 401 || res.status === 403
+          ? `Zoom refused the transcript download (${res.status}). The Server-to-Server app needs cloud_recording:read:list_recording_files:admin, and scopes added after the app was activated don't take effect until it's activated again.`
+          : `Zoom returned ${res.status} for the transcript download.`;
+      continue;
+    }
+
+    const body = await res.text().catch(() => "");
+    if (looksLikeVtt(body)) return { text: body, reason: null };
+
+    lastReason =
+      "Zoom answered the transcript download with a page rather than the file, which is what it does when the request isn't authenticated.";
+  }
+
+  return { text: null, reason: lastReason };
 }
 
 // -------------------------------------------------------------- shapes
@@ -168,6 +240,8 @@ export interface ZoomRecordingFile {
   recording_type?: string;
   download_url?: string;
   play_url?: string;
+  /** "completed" once Zoom has finished producing the file. */
+  status?: string;
 }
 
 export interface ZoomRecording {
