@@ -45,7 +45,13 @@ export async function syncZoomAction(
       bits.push(`${r.transcripts} transcripts read, nothing promised`);
     }
     if (r.failed.length > 0) {
-      bits.push(`couldn't read ${r.failed.map((f) => f.name).join(", ")}`);
+      // Named, but not all of them: a bad afternoon can produce fifty, and a
+      // wall of meeting titles buries the one line that says what to do.
+      const named = r.failed.slice(0, 3).map((f) => f.name).join(", ");
+      const rest = r.failed.length - 3;
+      bits.push(
+        `couldn't read ${named}${rest > 0 ? ` and ${rest} more` : ""} (${r.failed[0].error})`,
+      );
     }
     if (r.transcriptsLeft > 0) {
       bits.push(
@@ -263,7 +269,7 @@ export async function diagnoseZoomAction(
   if (!meeting.zoomUuid) {
     return {
       error:
-        "This meeting has no Zoom id, so it was never matched to a Zoom call. Only calls the Zoom sync has seen can be looked up.",
+        "This meeting has never been matched to a Zoom call, so there's nothing to look up yet. Run Sync Zoom on the meetings list first — if the call was recorded, it'll be matched by its Zoom id or by when it started.",
     };
   }
 

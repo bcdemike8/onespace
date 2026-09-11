@@ -249,9 +249,16 @@ export default async function MeetingPage({
           <>
             <p className="text-sm text-ink-500">
               {meeting.transcriptNote ??
-                "No write-up for this one. Summaries come from a cloud recording with transcription switched on — a call without one has nothing to read."}
+                (meeting.zoomUuid
+                  ? "No write-up for this one. Summaries come from a cloud recording with transcription switched on — a call without one has nothing to read."
+                  : // No Zoom UUID means the sync has never matched this
+                    // meeting to a Zoom call at all, which is a different
+                    // problem from a call with nothing to read - and the
+                    // generic line sent people looking at their Zoom
+                    // recording settings, where there was nothing wrong.
+                    "This meeting hasn't been matched to a Zoom call yet, so there's nothing to read from. If it was recorded, run Sync Zoom on the meetings list.")}
             </p>
-            {admin && meeting.zoomUuid ? <DiagnoseZoom id={meeting.id} /> : null}
+            {admin ? <DiagnoseZoom id={meeting.id} /> : null}
           </>
         )}
       </section>

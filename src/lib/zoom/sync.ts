@@ -244,26 +244,24 @@ export async function syncZoom(options?: {
       const startsAt = new Date(zm.start_time);
       if (Number.isNaN(startsAt.getTime())) continue;
 
-      // Find the calendar meeting this call belongs to. The Zoom id lifted
-      // from the invite is exact; failing that, the same person's meeting
-      // starting within twenty minutes is the same call in practice.
-      let row = await db.meeting.findFirst({
-        where: {
-          userId: person.id,
-          OR: [
-            { zoomUuid: zm.uuid },
-            { zoomMeetingId: String(zm.id) },
-            {
-              zoomMeetingId: null,
-              startsAt: {
-                gte: new Date(startsAt.getTime() - 20 * 60_000),
-                lte: new Date(startsAt.getTime() + 20 * 60_000),
-              },
-            },
-          ],
-        },
-        orderBy: { startsAt: "asc" },
-      });
+      // One call must not take the run down with it. Marcus's sync failed
+      // outright on a unique-constraint violation, so nothing synced at all -
+      // two hundred calls lost to one bad row. Whatever goes wrong with a
+      // single call is now that call's problem.
+      try {
+
+      // Find the calendar meeting this call belongs to.
+      //
+      // In tiers, and the order is what stops a recurring call colliding
+      // with itself. A weekly meeting keeps one Zoom meeting id across every
+      // sitting and gets a fresh UUID each time, so matching on the id alone
+      // matches every occurrence. The old query put the UUID and the id in
+      // one OR and took whichever row started earliest, which meant this
+      // sitting's UUID could be written onto last week's row - and last
+      // week's row already held last week's UUID, so the write hit the
+      // (userId, zoomUuid) unique index and took the whole sync down with a
+      // raw database error.
+      let row = await findMeetingFor(person.id, zm, startsAt);
 
       if (row) {
         // Never touch a meeting somebody has already ruled on, beyond
@@ -430,11 +428,91 @@ export async function syncZoom(options?: {
           if (found.fromSummary) outcome.fromSummary += 1;
         }
       }
+      } catch (e) {
+        outcome.failed.push({
+          name: zm.topic || "a Zoom call",
+          error: e instanceof Error ? e.message : "Couldn't read this call.",
+        });
+      }
     }
   }
 
   if (summaryNote) outcome.summaryNote = summaryNote;
   return outcome;
+}
+
+/**
+ * How far a calendar event may sit from the Zoom call and still be it.
+ *
+ * Two windows, because the two signals are worth different amounts. A
+ * meeting carrying this call's Zoom id is almost certainly this call even
+ * if it started half an hour late, so that one is generous. A meeting with
+ * no Zoom id at all is only a guess from the clock, so it has to be close.
+ */
+const ID_WINDOW_MS = 4 * 60 * 60_000;
+const CLOCK_WINDOW_MS = 20 * 60_000;
+
+/**
+ * The meeting this Zoom call belongs to, or null for a call with no
+ * calendar event behind it.
+ *
+ * Never returns a row that already belongs to a different sitting. That is
+ * the whole point: two sittings of a recurring call are two rows, and the
+ * one holding another UUID is not this one however well its clock matches.
+ */
+async function findMeetingFor(
+  userId: string,
+  zm: ZoomPastMeeting,
+  startsAt: Date,
+): Promise<Awaited<ReturnType<typeof db.meeting.findFirst>>> {
+  // Exact. This sitting has been seen before, so nothing needs stamping and
+  // nothing can collide.
+  const exact = await db.meeting.findFirst({
+    where: { userId, zoomUuid: zm.uuid },
+  });
+  if (exact) return exact;
+
+  // Otherwise: an unclaimed row, near enough in time, best one wins. Ordering
+  // by start time ascending - which is what this used to do - picks the
+  // first occurrence of a recurring series every time, which is right once
+  // and wrong for every sitting after it.
+  const candidates = await db.meeting.findMany({
+    where: {
+      userId,
+      zoomUuid: null,
+      OR: [
+        {
+          zoomMeetingId: String(zm.id),
+          startsAt: {
+            gte: new Date(startsAt.getTime() - ID_WINDOW_MS),
+            lte: new Date(startsAt.getTime() + ID_WINDOW_MS),
+          },
+        },
+        {
+          zoomMeetingId: null,
+          startsAt: {
+            gte: new Date(startsAt.getTime() - CLOCK_WINDOW_MS),
+            lte: new Date(startsAt.getTime() + CLOCK_WINDOW_MS),
+          },
+        },
+      ],
+    },
+  });
+
+  if (candidates.length === 0) return null;
+
+  const rank = (m: (typeof candidates)[number]) => [
+    // A row carrying this call's Zoom id beats one matched on the clock
+    // alone, however close the clock is.
+    m.zoomMeetingId === String(zm.id) ? 0 : 1,
+    Math.abs(m.startsAt.getTime() - startsAt.getTime()),
+  ];
+
+  return candidates.sort((a, b) => {
+    const [ra, da] = rank(a);
+    const [rb, dbb] = rank(b);
+    return ra - rb || da - dbb;
+  })[0];
 }
 
 /** Who was actually on the call, by email. */
