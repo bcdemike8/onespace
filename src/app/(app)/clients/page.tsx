@@ -90,12 +90,28 @@ export default async function ClientsPage() {
               const active = client.projects.filter(
                 (p) => p.status === "ACTIVE",
               ).length;
+              // Worth shouting about only where there is live work: an
+              // archived client with no domain is finished, not broken.
+              const needsDomain =
+                !client.archivedAt &&
+                client.domains.length === 0 &&
+                client.projects.length > 0;
 
               return (
                 <section
                   key={client.id}
-                  className={`card p-4 ${client.archivedAt ? "opacity-60" : ""}`}
+                  className={`card p-4 ${client.archivedAt ? "opacity-60" : ""} ${
+                    needsDomain ? "border-warn-500/40" : ""
+                  }`}
                 >
+                  {needsDomain ? (
+                    <p className="mb-3 rounded-lg bg-warn-50 px-3 py-2 text-xs text-warn-700">
+                      <strong>No email domain.</strong> None of this client&apos;s
+                      meetings or mail will come in until one is added below.
+                      This is silent otherwise — nothing errors, the work just
+                      never appears.
+                    </p>
+                  ) : null}
                   <form
                     action={updateClientAction}
                     className="flex flex-wrap items-end gap-2"
@@ -165,8 +181,28 @@ export default async function ClientsPage() {
 
         <div className="space-y-6">
           <section className="card p-4">
-            <h2 className="mb-3 text-sm font-semibold text-ink-900">New client</h2>
-            <NewClientForm />
+            <h2 className="mb-1 text-sm font-semibold text-ink-900">New client</h2>
+            <p className="mb-3 text-xs text-ink-500">
+              Sets up the company, its email domains and its first project in
+              one pass — everything a client needs before meetings and mail
+              will find them.
+            </p>
+            <Link href="/clients/new" className="btn-primary w-full justify-center">
+              Set up a client
+            </Link>
+
+            <details className="mt-3">
+              <summary className="cursor-pointer text-xs text-ink-500 hover:text-ink-800">
+                Just add a name for now
+              </summary>
+              <div className="mt-3">
+                <p className="mb-3 text-xs text-warn-700">
+                  A client added this way has no domain, so none of their
+                  meetings or mail will come in until you add one below.
+                </p>
+                <NewClientForm />
+              </div>
+            </details>
           </section>
 
           <section className="card overflow-hidden">

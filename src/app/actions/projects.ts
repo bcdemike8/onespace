@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
 import { addDays, dayStart } from "@/lib/dates";
 import { parseMoneyToCents } from "@/lib/format";
+import { parseDomains } from "@/lib/domains";
 
 export type ActionState = { error?: string; ok?: boolean };
 
@@ -52,6 +53,74 @@ const projectSchema = z.object({
   clientDomains: z.string().trim().max(500).optional().nullable(),
 });
 
+
+/**
+ * Copy a template's sections and tasks onto a project.
+ *
+ * Task due dates are the template's offset counted forward from `start`.
+ */
+async function applyTemplate(
+  projectId: string,
+  templateId: string,
+  start: Date,
+): Promise<void> {
+  const template = await db.projectTemplate.findUnique({
+    where: { id: templateId },
+    include: {
+      sections: { orderBy: { orderIndex: "asc" } },
+      tasks: { orderBy: { orderIndex: "asc" } },
+    },
+  });
+  if (!template) return;
+
+  // Sections first, so tasks can point at the copies rather than the originals.
+  const sectionIdMap = new Map<string, string>();
+  for (const section of template.sections) {
+    const created = await db.section.create({
+      data: { projectId, name: section.name, orderIndex: section.orderIndex },
+    });
+    sectionIdMap.set(section.id, created.id);
+  }
+
+  // Parents first, so their subtasks have a real id to point at. Template
+  // task ids don't survive the copy, so the mapping is kept explicitly.
+  const row = (t: (typeof template.tasks)[number], parentId: string | null) => ({
+    projectId,
+    sectionId: t.sectionId ? (sectionIdMap.get(t.sectionId) ?? null) : null,
+    parentId,
+    name: t.name,
+    description: t.description,
+    assigneeId: t.defaultAssigneeId,
+    estimatedHours: t.estimatedHours,
+    orderIndex: t.orderIndex,
+    dueDate: t.offsetDays === null ? null : addDays(start, t.offsetDays),
+  });
+
+  const taskIdMap = new Map<string, string>();
+  for (const t of template.tasks.filter((t) => !t.parentId)) {
+    const created = await db.task.create({ data: row(t, null) });
+    taskIdMap.set(t.id, created.id);
+  }
+
+  const children = template.tasks.filter((t) => t.parentId);
+  if (children.length > 0) {
+    await db.task.createMany({
+      data: children.map((t) =>
+        row(t, taskIdMap.get(t.parentId as string) ?? null),
+      ),
+    });
+  }
+}
+
+/** Hours a template's estimates add up to, for seeding a budget. */
+async function templateHours(templateId: string): Promise<number> {
+  const rows = await db.templateTask.findMany({
+    where: { templateId },
+    select: { estimatedHours: true },
+  });
+  return rows.reduce((sum, t) => sum + (t.estimatedHours ?? 0), 0);
+}
+
 /**
  * Create a project, optionally stamping out a template.
  *
@@ -89,23 +158,12 @@ export async function createProjectAction(
     return { error: "That budget amount didn't look like a number." };
   }
 
-  const template = d.templateId
-    ? await db.projectTemplate.findUnique({
-        where: { id: d.templateId },
-        include: {
-          sections: { orderBy: { orderIndex: "asc" } },
-          tasks: { orderBy: { orderIndex: "asc" } },
-        },
-      })
-    : null;
-
   const start = d.startDate ?? dayStart(new Date());
 
   // If no budget was typed but the template carries estimates, seed the hours
-  // budget from them — otherwise budget-vs-actual would start life empty.
-  const templateHours =
-    template?.tasks.reduce((sum, t) => sum + (t.estimatedHours ?? 0), 0) ?? 0;
-  const budgetHours = d.budgetHours ?? (templateHours > 0 ? templateHours : null);
+  // budget from them - otherwise budget-vs-actual would start life empty.
+  const fromTemplate = d.templateId ? await templateHours(d.templateId) : 0;
+  const budgetHours = d.budgetHours ?? (fromTemplate > 0 ? fromTemplate : null);
 
   const project = await db.project.create({
     data: {
@@ -114,7 +172,7 @@ export async function createProjectAction(
       clientId: d.clientId || null,
       partnerId: d.partnerId || null,
       ownerId: d.ownerId || null,
-      templateId: template?.id ?? null,
+      templateId: d.templateId || null,
       startDate: d.startDate,
       dueDate: d.dueDate,
       budgetHours,
@@ -129,19 +187,8 @@ export async function createProjectAction(
   // client, so a project whose client has no domain quietly gets none of
   // either - and nobody notices for a month. Asking once, here, is the only
   // point where the answer is obvious to whoever is typing.
-  if (d.clientId && d.clientDomains) {
-    const wanted = [
-      ...new Set(
-        d.clientDomains
-          .split(/[\s,;]+/)
-          .map((x) => x.trim().toLowerCase())
-          .filter(Boolean)
-          .map((x) => x.replace(/^https?:\/\//, "").split("/")[0])
-          .map((x) => (x.includes("@") ? x.slice(x.lastIndexOf("@") + 1) : x))
-          .map((x) => x.replace(/^www\./, "")),
-      ),
-    ].filter((x) => /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/.test(x));
-
+  if (d.clientId) {
+    const wanted = parseDomains(d.clientDomains);
     if (wanted.length > 0) {
       // skipDuplicates rather than a check: a domain already registered to
       // another client is that client's, and silently moving it would be
@@ -153,49 +200,7 @@ export async function createProjectAction(
     }
   }
 
-  if (template) {
-    // Sections first, so tasks can point at the copies rather than the originals.
-    const sectionIdMap = new Map<string, string>();
-    for (const section of template.sections) {
-      const created = await db.section.create({
-        data: {
-          projectId: project.id,
-          name: section.name,
-          orderIndex: section.orderIndex,
-        },
-      });
-      sectionIdMap.set(section.id, created.id);
-    }
-
-    // Parents first, so their subtasks have a real id to point at. Template
-    // task ids don't survive the copy, so the mapping is kept explicitly.
-    const row = (t: (typeof template.tasks)[number], parentId: string | null) => ({
-      projectId: project.id,
-      sectionId: t.sectionId ? (sectionIdMap.get(t.sectionId) ?? null) : null,
-      parentId,
-      name: t.name,
-      description: t.description,
-      assigneeId: t.defaultAssigneeId,
-      estimatedHours: t.estimatedHours,
-      orderIndex: t.orderIndex,
-      dueDate: t.offsetDays === null ? null : addDays(start, t.offsetDays),
-    });
-
-    const taskIdMap = new Map<string, string>();
-    for (const t of template.tasks.filter((t) => !t.parentId)) {
-      const created = await db.task.create({ data: row(t, null) });
-      taskIdMap.set(t.id, created.id);
-    }
-
-    const children = template.tasks.filter((t) => t.parentId);
-    if (children.length > 0) {
-      await db.task.createMany({
-        data: children.map((t) =>
-          row(t, taskIdMap.get(t.parentId as string) ?? null),
-        ),
-      });
-    }
-  }
+  if (d.templateId) await applyTemplate(project.id, d.templateId, start);
 
   // Steps the template didn't name an owner for fall to the project's owner.
   await cascadeOwnerToTasks(project.id, d.ownerId || null);
@@ -299,6 +304,139 @@ export async function createClientAction(
   revalidatePath("/clients", "layout");
   refresh();
   return { ok: true };
+}
+
+
+const clientSetupSchema = z.object({
+  name: z.string().trim().min(1, "Give the client a name."),
+  notes: z.string().trim().max(1000).optional().nullable(),
+  domains: z.string().trim().max(500),
+  // The first project, when one is being made at the same time.
+  withProject: z.string().optional().nullable(),
+  projectName: z.string().trim().max(200).optional().nullable(),
+  templateId: z.string().trim().optional().nullable(),
+  partnerId: z.string().trim().optional().nullable(),
+  ownerId: z.string().trim().optional().nullable(),
+  startDate: optionalDate,
+  dueDate: optionalDate,
+  budgetHours: optionalNumber,
+  budgetAmount: z.string().trim().optional().nullable(),
+  billRate: z.string().trim().optional().nullable(),
+  billingType: z.enum(["HOURLY", "FIXED_FEE", "NON_BILLABLE"]).default("HOURLY"),
+});
+
+/**
+ * Set a client up in one pass: the client, its email domains, and its first
+ * project.
+ *
+ * These are three records on three pages, and getting two of them right is
+ * the same as getting none: a client with a project but no domain pulls in
+ * no meetings and no mail, and says nothing about it. That has happened
+ * here, more than once, and the fix is to stop it being possible to do half
+ * the job rather than to remember harder.
+ *
+ * So the domain is required. Not "recommended" - required. Everything the
+ * Google and Zoom integrations do is keyed on it.
+ */
+export async function setUpClientAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  await requireAdmin();
+
+  const parsed = clientSetupSchema.safeParse({
+    name: formData.get("name"),
+    notes: formData.get("notes"),
+    domains: formData.get("domains"),
+    withProject: formData.get("withProject"),
+    projectName: formData.get("projectName"),
+    templateId: formData.get("templateId"),
+    partnerId: formData.get("partnerId"),
+    ownerId: formData.get("ownerId"),
+    startDate: formData.get("startDate"),
+    dueDate: formData.get("dueDate"),
+    budgetHours: formData.get("budgetHours"),
+    budgetAmount: formData.get("budgetAmount"),
+    billRate: formData.get("billRate"),
+    billingType: formData.get("billingType") ?? "HOURLY",
+  });
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+  const d = parsed.data;
+
+  const domains = parseDomains(d.domains);
+  if (domains.length === 0) {
+    return {
+      error:
+        "Add at least one email domain - it's how their meetings and mail find this client. Just the domain: acme.com",
+    };
+  }
+
+  // Told before anything is written, and named, because "that domain is
+  // taken" is useless without knowing who has it.
+  const clash = await db.clientDomain.findFirst({
+    where: { domain: { in: domains } },
+    select: { domain: true, client: { select: { name: true } } },
+  });
+  if (clash) {
+    return {
+      error: `${clash.domain} already belongs to ${clash.client.name}. A domain can only point at one client.`,
+    };
+  }
+
+  const existing = await db.client.findUnique({ where: { name: d.name } });
+  if (existing) {
+    return { error: `There's already a client called ${d.name}.` };
+  }
+
+  const wantsProject = d.withProject === "on" || d.withProject === "true";
+  if (wantsProject && !d.projectName) {
+    return { error: "Give the first project a name, or turn it off." };
+  }
+
+  const budgetCents = d.budgetAmount ? parseMoneyToCents(d.budgetAmount) : null;
+  if (budgetCents === null && d.budgetAmount) {
+    return { error: "That budget amount didn't look like a number." };
+  }
+  const billRateCents = d.billRate ? parseMoneyToCents(d.billRate) : null;
+
+  const client = await db.client.create({
+    data: { name: d.name, notes: d.notes || null },
+  });
+
+  await db.clientDomain.createMany({
+    data: domains.map((domain) => ({ clientId: client.id, domain })),
+    skipDuplicates: true,
+  });
+
+  if (!wantsProject) {
+    refresh();
+    redirect("/clients");
+  }
+
+  const start = d.startDate ?? dayStart(new Date());
+  const fromTemplate = d.templateId ? await templateHours(d.templateId) : 0;
+
+  const project = await db.project.create({
+    data: {
+      name: d.projectName!,
+      clientId: client.id,
+      partnerId: d.partnerId || null,
+      ownerId: d.ownerId || null,
+      templateId: d.templateId || null,
+      startDate: d.startDate,
+      dueDate: d.dueDate,
+      budgetHours: d.budgetHours ?? (fromTemplate > 0 ? fromTemplate : null),
+      budgetCents: budgetCents ?? null,
+      billRateCents,
+      billingType: d.billingType,
+    },
+  });
+
+  if (d.templateId) await applyTemplate(project.id, d.templateId, start);
+  await cascadeOwnerToTasks(project.id, d.ownerId || null);
+
+  refresh();
+  redirect(`/projects/${project.id}`);
 }
 
 export async function updateClientAction(formData: FormData) {
