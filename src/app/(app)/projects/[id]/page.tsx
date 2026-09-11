@@ -489,6 +489,12 @@ export default async function ProjectPage({
                           {formatMedium(call.startsAt)} · {call.user.name}
                         </span>
                       </summary>
+                      <Link
+                        href={`/meetings/${call.id}`}
+                        className="mt-1 inline-block text-xs text-brand-700 hover:underline"
+                      >
+                        Open the call →
+                      </Link>
                       <div className="mt-2">
                         {asSummaryDoc(call.summaryJson) ? (
                           <CallSummary

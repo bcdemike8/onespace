@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState, useState } from "react";
 import { acceptMeetingAction, dismissMeetingAction } from "@/app/actions/google";
 import { SubmitButton } from "@/components/SubmitButton";
@@ -47,9 +48,12 @@ const CONFIDENT = 60;
 export function MeetingCard({
   meeting,
   projects,
+  /** On the meeting's own page the heading above already says all this. */
+  hideHeader = false,
 }: {
   meeting: MeetingRow;
   projects: ProjectOption[];
+  hideHeader?: boolean;
 }) {
   const [state, action] = useActionState(acceptMeetingAction, {} as { error?: string; ok?: boolean });
   const [projectId, setProjectId] = useState(meeting.suggestedProjectId ?? "");
@@ -71,10 +75,21 @@ export function MeetingCard({
 
   return (
     <li className="card p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div
+        className={`flex flex-wrap items-start justify-between gap-3 ${
+          hideHeader ? "hidden" : ""
+        }`}
+      >
         <div className="min-w-0">
           <div className="flex flex-wrap items-baseline gap-2">
-            <h3 className="font-medium text-ink-900">{meeting.title}</h3>
+            <h3 className="font-medium text-ink-900">
+              <Link
+                href={`/meetings/${meeting.id}`}
+                className="hover:text-brand-700 hover:underline"
+              >
+                {meeting.title}
+              </Link>
+            </h3>
             <span className="text-xs text-ink-500 tnum">
               {meeting.dayLabel} · {meeting.timeLabel} ·{" "}
               {meeting.actualMinutes !== null &&
@@ -119,7 +134,7 @@ export function MeetingCard({
         </span>
       </div>
 
-      {meeting.matchReason ? (
+      {meeting.matchReason && !hideHeader ? (
         <p className="mt-2 text-xs text-ink-500">{meeting.matchReason}</p>
       ) : null}
 

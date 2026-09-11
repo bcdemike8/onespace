@@ -228,7 +228,12 @@ export default async function MeetingsPage({
             {recent.map((m) => (
               <li key={m.id} className="px-4 py-2 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-ink-800">{m.title}</span>
+                  <Link
+                    href={`/meetings/${m.id}`}
+                    className="text-ink-800 hover:text-brand-700 hover:underline"
+                  >
+                    {m.title}
+                  </Link>
                   <span className="text-xs text-ink-500">
                     {formatMedium(dayInZone(m.startsAt, zone))}
                     {m.project ? ` · ${m.project.name}` : ""}
