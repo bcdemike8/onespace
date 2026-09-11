@@ -431,10 +431,15 @@ async function readCommitments(
         fromSummary: true,
       };
     }
-    // A summary with no next steps is a summary all the same - AI Companion
-    // ran and found nothing to do, which is a different world from it not
-    // being available, and the transcript rules are much the weaker reader.
-    if (!summary) note("Zoom returned no summary for some calls.");
+    // Three outcomes, three different answers, and telling them apart is
+    // the whole point of reporting this. AI Companion running and finding
+    // nothing to do is a world away from AI Companion not being available -
+    // the first means trust the silence, the second means fix your Zoom.
+    if (!summary) {
+      note("Zoom has no AI Companion summary for those calls - check it's switched on for meetings.");
+    } else {
+      note("AI Companion summarised the call but listed no next steps.");
+    }
   } catch (e) {
     // AI Companion isn't on this plan, the scope wasn't granted, or it
     // wasn't on for this call. The transcript path below is the fallback,
