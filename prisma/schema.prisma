@@ -96,6 +96,8 @@ enum CommitmentSource {
   TRANSCRIPT
   ZOOM_SUMMARY
   RECAP_EMAIL
+  /// Read out of the transcript by Claude, with a summary kept alongside.
+  AI_SUMMARY
 }
 
 // ---------------------------------------------------------------- people
@@ -559,6 +561,17 @@ model Meeting {
   /// 60-minute slot that ran 43 minutes is 43 minutes of billable time, and
   /// one that overran to 75 is 75.
   actualMinutes Int?
+
+  /// What the call was about, in a few lines, written from the transcript.
+  ///
+  /// The transcript itself is still not kept - this is the thing that
+  /// replaces it. Worth being deliberate about: a summary is a real record
+  /// of a client conversation, so it is shown only to the person whose
+  /// meeting it is and to admins, exactly as the meeting itself is.
+  summary      String?
+  /// Which model wrote it, so a change of model is visible in the data.
+  summaryModel String?
+  summarisedAt DateTime?
 
   /// Where the recording lives. A link, never a copy - Zoom's retention and
   /// access rules stay in force, and nothing about the call is duplicated

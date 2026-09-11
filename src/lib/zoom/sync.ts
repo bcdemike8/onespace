@@ -19,6 +19,7 @@ import {
   type Commitment,
 } from "@/lib/zoom/commitments";
 import { dueFor } from "@/lib/when";
+import { aiConfigured, readTranscript, type AiActionItem } from "@/lib/ai/summarise";
 import { backfillDueDates } from "@/lib/commitments/backfill";
 import { buildWeights, matchMeeting, type MatchCandidate } from "@/lib/google/match";
 import { orgTimezone } from "@/lib/google/sync";
@@ -169,6 +170,15 @@ export async function syncZoom(options?: {
   const candidates = await loadCandidates();
   const weights = buildWeights(candidates);
 
+  // Whose call it is, for the summariser. Knowing the client is the
+  // difference between "chase the sandbox access" and "chase the sandbox
+  // access with Pindrop's IT team".
+  const clientByProject = new Map(
+    candidates.map((c) => [c.projectId, c.clientName]),
+  );
+  const clientOf = (projectId: string | null | undefined) =>
+    (projectId ? clientByProject.get(projectId) : null) ?? null;
+
   const from = options?.from ?? (await zoomSyncFrom());
   const to = options?.to ?? new Date();
 
@@ -298,7 +308,11 @@ export async function syncZoom(options?: {
       // transcript doesn't change, and re-reading would raise every
       // commitment again after someone had dismissed it.
       if (!row.transcriptReadAt) {
-        const found = await readCommitments(zm.uuid, isOurs);
+        const found = await readCommitments(zm.uuid, isOurs, {
+          title: row!.title,
+          when: row!.startsAt,
+          client: clientOf(row!.projectId ?? row!.suggestedProjectId),
+        });
         if (found) {
           await db.$transaction(async (tx) => {
             await tx.meeting.update({
@@ -306,6 +320,11 @@ export async function syncZoom(options?: {
               data: {
                 recordingUrl: found.recordingUrl ?? undefined,
                 transcriptReadAt: new Date(),
+                // The summary is what replaces the transcript. It is the
+                // only durable record of the call OneSpace keeps.
+                summary: found.ai?.summary || undefined,
+                summaryModel: found.ai?.model || undefined,
+                summarisedAt: found.ai ? new Date() : undefined,
               },
             });
             if (found.commitments.length > 0) {
@@ -315,12 +334,17 @@ export async function syncZoom(options?: {
               const said = dayInZone(row!.startsAt, zone);
               await tx.commitment.createMany({
                 data: found.commitments.map((c) => {
-                  const due = dueFor(c.text, said);
+                  // Where a reader isolated the timing phrase, parse that -
+                  // "by Friday" alone cannot be misread, while the sentence
+                  // it sat in carries other numbers and dates that can.
+                  const due = dueFor(c.when ?? c.text, said);
                   return {
                     meetingId: row!.id,
-                    source: found.fromSummary
-                      ? ("ZOOM_SUMMARY" as const)
-                      : ("TRANSCRIPT" as const),
+                    source: found.ai
+                      ? ("AI_SUMMARY" as const)
+                      : found.fromSummary
+                        ? ("ZOOM_SUMMARY" as const)
+                        : ("TRANSCRIPT" as const),
                     text: c.text,
                     speaker: c.speaker,
                     atSeconds: c.atSeconds,
@@ -372,10 +396,15 @@ async function participantEmails(uuid: string): Promise<string[]> {
   }
 }
 
+/** A commitment, plus the timing phrase when a reader pulled one out. */
+type Found = Commitment & { when?: string | null };
+
 interface Read {
   recordingUrl: string | null;
-  commitments: Commitment[];
+  commitments: Found[];
   fromSummary: boolean;
+  /** Set when Claude read the transcript rather than the rules. */
+  ai?: { summary: string; model: string; items: AiActionItem[] } | null;
 }
 
 /**
@@ -402,6 +431,7 @@ const note = (reason: string) => {
 async function readCommitments(
   uuid: string,
   isOurs: (speaker: string | null) => boolean,
+  context: { title: string; when: Date; client: string | null },
 ): Promise<Read | null> {
   let recordingUrl: string | null = null;
   let transcriptUrl: string | null = null;
@@ -457,9 +487,57 @@ async function readCommitments(
   const vtt = await zoomDownload(transcriptUrl);
   if (!vtt) return { recordingUrl, commitments: [], fromSummary: false };
 
+  // Claude, when it's configured. It reads the conversation rather than
+  // pattern-matching sentences out of it, which is the difference between
+  // knowing that "I'll send the spec once Dana signs off" is conditional
+  // and not knowing what a Dana is.
+  if (aiConfigured()) {
+    try {
+      const read = await readTranscript(plainText(parseVtt(vtt)), context);
+      if (read) {
+        return {
+          recordingUrl,
+          fromSummary: false,
+          ai: { summary: read.summary, model: read.model, items: read.actionItems },
+          // Only ours become suggested tasks. The client's own undertakings
+          // are in the summary, where they belong - they are worth knowing
+          // and they are not RevOptics work.
+          commitments: read.actionItems
+            .filter((i) => i.ours)
+            .map((i) => ({
+              text: i.quote || i.task,
+              speaker: i.owner,
+              atSeconds: 0,
+              suggestedTask: i.task,
+              when: i.when,
+            })),
+        };
+      }
+    } catch (e) {
+      // A quota or key problem should be visible, not quietly degrade every
+      // call to the weaker reader for a month.
+      note(e instanceof Error ? `Claude couldn't read the transcript: ${e.message}` : "Claude couldn't read the transcript.");
+    }
+  }
+
   return {
     recordingUrl,
     commitments: extractCommitments(parseVtt(vtt), isOurs),
     fromSummary: false,
   };
+}
+
+/** A transcript as running text, with the speaker labels kept. */
+function plainText(cues: ReturnType<typeof parseVtt>): string {
+  const out: string[] = [];
+  let last: string | null = null;
+  for (const cue of cues) {
+    if (cue.speaker && cue.speaker !== last) {
+      out.push(`\n${cue.speaker}: ${cue.text}`);
+      last = cue.speaker;
+    } else {
+      out.push(cue.text);
+    }
+  }
+  return out.join(" ").replace(/[ \t]+/g, " ").trim();
 }

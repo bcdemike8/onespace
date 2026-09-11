@@ -33,6 +33,8 @@ export interface MeetingRow {
   /** What Zoom says it actually ran for, when that differs from the booking. */
   actualMinutes: number | null;
   recordingUrl: string | null;
+  /** What the call was about, written from the transcript. */
+  summary: string | null;
   commitments: CommitmentRow[];
 }
 
@@ -236,6 +238,17 @@ export function MeetingCard({
         <div className="mt-3">
           <DismissButton id={meeting.id} />
         </div>
+      ) : null}
+
+      {meeting.summary ? (
+        <details className="mt-3 rounded-lg border border-ink-200 bg-ink-50/60 p-3">
+          <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-ink-600">
+            What the call was about
+          </summary>
+          <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-ink-700">
+            {meeting.summary}
+          </p>
+        </details>
       ) : null}
 
       <Commitments

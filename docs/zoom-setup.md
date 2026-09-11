@@ -18,15 +18,21 @@ When it's done:
 
 ## What is and isn't stored
 
-**The transcript is not kept.** It's read once, in memory, and discarded. What
-survives is the sentence someone committed something in, who said it, and how
-far into the call — enough to check the context, not a record of the
-conversation. The recording stays in Zoom behind a link, so your retention and
-access rules there still apply.
+**The transcript is not kept.** It's read once and discarded. What survives is
+a short summary of the call and the action items that came out of it, each
+with the sentence it came from. The recording stays in Zoom behind a link, so
+your retention and access rules there still apply.
 
-That's a deliberate line. Client calls contain things that have no business
-sitting in a project database, and "we only ever look at the useful part" is
-not the same promise as "we only ever keep the useful part".
+**Where it's read.** With `ANTHROPIC_API_KEY` set, the transcript is sent to
+Anthropic's API for the length of one request and is not retained there under
+the API's default terms. Without that key, OneSpace falls back to pattern
+rules that never leave the server and are markedly worse.
+
+Client calls contain things that have no business sitting in a project
+database, so the line matters — but it has moved, and honestly. The first
+version of this said the transcript never left the server and that nothing
+but single sentences was stored. Now a summary is stored, and the transcript
+briefly leaves. Anyone told the old version should be told this one.
 
 ---
 
@@ -131,3 +137,45 @@ plan without it the sync says so rather than silently using booked times.
 **No commitments from a call that definitely had some** — check the meeting was
 cloud recorded *with* transcription enabled. Local recordings aren't reachable
 by the API at all.
+
+---
+
+## Reading calls with Claude
+
+Set `ANTHROPIC_API_KEY` in Railway, on the app service and the cron service,
+and every synced call with a transcript gets read properly rather than
+pattern-matched.
+
+What you get per meeting: a few lines on what the call was about and what was
+decided, stored on the meeting; and the action items, each with who owes it,
+when they said, and the sentence it came from. Both sides are read — a client
+saying "I'll get you the credentials" appears in the summary but never becomes
+a RevOptics task.
+
+**Cost.** An hour of talk is roughly 10,000 tokens in and a few hundred out.
+On Opus that's a handful of cents a call; forty calls a month is a couple of
+dollars. Priced at a level where the right answer is to use the good model.
+
+**Without the key** nothing breaks — the old pattern rules run instead, and
+the sync says which reader it used. They are the fallback, not the plan.
+
+---
+
+## Reading calls with Claude
+
+Set `ANTHROPIC_API_KEY` in Railway, on the app service and the cron service
+both, and every synced call with a transcript gets read rather than
+pattern-matched.
+
+Per meeting you get a few lines on what the call was about and what was
+decided, stored on the meeting itself; and the action items, each with who
+owes it, the timing they actually said, and the sentence it came from. Both
+sides are read — a client saying "I'll get you the credentials" shows up in
+the summary but never becomes a RevOptics task.
+
+**Cost.** An hour of talk is roughly ten thousand tokens in and a few hundred
+out — cents per call, a couple of dollars a month at forty calls. Priced at a
+level where the right answer is to use the good model rather than a cheap one.
+
+**Without the key** nothing breaks: the pattern rules run instead and the sync
+says which reader it used. They are the fallback, not the plan.

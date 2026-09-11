@@ -21,7 +21,7 @@ export interface QueueCommitment {
   suggestedTask: string;
   /** Who is on the hook, when the recap named someone. */
   speaker: string | null;
-  source: "TRANSCRIPT" | "ZOOM_SUMMARY" | "RECAP_EMAIL";
+  source: "TRANSCRIPT" | "ZOOM_SUMMARY" | "RECAP_EMAIL" | "AI_SUMMARY";
   /** ISO date for the input, or null when nothing was said. */
   dueDate: string | null;
   dueStated: boolean;
@@ -33,6 +33,7 @@ export interface QueueCommitment {
 }
 
 const WHERE: Record<QueueCommitment["source"], string> = {
+  AI_SUMMARY: "From the call",
   TRANSCRIPT: "You said this on the call",
   ZOOM_SUMMARY: "From Zoom's summary of the call",
   RECAP_EMAIL: "You wrote this in the recap",
@@ -150,7 +151,7 @@ function QueueRow({
 
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-500">
           <span>{WHERE[item.source]}</span>
-          {item.speaker && item.source === "RECAP_EMAIL" ? (
+          {item.speaker && item.source !== "TRANSCRIPT" ? (
             <span className="chip bg-ink-100 text-ink-700">{item.speaker}</span>
           ) : null}
           <span aria-hidden="true">·</span>

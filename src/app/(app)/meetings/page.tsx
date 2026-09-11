@@ -57,6 +57,7 @@ export default async function MeetingsPage({
         confidence: true,
         actualMinutes: true,
         recordingUrl: true,
+        summary: true,
         user: { select: { name: true } },
         commitments: {
           where: { status: "PENDING" },
@@ -142,6 +143,7 @@ export default async function MeetingsPage({
         ownerName: everyone ? m.user.name : null,
         actualMinutes: m.actualMinutes,
         recordingUrl: m.recordingUrl,
+        summary: m.summary,
         commitments: m.commitments,
       };
     });
