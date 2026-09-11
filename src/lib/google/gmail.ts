@@ -1,4 +1,5 @@
 import "server-only";
+import { isMachineMail } from "@/lib/mail/machine";
 import { googleRequest, SCOPES } from "@/lib/google/auth";
 
 // Reading and sending client mail.
@@ -25,6 +26,13 @@ export interface GmailMessage extends MailHeaderInfo {
   threadId: string;
   body: string;
   labelIds: string[];
+  /**
+   * Sent by a machine - a calendar invitation or its accept/decline, an
+   * out-of-office, a bounce. Worked out here, where the raw headers and
+   * the whole MIME tree are still in hand; by the time a message reaches
+   * the database it is four fields and a body.
+   */
+  machine: boolean;
 }
 
 export interface GmailThread {
@@ -172,7 +180,21 @@ export function toMessage(raw: RawMessage): GmailMessage | null {
     references: headerOf(raw.payload, "References"),
     body: extractBody(raw.payload).trim(),
     labelIds: raw.labelIds ?? [],
+    machine: isMachineMail({
+      subject: headerOf(raw.payload, "Subject")?.trim() ?? "",
+      headers: raw.payload?.headers ?? [],
+      mimeTypes: mimeTypesIn(raw.payload),
+    }),
   };
+}
+
+/** Every MIME type in the tree, so a calendar part anywhere is visible. */
+function mimeTypesIn(part: RawPart | undefined): string[] {
+  if (!part) return [];
+  return [
+    ...(part.mimeType ? [part.mimeType] : []),
+    ...(part.parts ?? []).flatMap(mimeTypesIn),
+  ];
 }
 
 /**

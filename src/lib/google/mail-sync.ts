@@ -23,6 +23,8 @@ export interface MailSyncOutcome {
   updated: number;
   /** Threads whose newest message is theirs - the ones that need answering. */
   awaiting: number;
+  /** Calendar and autoresponder traffic left out, or cleared out. */
+  machine: number;
   /** Recap emails read for action items, and how many those produced. */
   recaps: number;
   commitments: number;
@@ -77,6 +79,7 @@ export async function syncMail(options?: {
     created: 0,
     updated: 0,
     awaiting: 0,
+    machine: 0,
     recaps: 0,
     commitments: 0,
     failed: [],
@@ -151,6 +154,25 @@ export async function syncMail(options?: {
 
       const messages = thread.messages;
       const newest = messages[messages.length - 1];
+
+      // Calendar invitations, their accept and decline replies, and
+      // out-of-office autoresponders. They come from client domains and
+      // are addressed to a person, so they look exactly like a thread
+      // somebody owes an answer to - and they sit in the inbox at
+      // twenty-four days waiting for a reply nobody will ever write.
+      //
+      // Only when the whole thread is machine mail: an invitation
+      // forwarded into a real conversation shouldn't take the conversation
+      // with it.
+      if (messages.every((m) => m.machine)) {
+        // Delete rather than skip, so the ones already stored go too. The
+        // sync is the only thing that creates these, so nothing is lost.
+        await db.mailThread.deleteMany({
+          where: { userId: person.id, gmailThreadId: thread.gmailThreadId },
+        });
+        outcome.machine += 1;
+        continue;
+      }
 
       // Which client this is. Taken across the whole thread, because the
       // newest message is often ours and would otherwise identify nobody.

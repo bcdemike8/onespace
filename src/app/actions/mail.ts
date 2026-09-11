@@ -63,6 +63,11 @@ export async function syncMailAction(
       `${r.threads} thread${r.threads === 1 ? "" : "s"}`,
       `${r.awaiting} waiting on a reply`,
     ];
+    if (r.machine > 0) {
+      bits.push(
+        `${r.machine} calendar or auto-reply thread${r.machine === 1 ? "" : "s"} left out`,
+      );
+    }
     if (r.commitments > 0) {
       bits.push(
         `${r.commitments} action item${r.commitments === 1 ? "" : "s"} from ${r.recaps} recap${r.recaps === 1 ? "" : "s"}`,
