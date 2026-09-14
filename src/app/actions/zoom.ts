@@ -258,14 +258,19 @@ export async function diagnoseZoomAction(
   formData: FormData,
 ): Promise<ActionState> {
   const user = await requireUser();
-  if (!isAdmin(user)) return { error: "Only an admin can check a call in Zoom." };
 
   const id = String(formData.get("id") ?? "");
   const meeting = await db.meeting.findUnique({
     where: { id },
-    select: { zoomUuid: true, title: true },
+    select: { zoomUuid: true, title: true, userId: true },
   });
   if (!meeting) return { error: "That meeting is no longer here." };
+  // Your own call, or an admin's view of someone else's. Asking Zoom what it
+  // holds for a call you were on isn't a privileged act, and gating it on
+  // admin meant the person who needed the answer couldn't get it.
+  if (meeting.userId !== user.id && !isAdmin(user)) {
+    return { error: "That's someone else's call." };
+  }
   if (!meeting.zoomUuid) {
     return {
       error:
@@ -293,9 +298,19 @@ export async function readCallAction(
   formData: FormData,
 ): Promise<ActionState> {
   const user = await requireUser();
-  if (!isAdmin(user)) return { error: "Only an admin can re-read a call." };
 
   const id = String(formData.get("id") ?? "");
+  const owner = await db.meeting.findUnique({
+    where: { id },
+    select: { userId: true },
+  });
+  if (!owner) return { error: "That meeting is no longer here." };
+  // Same rule: re-reading the transcript of a call you were on reads data
+  // that is already yours, and produces nothing anyone else can see.
+  if (owner.userId !== user.id && !isAdmin(user)) {
+    return { error: "That's someone else's call." };
+  }
+
   const { readMeetingNow } = await import("@/lib/zoom/sync");
 
   try {

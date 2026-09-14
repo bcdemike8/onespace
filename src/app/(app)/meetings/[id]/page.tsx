@@ -260,7 +260,13 @@ export default async function MeetingPage({
                     // recording settings, where there was nothing wrong.
                     "This meeting hasn't been matched to a Zoom call yet, so there's nothing to read from. If it was recorded, run Sync Zoom on the meetings list.")}
             </p>
-            {admin ? <DiagnoseZoom id={meeting.id} /> : null}
+            {/* Your own call, or an admin looking at someone else's. This
+                was admin-only, which meant the person most likely to want
+                to know why their call has no write-up was the one person
+                who couldn't ask. */}
+            {meeting.userId === user.id || admin ? (
+              <DiagnoseZoom id={meeting.id} />
+            ) : null}
           </>
         )}
       </section>
