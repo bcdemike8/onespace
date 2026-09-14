@@ -180,7 +180,8 @@ export async function syncZoom(options?: {
   const ourDomains = new Set(
     allUsers.map((u) => u.email.split("@")[1]?.toLowerCase()).filter(Boolean) as string[],
   );
-  const isOurs = await speakerMatcher();
+  const named = await peopleMatcher();
+  const isOurs = named.isOurs;
 
   const clientByDomain = new Map(
     (
@@ -357,7 +358,18 @@ export async function syncZoom(options?: {
           Math.min(budget.callMs, Math.max(5_000, deadline - Date.now())),
         );
         {
-          await storeRead(row!.id, row!.startsAt, found, zone);
+          await storeRead(
+            {
+              id: row!.id,
+              userId: row!.userId,
+              startsAt: row!.startsAt,
+              projectId: row!.projectId,
+              suggestedProjectId: row!.suggestedProjectId,
+            },
+            found,
+            zone,
+            named,
+          );
           // The budget exists to bound how long the model spends, so only a
           // real read counts against it. A call with no recording costs one
           // cheap API call and shouldn't push a readable one into tomorrow.
@@ -381,32 +393,59 @@ export async function syncZoom(options?: {
 }
 
 /**
- * Is this speaker one of ours?
+ * Who on the call is one of ours, and which one.
  *
  * Transcript speaker names are Zoom display names, which rarely match a
  * OneSpace record exactly. Matching on the full name and on first-plus-last
- * catches "Brianna Dunbar-DeMike" and "Brianna DeMike" alike; anyone not
- * recognised is treated as the other side, which is the safe way round - a
- * client's promise wrongly landing on a RevOptics to-do list is worse than
- * one of ours being missed.
+ * catches "Brianna Dunbar-DeMike" and "Brianna DeMike" alike.
  */
-async function speakerMatcher(): Promise<(speaker: string | null) => boolean> {
-  const users = await db.user.findMany({ select: { name: true } });
+export interface People {
+  /** Is this speaker one of ours? */
+  isOurs: (speaker: string | null) => boolean;
+  /** Which of ours, when the name is one we know. */
+  idFor: (speaker: string | null) => string | null;
+}
 
-  const names = new Set<string>();
+/** Every way a transcript might write one person's name. */
+function keysFor(name: string): string[] {
+  const n = name.toLowerCase().trim().replace(/\s*\(.*\)$/, "");
+  const parts = n.split(/\s+/);
+  return parts.length > 1 ? [n, `${parts[0]} ${parts[parts.length - 1]}`] : [n];
+}
+
+async function peopleMatcher(): Promise<People> {
+  const users = await db.user.findMany({
+    where: { isActive: true },
+    select: { id: true, name: true },
+  });
+
+  // name -> id, except where two people share a name. A wrong assignment is
+  // worse than none, so an ambiguous name resolves to nobody.
+  const byName = new Map<string, string | null>();
   for (const u of users) {
-    const n = u.name.toLowerCase().trim();
-    names.add(n);
-    const parts = n.split(/\s+/);
-    if (parts.length > 1) names.add(`${parts[0]} ${parts[parts.length - 1]}`);
+    // Deduped per person first. A two-word name produces the same string
+    // twice - "yazmin ortega" is both the full name and first-plus-last -
+    // and without this the second pass sees the first and calls the person
+    // ambiguous with themselves, so every ordinary name resolved to nobody.
+    for (const key of new Set(keysFor(u.name))) {
+      byName.set(key, byName.has(key) ? null : u.id);
+    }
   }
 
-  return (speaker: string | null) => {
-    if (!speaker) return false;
-    const s = speaker.toLowerCase().trim().replace(/\s*\(.*\)$/, "");
-    if (names.has(s)) return true;
-    const parts = s.split(/\s+/);
-    return parts.length > 1 && names.has(`${parts[0]} ${parts[parts.length - 1]}`);
+  const lookup = (speaker: string | null): string | null | undefined => {
+    if (!speaker) return undefined;
+    for (const key of keysFor(speaker)) {
+      if (byName.has(key)) return byName.get(key);
+    }
+    return undefined;
+  };
+
+  return {
+    // Anyone not recognised is treated as the other side, which is the safe
+    // way round - a client's promise wrongly landing on a RevOptics to-do
+    // list is worse than one of ours being missed.
+    isOurs: (speaker) => lookup(speaker) !== undefined,
+    idFor: (speaker) => lookup(speaker) ?? null,
   };
 }
 
@@ -417,14 +456,24 @@ async function speakerMatcher(): Promise<(speaker: string | null) => boolean> {
  * drift into storing different things.
  */
 async function storeRead(
-  meetingId: string,
-  startsAt: Date,
+  meeting: {
+    id: string;
+    userId: string;
+    startsAt: Date;
+    projectId: string | null;
+    suggestedProjectId: string | null;
+  },
   found: Read,
   zone: string,
+  people: People,
 ): Promise<void> {
+  // Where a task would go, if one is made. A call nobody has filed has
+  // nowhere to put a task, so its action items stay suggestions.
+  const projectId = meeting.projectId ?? meeting.suggestedProjectId ?? null;
+
   await db.$transaction(async (tx) => {
     await tx.meeting.update({
-      where: { id: meetingId },
+      where: { id: meeting.id },
       data: {
         recordingUrl: found.recordingUrl ?? undefined,
         // Only when it really was read. Marking a call read after a refused
@@ -460,33 +509,93 @@ async function storeRead(
 
     if (found.commitments.length === 0) return;
 
+    // What somebody has already ruled on for this call.
+    //
+    // A re-read clears the pending suggestions and nothing else, so anything
+    // accepted or dismissed is a decision that still stands. Reading the
+    // call again must not make the same task twice, must not re-offer as a
+    // suggestion something that is already a task, and must not turn a
+    // dismissal back into work - "not a task" is an answer, and a re-read is
+    // not a licence to overrule it.
+    const decided = new Set(
+      (
+        await tx.commitment.findMany({
+          where: {
+            meetingId: meeting.id,
+            status: { in: ["ACCEPTED", "DISMISSED"] },
+          },
+          select: { suggestedTask: true },
+        })
+      ).map((c) => c.suggestedTask.trim().toLowerCase()),
+    );
+
     // "by Friday" is read against the day of the call, not against today: a
     // promise made last Tuesday means that Friday, and reading it now would
     // push the deadline out every sync.
-    const said = dayInZone(startsAt, zone);
-    await tx.commitment.createMany({
-      data: found.commitments.map((c) => {
-        // Where a reader isolated the timing phrase, parse that - "by
-        // Friday" alone cannot be misread, while the sentence it sat in
-        // carries other numbers and dates that can.
-        const due = dueFor(c.when ?? c.text, said);
-        return {
-          meetingId,
-          source: found.ai
-            ? ("AI_SUMMARY" as const)
-            : found.fromSummary
-              ? ("ZOOM_SUMMARY" as const)
-              : ("TRANSCRIPT" as const),
-          text: c.text,
-          speaker: c.speaker,
-          atSeconds: c.atSeconds,
-          suggestedTask: c.suggestedTask,
+    const said = dayInZone(meeting.startsAt, zone);
+    const saidOn = meeting.startsAt.toISOString().slice(0, 10);
+
+    for (const c of found.commitments) {
+      // Where a reader isolated the timing phrase, parse that - "by Friday"
+      // alone cannot be misread, while the sentence it sat in carries other
+      // numbers and dates that can.
+      const due = dueFor(c.when ?? c.text, said);
+      const source = found.ai
+        ? ("AI_SUMMARY" as const)
+        : found.fromSummary
+          ? ("ZOOM_SUMMARY" as const)
+          : ("TRANSCRIPT" as const);
+
+      const base = {
+        meetingId: meeting.id,
+        source,
+        text: c.text,
+        speaker: c.speaker,
+        atSeconds: c.atSeconds,
+        suggestedTask: c.suggestedTask,
+        dueDate: due.date,
+        dueStated: due.stated,
+        fromSummary: found.fromSummary,
+      };
+
+      // Straight into somebody's tasks, where there is no doubt about who
+      // owes it or which project it belongs to.
+      //
+      // Only from Claude's reading: the old pattern rules produce too much
+      // rubbish to put on a real to-do list unasked. Named owner if the
+      // transcript named one of ours, otherwise whoever's call it is - the
+      // same person the manual button would have assigned it to.
+      const key = c.suggestedTask.trim().toLowerCase();
+      if (decided.has(key)) continue;
+
+      const assigneeId = people.idFor(c.speaker) ?? meeting.userId;
+      const autoTask =
+        // Truthy, not "not null": the rules path leaves ai undefined rather
+        // than null, and undefined !== null let rule-scraped sentences onto
+        // real to-do lists.
+        Boolean(found.ai) && projectId !== null;
+
+      if (!autoTask) {
+        await tx.commitment.create({ data: base });
+        continue;
+      }
+
+      const task = await tx.task.create({
+        data: {
+          projectId,
+          name: c.suggestedTask.slice(0, 200),
+          assigneeId,
           dueDate: due.date,
-          dueStated: due.stated,
-          fromSummary: found.fromSummary,
-        };
-      }),
-    });
+          // The sentence and where it was said, so anyone wondering where
+          // this came from can check rather than guess.
+          description: `From the call on ${saidOn}: "${c.text}"`,
+        },
+      });
+      await tx.commitment.create({
+        data: { ...base, status: "ACCEPTED", taskId: task.id },
+      });
+      decided.add(key);
+    }
   });
 }
 
@@ -508,6 +617,7 @@ export async function readMeetingNow(meetingId: string): Promise<string> {
     where: { id: meetingId },
     select: {
       id: true,
+      userId: true,
       title: true,
       startsAt: true,
       zoomUuid: true,
@@ -525,7 +635,8 @@ export async function readMeetingNow(meetingId: string): Promise<string> {
 
   summaryNote = null;
   const zone = await orgTimezone();
-  const isOurs = await speakerMatcher();
+  const people = await peopleMatcher();
+  const isOurs = people.isOurs;
 
   await db.commitment.deleteMany({
     where: { meetingId: meeting.id, status: "PENDING" },
@@ -542,7 +653,18 @@ export async function readMeetingNow(meetingId: string): Promise<string> {
     BUDGET.interactive.callMs,
   );
 
-  await storeRead(meeting.id, meeting.startsAt, found, zone);
+  await storeRead(
+    {
+      id: meeting.id,
+      userId: meeting.userId,
+      startsAt: meeting.startsAt,
+      projectId: meeting.projectId,
+      suggestedProjectId: meeting.suggestedProjectId,
+    },
+    found,
+    zone,
+    people,
+  );
 
   if (found.ai) {
     return `Read by Claude. ${found.ai.read.sections.length} sections, ${found.commitments.length} thing${found.commitments.length === 1 ? "" : "s"} you said you'd do.`;

@@ -163,6 +163,53 @@ aren't reachable by the API at all.
 
 ---
 
+## Action items become tasks on their own
+
+Where Claude reads a call and the call is filed to a project, each action
+item **a RevOptics person owes** is created as a task there and then — in that
+project, assigned to whoever the transcript named, due on the date they said.
+The client's own undertakings stay in the write-up where they belong and never
+appear on anyone's list.
+
+Two cases stay as suggestions on **My work** rather than becoming tasks:
+
+- **The call isn't filed to a project.** There's nowhere to put a task. File
+  the call and read it again.
+- **Claude didn't read it** — no API key, or the read failed. The old pattern
+  rules are too rough to put on a real to-do list unasked.
+
+Reading a call again never makes the same task twice, never re-offers
+something that is already a task, and never turns a dismissal back into work.
+"Not a task" is an answer, and a re-read is a request to read the call again,
+not permission to overrule it.
+
+Every task carries the sentence it came from and the date of the call in its
+description, so anyone wondering where it came from can check rather than
+guess.
+
+---
+
+## Overnight, without anyone pressing anything
+
+The cron service already does this. It calls the Zoom sync repeatedly until
+nothing is left to read, so a backlog clears in one night rather than five
+transcripts a day.
+
+What it needs, on the **cron service** as well as the app service:
+`ZOOM_ACCOUNT_ID`, `ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET`, `ANTHROPIC_API_KEY`,
+`CRON_SECRET`, `APP_URL`, and `ONESPACE_ROLE=cron`.
+
+A sync you run from the button has about a hundred seconds and reads what it
+can in that time — long enough for a call or two, short enough that the page
+still answers. The overnight run has no such constraint.
+
+**To catch up calls read before all this worked:** *Re-read my transcripts* on
+the Meetings page, then leave it to the cron. That clears the read markers and
+your unconfirmed suggestions; anything already accepted or dismissed stays as
+it is.
+
+---
+
 ## Reading calls with Claude
 
 Set `ANTHROPIC_API_KEY` in Railway, on the app service and the cron service,
