@@ -107,8 +107,12 @@ const SCHEMA = {
             description:
               "A complete instruction, starting with a verb, carrying enough detail to act on months later. 'Submit an Outreach support request explaining that the AI research agents run successfully but their custom fields do not appear when adding research-agent tiles to account or prospect layouts.' Not 'Submit a ticket'.",
           },
+          // anyOf rather than type: ["string", "null"]. The structured-output
+          // schema supports null as a type and anyOf as a combinator; a type
+          // array is neither, and an unsupported construct fails the whole
+          // request rather than the one field.
           owner: {
-            type: ["string", "null"],
+            anyOf: [{ type: "string" }, { type: "null" }],
             description: "Who owes it, as the transcript names them.",
           },
           ours: {
@@ -117,7 +121,7 @@ const SCHEMA = {
               "True when a RevOptics person owes it, false when the client does.",
           },
           when: {
-            type: ["string", "null"],
+            anyOf: [{ type: "string" }, { type: "null" }],
             description:
               "The timing exactly as spoken - 'by Friday', 'before the Tuesday check-in'. Null if none was given. Never invent one.",
           },
@@ -262,11 +266,23 @@ export async function readTranscript(
   const message = await client.messages
     .stream({
       model: MODEL,
-      max_tokens: 8000,
+      // Room to think and still write the whole document.
+      //
+      // This was 8000, which is the likeliest reason every call came back
+      // without a write-up. Adaptive thinking spends from the same budget as
+      // the answer, and the answer here is an overview, two to four themed
+      // sections, three to five outline groups and every action item with the
+      // sentence it came from. Run out and the JSON stops mid-string, which
+      // arrives as a parse failure rather than as "too long" - so it looked
+      // like a bad answer rather than a budget. Streaming means a large
+      // ceiling costs nothing when it isn't used.
+      max_tokens: 64000,
       system: SYSTEM,
       thinking: { type: "adaptive" },
       output_config: {
-        effort: "medium",
+        // A wrong action item costs more than the tokens do, and this is the
+        // level the guidance asks for on work where the judgement matters.
+        effort: "high",
         format: { type: "json_schema", schema: SCHEMA },
       },
       messages: [
@@ -277,6 +293,25 @@ export async function readTranscript(
       ],
     })
     .finalMessage();
+
+  // Why it stopped, before trying to read what it said. A truncated or
+  // declined answer is a different problem from a malformed one, and
+  // finding out by watching JSON.parse fail loses that distinction.
+  if (message.stop_reason === "max_tokens") {
+    return {
+      read: null,
+      reason:
+        "Claude ran out of room writing this call up, so the answer came back cut off. The transcript is unusually long - tell me and I'll raise the limit.",
+    };
+  }
+  if (message.stop_reason === "refusal") {
+    return {
+      read: null,
+      reason: `Claude declined to write this call up${
+        message.stop_details?.explanation ? `: ${message.stop_details.explanation}` : "."
+      }`,
+    };
+  }
 
   const text = message.content
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
@@ -302,7 +337,7 @@ export async function readTranscript(
     // should cost this one meeting rather than the whole sync.
     return {
       read: null,
-      reason: "Claude's answer for this call didn't parse. Worth trying again.",
+      reason: `Claude's answer for this call didn't parse (${text.length} characters, stopped because ${message.stop_reason ?? "unknown"}). Worth trying again.`,
     };
   }
 
