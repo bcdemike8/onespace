@@ -106,26 +106,41 @@ async function loadCandidates(): Promise<MatchCandidate[]> {
  *      personal room - which the calendar sync can't see at all.
  */
 /**
- * How many transcripts one sync will read.
+ * How long one sync may spend reading transcripts, and one call within it.
  *
- * A model reading an hour of conversation takes tens of seconds, so five
- * is a couple of minutes - short enough for a button to wait on and for
- * any proxy between here and the caller to stay patient.
+ * A count was the wrong unit. "Five transcripts" is a couple of minutes when
+ * a read takes twenty seconds and a quarter of an hour when it takes three -
+ * and how long a read takes is a property of the model, the effort and the
+ * length of the call, none of which the number five knows about. Raising
+ * max_tokens so a write-up would fit turned five into long enough that the
+ * browser gave up first, and the person got "an unexpected response was
+ * received from the server".
  *
- * The cron doesn't get a bigger number, it gets more goes: it calls this
- * endpoint again while anything is left, so each HTTP request stays short
- * and the backlog still drains in one night. Raising the cap instead would
- * mean tuning a timeout on every hop, and losing the whole run when one of
- * them disagreed.
+ * So: a deadline. When it passes, whatever is left is counted and reported
+ * rather than started, and the caller gets an answer. The cron doesn't get a
+ * bigger number, it gets more goes - it calls again while anything is left,
+ * so each request stays short and a six-week backlog still clears in one
+ * night.
  */
-const TRANSCRIPTS_PER_REQUEST = 5;
+const BUDGET = {
+  // A button somebody is watching. Two minutes is already a long time to sit
+  // on a click; past that the request is likelier to be cut off by something
+  // in between than to finish.
+  interactive: { totalMs: 100_000, callMs: 85_000 },
+  // Nobody is watching, but every hop still has an opinion about how long it
+  // will wait, and the cron loops anyway.
+  background: { totalMs: 420_000, callMs: 200_000 },
+} as const;
 
 export async function syncZoom(options?: {
   userId?: string;
   from?: Date;
   to?: Date;
+  /** The nightly cron, which nobody is waiting on. */
+  background?: boolean;
 }): Promise<ZoomOutcome> {
-  const transcriptBudget = TRANSCRIPTS_PER_REQUEST;
+  const budget = options?.background ? BUDGET.background : BUDGET.interactive;
+  const deadline = Date.now() + budget.totalMs;
   const outcome: ZoomOutcome = {
     people: 0,
     seen: 0,
@@ -327,14 +342,20 @@ export async function syncZoom(options?: {
       // open for twenty minutes. What's left is picked up by the next sync
       // and by the nightly cron, and the result says how many remain so
       // nobody thinks it has finished when it hasn't.
-      if (!row.transcriptReadAt && outcome.transcripts >= transcriptBudget) {
+      if (!row.transcriptReadAt && Date.now() >= deadline) {
         outcome.transcriptsLeft += 1;
       } else if (!row.transcriptReadAt) {
-        const found = await readCommitments(zm.uuid, isOurs, {
-          title: row!.title,
-          when: row!.startsAt,
-          client: clientOf(row!.projectId ?? row!.suggestedProjectId),
-        });
+        const found = await readCommitments(
+          zm.uuid,
+          isOurs,
+          {
+            title: row!.title,
+            when: row!.startsAt,
+            client: clientOf(row!.projectId ?? row!.suggestedProjectId),
+          },
+          // Never more than what is left of the request's own budget.
+          Math.min(budget.callMs, Math.max(5_000, deadline - Date.now())),
+        );
         {
           await storeRead(row!.id, row!.startsAt, found, zone);
           // The budget exists to bound how long the model spends, so only a
@@ -510,11 +531,16 @@ export async function readMeetingNow(meetingId: string): Promise<string> {
     where: { meetingId: meeting.id, status: "PENDING" },
   });
 
-  const found = await readCommitments(meeting.zoomUuid, isOurs, {
-    title: meeting.title,
-    when: meeting.startsAt,
-    client: meeting.project?.client?.name ?? null,
-  });
+  const found = await readCommitments(
+    meeting.zoomUuid,
+    isOurs,
+    {
+      title: meeting.title,
+      when: meeting.startsAt,
+      client: meeting.project?.client?.name ?? null,
+    },
+    BUDGET.interactive.callMs,
+  );
 
   await storeRead(meeting.id, meeting.startsAt, found, zone);
 
@@ -689,6 +715,8 @@ async function readCommitments(
   uuid: string,
   isOurs: (speaker: string | null) => boolean,
   context: { title: string; when: Date; client: string | null },
+  /** How long the model may take on this one call. */
+  timeoutMs: number,
 ): Promise<Read> {
   const nothing = (note: string | null, retry: boolean): Read => ({
     recordingUrl: null,
@@ -748,7 +776,7 @@ async function readCommitments(
 
     let whyNoWriteUp: string | null = null;
     try {
-      const attempt = await readTranscript(plainText(cues), context);
+      const attempt = await readTranscript(plainText(cues), context, timeoutMs);
       if (attempt.read) {
         const read = attempt.read;
         return {

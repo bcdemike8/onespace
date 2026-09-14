@@ -231,9 +231,39 @@ export interface AiAttempt {
  * to why. Throws on a real API failure, which the caller reports: a quota
  * problem should be loud, not a month of quietly worse summaries.
  */
+/**
+ * Run the request, and turn a timeout into something a person can act on.
+ *
+ * "APIConnectionTimeoutError" on a meeting card tells nobody anything. What
+ * matters is that the ceiling stopped it, not the model or the network, and
+ * that the overnight job has a bigger one.
+ */
+async function runOrExplain<T>(timeoutMs: number, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (e) {
+    if (e instanceof Anthropic.APIConnectionTimeoutError) {
+      throw new Error(
+        `it took longer than ${Math.round(timeoutMs / 1000)} seconds and was stopped so the page could answer. The nightly job has longer, and will pick this up.`,
+      );
+    }
+    throw e;
+  }
+}
+
 export async function readTranscript(
   transcript: string,
   context: { title: string; when: Date; client: string | null },
+  /**
+   * How long this one read may take.
+   *
+   * Required, and deliberately so. Reading a call happens inside whatever
+   * asked for it - a button press, a cron request - and a model given room
+   * to think will use it. Without a ceiling the request outlives the
+   * browser's patience and the person gets "an unexpected response was
+   * received from the server", which is the shape every timeout takes.
+   */
+  timeoutMs: number,
 ): Promise<AiAttempt> {
   if (!aiConfigured()) {
     return {
@@ -251,7 +281,11 @@ export async function readTranscript(
     };
   }
 
-  const client = new Anthropic();
+  // No retries. The SDK retries timeouts by default, which multiplies the
+  // wall clock by three and defeats the ceiling above. A call that fails
+  // leaves the meeting unread, so the next sync picks it up - retrying here
+  // as well would only mean failing three times as slowly.
+  const client = new Anthropic({ maxRetries: 0 });
 
   const header = [
     `Meeting: ${context.title}`,
@@ -263,36 +297,41 @@ export async function readTranscript(
 
   // Streamed because a two-hour call is a large input and a non-streaming
   // request can outrun the HTTP timeout waiting for the first byte.
-  const message = await client.messages
-    .stream({
-      model: MODEL,
-      // Room to think and still write the whole document.
-      //
-      // This was 8000, which is the likeliest reason every call came back
-      // without a write-up. Adaptive thinking spends from the same budget as
-      // the answer, and the answer here is an overview, two to four themed
-      // sections, three to five outline groups and every action item with the
-      // sentence it came from. Run out and the JSON stops mid-string, which
-      // arrives as a parse failure rather than as "too long" - so it looked
-      // like a bad answer rather than a budget. Streaming means a large
-      // ceiling costs nothing when it isn't used.
-      max_tokens: 64000,
-      system: SYSTEM,
-      thinking: { type: "adaptive" },
-      output_config: {
-        // A wrong action item costs more than the tokens do, and this is the
-        // level the guidance asks for on work where the judgement matters.
-        effort: "high",
-        format: { type: "json_schema", schema: SCHEMA },
-      },
-      messages: [
-        {
-          role: "user",
-          content: `${header}\n\nTranscript:\n\n${body}`,
+  const message = await runOrExplain(timeoutMs, () =>
+    client.messages
+    .stream(
+      {
+        model: MODEL,
+        // Room to think and still write the whole document.
+        //
+        // This was 8000, which is the likeliest reason every call came back
+        // without a write-up. Adaptive thinking spends from the same budget as
+        // the answer, and the answer here is an overview, two to four themed
+        // sections, three to five outline groups and every action item with the
+        // sentence it came from. Run out and the JSON stops mid-string, which
+        // arrives as a parse failure rather than as "too long" - so it looked
+        // like a bad answer rather than a budget. Streaming means a large
+        // ceiling costs nothing when it isn't used.
+        max_tokens: 64000,
+        system: SYSTEM,
+        thinking: { type: "adaptive" },
+        output_config: {
+          // A wrong action item costs more than the tokens do, and this is the
+          // level the guidance asks for on work where the judgement matters.
+          effort: "high",
+          format: { type: "json_schema", schema: SCHEMA },
         },
-      ],
-    })
-    .finalMessage();
+        messages: [
+          {
+            role: "user",
+            content: `${header}\n\nTranscript:\n\n${body}`,
+          },
+        ],
+      },
+      { timeout: timeoutMs },
+    )
+    .finalMessage(),
+  );
 
   // Why it stopped, before trying to read what it said. A truncated or
   // declined answer is a different problem from a malformed one, and

@@ -35,7 +35,7 @@ async function run(request: Request) {
   }
 
   try {
-    const result = await syncZoom();
+    const result = await syncZoom({ background: true });
 
     // 200 even when one person's calendar failed: the run worked, and the
     // body names who it couldn't read. A 500 would make Railway retry the
