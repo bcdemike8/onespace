@@ -189,6 +189,25 @@ guess.
 
 ---
 
+## Only calls worth writing up
+
+A write-up costs a model reading an hour of conversation. One of a call six
+weeks ago is rarely read by anyone, so the sync writes up **the last seven
+days** and passes over anything older — it says so on the call, and
+*Read this call now* still works on any of them if you want one after all.
+
+Everything in the sync window still gets its real duration and its project
+match whatever its age. That's what the timesheet needs and it costs one cheap
+API call; only the write-up is limited.
+
+Seven days is a setting, not a constant:
+
+```sql
+insert into onespace."AppSetting" (key, value, "updatedAt")
+values ('zoom.transcriptDays', '14', now())
+on conflict (key) do update set value = excluded.value, "updatedAt" = now();
+```
+
 ## Overnight, without anyone pressing anything
 
 The cron service already does this. It calls the Zoom sync repeatedly until
@@ -204,9 +223,10 @@ can in that time — long enough for a call or two, short enough that the page
 still answers. The overnight run has no such constraint.
 
 **To catch up calls read before all this worked:** *Re-read my transcripts* on
-the Meetings page, then leave it to the cron. That clears the read markers and
-your unconfirmed suggestions; anything already accepted or dismissed stays as
-it is.
+the Meetings page, then leave it to the cron. It queues your calls from the
+last seven days — the same ones the sync would write up — and clears their
+unconfirmed suggestions; anything already accepted or dismissed stays as it
+is, and older calls are left alone.
 
 ---
 

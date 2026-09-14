@@ -58,6 +58,11 @@ export async function syncZoomAction(
         `${r.transcriptsLeft} more transcript${r.transcriptsLeft === 1 ? "" : "s"} still to read - run it again, or leave them to tonight`,
       );
     }
+    if (r.tooOld > 0) {
+      bits.push(
+        `${r.tooOld} too old to write up`,
+      );
+    }
     if (r.retryable > 0) {
       bits.push(
         `${r.retryable} couldn't be read and will be tried again`,
@@ -231,30 +236,50 @@ export async function rereadTranscriptsAction(
     return { error: "Only an admin can re-read everyone's calls." };
   }
 
-  const mine = everyone ? {} : { userId: user.id };
+  // The same window the sync writes up. Clearing the marker on a call the
+  // sync will only pass over as too old is churn: two hundred rows rewritten
+  // to say "too old" and nothing read. This asks for exactly what will be
+  // read.
+  const { transcriptWindowDays } = await import("@/lib/zoom/sync");
+  const days = await transcriptWindowDays();
+  const since = new Date(Date.now() - days * 86_400_000);
+
+  const scope = {
+    ...(everyone ? {} : { userId: user.id }),
+    startsAt: { gte: since },
+  };
 
   const cleared = await db.$transaction(async (tx) => {
     const removed = await tx.commitment.deleteMany({
       where: {
         status: "PENDING",
         source: { in: ["TRANSCRIPT", "ZOOM_SUMMARY", "AI_SUMMARY"] },
-        ...(everyone ? {} : { meeting: { userId: user.id } }),
+        meeting: scope,
       },
     });
     // Only meetings there is still a transcript to go back for: the sync
     // finds one by Zoom UUID, so a calendar-only meeting has nothing to
     // re-read and clearing its marker would just cost a lookup.
-    await tx.meeting.updateMany({
-      where: { ...mine, zoomUuid: { not: null }, transcriptReadAt: { not: null } },
+    const queued = await tx.meeting.updateMany({
+      where: { ...scope, zoomUuid: { not: null }, transcriptReadAt: { not: null } },
       data: { transcriptReadAt: null, transcriptNote: null },
     });
-    return removed.count;
+    return { removed: removed.count, queued: queued.count };
   });
 
   refresh();
   return {
     ok: true,
-    message: `${everyone ? "Everyone's calls" : "Your calls"} will be read again — ${cleared} unconfirmed suggestion${cleared === 1 ? "" : "s"} cleared. Run Sync Zoom, or leave it to tonight.`,
+    message:
+      cleared.queued === 0
+        ? `Nothing from the last ${days} days to read again${everyone ? "" : " on your calls"}.`
+        : `${cleared.queued} call${cleared.queued === 1 ? "" : "s"} from the last ${days} days${
+            everyone ? "" : " of yours"
+          } queued to be read again${
+            cleared.removed > 0
+              ? `, ${cleared.removed} unconfirmed suggestion${cleared.removed === 1 ? "" : "s"} cleared`
+              : ""
+          }. Run Sync Zoom, or leave it to tonight.`,
   };
 }
 

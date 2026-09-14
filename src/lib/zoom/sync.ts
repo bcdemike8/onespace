@@ -39,6 +39,31 @@ export async function zoomSyncFrom(): Promise<Date> {
   return dayStart(row?.value || DEFAULT_ZOOM_FROM);
 }
 
+export const ZOOM_TRANSCRIPT_DAYS_KEY = "zoom.transcriptDays";
+export const DEFAULT_TRANSCRIPT_DAYS = 7;
+
+/**
+ * How far back a call is still worth writing up.
+ *
+ * Separate from the sync window on purpose. Every call in the window still
+ * gets its real duration and its project match - that is what the timesheet
+ * needs, and it costs one cheap API call. A write-up costs a model reading
+ * an hour of conversation, and a write-up of something that happened six
+ * weeks ago is rarely read by anyone.
+ *
+ * Rolling, not a fixed date: "the last seven days" stays true tomorrow.
+ * Stored as a setting so it can be changed without a deploy.
+ */
+export async function transcriptWindowDays(): Promise<number> {
+  const row = await db.appSetting.findUnique({
+    where: { key: ZOOM_TRANSCRIPT_DAYS_KEY },
+  });
+  const days = Number(row?.value);
+  return Number.isFinite(days) && days > 0
+    ? Math.floor(days)
+    : DEFAULT_TRANSCRIPT_DAYS;
+}
+
 export interface ZoomOutcome {
   people: number;
   /** Zoom calls seen in the window. */
@@ -55,6 +80,8 @@ export interface ZoomOutcome {
   fromSummary: number;
   /** Transcripts found but left for the next run, to keep this one quick. */
   transcriptsLeft: number;
+  /** Calls too old to be worth writing up, passed over deliberately. */
+  tooOld: number;
   /** Transcripts read for commitments. */
   transcripts: number;
   /**
@@ -141,6 +168,9 @@ export async function syncZoom(options?: {
 }): Promise<ZoomOutcome> {
   const budget = options?.background ? BUDGET.background : BUDGET.interactive;
   const deadline = Date.now() + budget.totalMs;
+
+  const windowDays = await transcriptWindowDays();
+  const tooOldBefore = new Date(Date.now() - windowDays * 86_400_000);
   const outcome: ZoomOutcome = {
     people: 0,
     seen: 0,
@@ -149,6 +179,7 @@ export async function syncZoom(options?: {
     skipped: 0,
     transcripts: 0,
     transcriptsLeft: 0,
+    tooOld: 0,
     retryable: 0,
     commitments: 0,
     fromSummary: 0,
@@ -343,7 +374,20 @@ export async function syncZoom(options?: {
       // open for twenty minutes. What's left is picked up by the next sync
       // and by the nightly cron, and the result says how many remain so
       // nobody thinks it has finished when it hasn't.
-      if (!row.transcriptReadAt && Date.now() >= deadline) {
+      if (!row.transcriptReadAt && startsAt < tooOldBefore) {
+        // Checked before anything is asked of Zoom, so passing over a
+        // backlog costs nothing. Marked read so it stops being offered as
+        // work the sync still owes - it doesn't, and saying it does would
+        // leave "197 transcripts still to read" on the screen forever.
+        await db.meeting.update({
+          where: { id: row.id },
+          data: {
+            transcriptReadAt: new Date(),
+            transcriptNote: `This call is older than the ${windowDays}-day window for write-ups, so it wasn't read. Use "Read this call now" if you want it after all.`,
+          },
+        });
+        outcome.tooOld += 1;
+      } else if (!row.transcriptReadAt && Date.now() >= deadline) {
         outcome.transcriptsLeft += 1;
       } else if (!row.transcriptReadAt) {
         const found = await readCommitments(
