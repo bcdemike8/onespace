@@ -27,6 +27,7 @@ bottom.
 | `onespace-subtasks.sql` | Reattaches 91 imported subtasks to their parents | |
 | `onespace-close-stale-tasks-v2.sql` | Closes 299 tasks created or due more than 60 days ago | |
 | `onespace-tag-import.sql` | Tags the first Everhour import so the importer's replace option can see it. **Run before re-uploading the dated export.** | |
+| `onespace-close-old-tasks.sql` | Closes every open task that was due more than 7 days ago — the Asana backlog that makes "Today" on My work unreadable. Leaves recent, future and undated tasks alone. Backs up first; the undo is at the bottom of the file | Run |
 | `onespace-status.sql` | Read-only. Prints which of the above have been run and which haven't. | |
 
 ## Running one
