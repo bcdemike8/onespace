@@ -30,6 +30,7 @@ import {
 import { backfillDueDates } from "@/lib/commitments/backfill";
 import { buildWeights, matchMeeting, type MatchCandidate } from "@/lib/google/match";
 import { orgTimezone } from "@/lib/google/sync";
+import { recentDays } from "@/lib/recency";
 
 export const ZOOM_FROM_KEY = "zoom.from";
 export const DEFAULT_ZOOM_FROM = "2026-08-01";
@@ -38,9 +39,6 @@ export async function zoomSyncFrom(): Promise<Date> {
   const row = await db.appSetting.findUnique({ where: { key: ZOOM_FROM_KEY } });
   return dayStart(row?.value || DEFAULT_ZOOM_FROM);
 }
-
-export const ZOOM_TRANSCRIPT_DAYS_KEY = "zoom.transcriptDays";
-export const DEFAULT_TRANSCRIPT_DAYS = 7;
 
 /**
  * How far back a call is still worth writing up.
@@ -51,18 +49,11 @@ export const DEFAULT_TRANSCRIPT_DAYS = 7;
  * an hour of conversation, and a write-up of something that happened six
  * weeks ago is rarely read by anyone.
  *
- * Rolling, not a fixed date: "the last seven days" stays true tomorrow.
- * Stored as a setting so it can be changed without a deploy.
+ * Rolling, not a fixed date: "the last seven days" stays true tomorrow. The
+ * same number governs how long a suggestion stays on My work - see
+ * src/lib/recency.ts.
  */
-export async function transcriptWindowDays(): Promise<number> {
-  const row = await db.appSetting.findUnique({
-    where: { key: ZOOM_TRANSCRIPT_DAYS_KEY },
-  });
-  const days = Number(row?.value);
-  return Number.isFinite(days) && days > 0
-    ? Math.floor(days)
-    : DEFAULT_TRANSCRIPT_DAYS;
-}
+export const transcriptWindowDays = recentDays;
 
 export interface ZoomOutcome {
   people: number;

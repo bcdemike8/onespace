@@ -25,6 +25,7 @@ import {
 import { LogTimeForm, type LoggableProject } from "@/components/LogTimeForm";
 import { TaskListItem, type TaskListItemData } from "@/components/TaskListItem";
 import { deleteTimeEntryAction } from "@/app/actions/time";
+import { recentSince } from "@/lib/recency";
 import { DayQueue, type QueueCommitment, type QueueProject } from "./DayQueue";
 
 export const dynamic = "force-dynamic";
@@ -69,6 +70,9 @@ export default async function MyWorkPage() {
   const user = await requireUser();
   const now = today();
   const lockState = await getLockState();
+  // How far back a suggestion is still worth offering. The same number the
+  // Zoom sync uses to decide how far back a call is worth writing up.
+  const said = await recentSince();
   const weekFrom = weekStart(now);
   const weekTo = weekEnd(now);
 
@@ -153,16 +157,26 @@ export default async function MyWorkPage() {
         },
         orderBy: [{ dueDate: "asc" }, { name: "asc" }],
       }),
-      // What the last fortnight of calls and recaps produced and nobody has
-      // said yes or no to yet. Older than that and the moment has passed:
-      // it either got done or it didn't, and a stale suggestion is noise.
+      // What recent calls and recaps produced and nobody has said yes or no
+      // to yet. Older than the window and the moment has passed: it either
+      // got done or it didn't, and a stale suggestion is noise.
+      //
+      // Filtered on when it was SAID, not on when the row was written. Those
+      // are the same thing day to day and wildly different after a catch-up
+      // sync, which creates today's rows for calls six weeks old - so the
+      // queue filled with things promised in early August and looked, quite
+      // reasonably, like the app inventing work.
       db.commitment.findMany({
         where: {
           status: "PENDING",
-          createdAt: { gte: addDays(new Date(), -14) },
           OR: [
-            { meeting: { userId: user.id } },
-            { mailMessage: { thread: { userId: user.id } } },
+            { meeting: { userId: user.id, startsAt: { gte: said } } },
+            {
+              mailMessage: {
+                sentAt: { gte: said },
+                thread: { userId: user.id },
+              },
+            },
           ],
         },
         orderBy: [{ dueDate: "asc" }, { createdAt: "desc" }],
