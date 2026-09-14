@@ -7,6 +7,7 @@ import { isLocked } from "@/lib/periods";
 import { orgTimezone } from "@/lib/google/sync";
 import { googleConfigured } from "@/lib/google/auth";
 import { zoomConfigured } from "@/lib/zoom/client";
+import { aiConfigured } from "@/lib/ai/summarise";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { asSummaryDoc } from "@/lib/summary";
 import { MeetingCard, type MeetingRow, type ProjectOption } from "./MeetingCard";
@@ -61,6 +62,7 @@ export default async function MeetingsPage({
         summary: true,
         summaryJson: true,
         transcriptNote: true,
+        transcriptReadAt: true,
         user: { select: { name: true } },
         commitments: {
           where: { status: "PENDING" },
@@ -150,6 +152,7 @@ export default async function MeetingsPage({
         summary: m.summary,
         summaryDoc: asSummaryDoc(m.summaryJson),
         transcriptNote: m.transcriptNote,
+        transcriptRead: m.transcriptReadAt !== null,
         commitments: m.commitments,
       };
     });
@@ -185,6 +188,19 @@ export default async function MeetingsPage({
         }
         actions={<SyncButton admin={admin} zoom={zoomConfigured()} />}
       />
+
+      {/* The one fact nothing else on any screen tells you, and the whole
+          difference between a write-up and a list of scraped sentences.
+          Read at request time, so it reflects what this service actually
+          has rather than what was set when it was built. */}
+      {zoomConfigured() && !aiConfigured() ? (
+        <p className="mb-4 rounded-lg bg-warn-50 px-3 py-2 text-xs text-warn-700">
+          Claude isn&apos;t connected on this service, so calls are being
+          scanned with the old pattern rules and no write-ups are stored. Set
+          ANTHROPIC_API_KEY in Railway on the app service and the cron service
+          both, redeploy, then use Re-read transcripts.
+        </p>
+      ) : null}
 
       {admin ? (
         <div className="mb-4 flex gap-2 text-sm">

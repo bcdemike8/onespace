@@ -41,6 +41,8 @@ export interface MeetingRow {
   summaryDoc: SummaryDoc | null;
   /** Why there's no write-up, when the sync worked out why. */
   transcriptNote: string | null;
+  /** Whether the transcript has been read at all. */
+  transcriptRead: boolean;
   commitments: CommitmentRow[];
 }
 
@@ -275,6 +277,7 @@ export function MeetingCard({
           doc={meeting.summaryDoc}
           text={meeting.summary}
           note={meeting.transcriptNote}
+          read={meeting.transcriptRead}
         />
       )}
 

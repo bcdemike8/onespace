@@ -24,6 +24,7 @@ export function SummaryPeek({
   doc,
   text,
   note,
+  read,
 }: {
   id: string;
   title: string;
@@ -31,6 +32,8 @@ export function SummaryPeek({
   text: string | null;
   /** Why there's no write-up, when the sync worked out why. */
   note: string | null;
+  /** Whether the transcript has been read at all. */
+  read: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [open, setOpen] = useState(false);
@@ -45,9 +48,20 @@ export function SummaryPeek({
   }, [open]);
 
   const has = Boolean(text);
-  const preview = has
-    ? (doc?.overview || text || "").replace(/\s+/g, " ").trim()
-    : (note ?? "Nothing has been read from this call yet.").replace(/\s+/g, " ").trim();
+
+  // A call read before Claude was connected has no write-up and no reason -
+  // the old reader stored neither. Saying "nothing has been read from this
+  // call yet" would be wrong twice over: it has been read, and the way back
+  // is a button rather than another sync, which skips anything already read.
+  const why =
+    note ??
+    (read
+      ? "This call was read before Claude was connected, so nothing was written up from it. A plain sync won't revisit it - use Read this call now on the call itself, or Re-read transcripts at the top of this page to redo them all."
+      : "Nothing has been read from this call yet. If it was cloud recorded, run Sync Zoom - the write-up comes from the transcript.");
+
+  const preview = (has ? doc?.overview || text || "" : why)
+    .replace(/\s+/g, " ")
+    .trim();
 
   return (
     <div className="mt-3 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t border-ink-100 pt-3 text-xs">
@@ -106,10 +120,7 @@ export function SummaryPeek({
             </p>
           ) : (
             <>
-              <p className="text-sm leading-relaxed text-ink-700">
-                {note ??
-                  "Nothing has been read from this call yet. If it was cloud recorded, run Sync Zoom — the write-up comes from the transcript."}
-              </p>
+              <p className="text-sm leading-relaxed text-ink-700">{why}</p>
               <p className="mt-3 text-xs text-ink-500">
                 Open the call to ask Zoom what it has for it, or to read it
                 again.
