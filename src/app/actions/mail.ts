@@ -54,8 +54,12 @@ export async function syncMailAction(
     if (r.threads === 0) {
       return {
         ok: true,
-        message:
-          "No client mail found. Check the clients you email have their domains set on the Clients page.",
+        message: r.unreadable
+          ? // Not the same thing as having no client mail, and telling
+            // somebody to go and check their domains when Gmail is refusing
+            // the threads sends them to fix something that isn't broken.
+            `Gmail wouldn't hand over ${r.unreadable} thread${r.unreadable === 1 ? "" : "s"}, so nothing could be read. ${r.unreadableNote ?? ""}`.trim()
+          : "No client mail found. Check the clients you email have their domains set on the Clients page.",
       };
     }
 
@@ -71,6 +75,11 @@ export async function syncMailAction(
     if (r.commitments > 0) {
       bits.push(
         `${r.commitments} action item${r.commitments === 1 ? "" : "s"} from ${r.recaps} recap${r.recaps === 1 ? "" : "s"}`,
+      );
+    }
+    if (r.unreadable > 0) {
+      bits.push(
+        `${r.unreadable} Gmail wouldn't hand over (${r.unreadableNote ?? "no reason given"})`,
       );
     }
     if (r.failed.length > 0) {

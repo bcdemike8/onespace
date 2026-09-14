@@ -398,6 +398,12 @@ export interface GoogleStatus {
 }
 
 export async function googleStatus(): Promise<GoogleStatus> {
+  // Every export of a "use server" file is a POST endpoint the moment it
+  // ships, whether or not anything calls it - and the id needed to reach one
+  // is in the client bundle. This returns client names and the service
+  // account address, so it is an admin's to read, not the internet's.
+  await requireAdmin();
+
   const [domains, clients, timezone] = await Promise.all([
     db.clientDomain.count(),
     db.client.findMany({

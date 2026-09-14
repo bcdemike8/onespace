@@ -17,6 +17,9 @@ export async function mailSyncFrom(): Promise<Date> {
 }
 
 export interface MailSyncOutcome {
+  /** Threads Gmail wouldn't hand over, and the first reason it gave. */
+  unreadable: number;
+  unreadableNote?: string;
   people: number;
   threads: number;
   created: number;
@@ -80,6 +83,7 @@ export async function syncMail(options?: {
     updated: 0,
     awaiting: 0,
     machine: 0,
+    unreadable: 0,
     recaps: 0,
     commitments: 0,
     failed: [],
@@ -146,8 +150,14 @@ export async function syncMail(options?: {
       let thread;
       try {
         thread = await getThread(person.email, threadId);
-      } catch {
-        // One unreadable thread shouldn't cost the rest of the mailbox.
+      } catch (e) {
+        // One unreadable thread shouldn't cost the rest of the mailbox - but
+        // it shouldn't vanish either. Swallowed whole, a missing scope or a
+        // rate limit fails every thread and the sync reports nothing wrong
+        // at all, which is exactly how the Zoom sync spent a day claiming
+        // there were no transcripts.
+        outcome.unreadable += 1;
+        if (!outcome.unreadableNote) outcome.unreadableNote = describe(e);
         continue;
       }
       if (!thread) continue;

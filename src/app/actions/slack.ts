@@ -91,6 +91,9 @@ export interface SlackStatus {
 }
 
 export async function slackStatus(): Promise<SlackStatus> {
+  // Names every active person in the company and the Slack workspace.
+  await requireAdmin();
+
   const people = await db.user.findMany({
     where: { isActive: true },
     select: { name: true, slackUserId: true },
@@ -115,6 +118,11 @@ export async function slackStatus(): Promise<SlackStatus> {
 
 /** Channels the bot can post to, for the project picker. */
 export async function slackChannelOptions() {
+  // Lists every channel the bot is in, private ones included. The page that
+  // uses it is already admin-only; the action was not, and an unauthenticated
+  // caller could read the lot.
+  await requireAdmin();
+
   if (!slackConfigured()) return [];
   const channels = await listChannels();
   return channels

@@ -28,6 +28,7 @@ bottom.
 | `onespace-close-stale-tasks-v2.sql` | Closes 299 tasks created or due more than 60 days ago | |
 | `onespace-tag-import.sql` | Tags the first Everhour import so the importer's replace option can see it. **Run before re-uploading the dated export.** | |
 | `onespace-close-old-tasks.sql` | Closes every open task that was due more than 7 days ago — the Asana backlog that makes "Today" on My work unreadable. Leaves recent, future and undated tasks alone. Backs up first; the undo is at the bottom of the file | Run |
+| `onespace-health.sql` | Read-only. Twelve things that fail quietly — who can't sign in, billable hours stamped at zero, clients with no domains, calls with no write-up, projects over budget, near-duplicate clients. Nothing here throws an error in the app; it just makes something not work | Run first when something feels wrong |
 | `onespace-status.sql` | Read-only. Prints which of the above have been run and which haven't. | |
 
 ## Running one
