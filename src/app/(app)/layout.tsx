@@ -5,6 +5,7 @@ import { logoutAction } from "@/app/login/actions";
 import { BRAND } from "@/lib/brand";
 import { NavLinks, type NavItem } from "@/components/NavLinks";
 import { TimerBar } from "@/components/TimerBar";
+import { UpdateNotice } from "@/components/UpdateNotice";
 
 export const dynamic = "force-dynamic";
 
@@ -105,6 +106,8 @@ export default async function AppLayout({
             </button>
           </form>
         </div>
+
+        <UpdateNotice />
 
         {timer ? (
           <TimerBar
