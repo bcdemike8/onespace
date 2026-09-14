@@ -27,7 +27,6 @@ bottom.
 | `onespace-subtasks.sql` | Reattaches 91 imported subtasks to their parents | |
 | `onespace-close-stale-tasks-v2.sql` | Closes 299 tasks created or due more than 60 days ago | |
 | `onespace-tag-import.sql` | Tags the first Everhour import so the importer's replace option can see it. **Run before re-uploading the dated export.** | |
-| `onespace-make-admin.sql` | Prints everyone's role, and makes `brianna@revoptics.co` an admin. Admin-only screens — People, Clients, Templates, Import, Sync everyone, Re-read transcripts — are simply absent for a member, which looks like a missing feature rather than a permission | Run if your own row says MEMBER |
 | `onespace-status.sql` | Read-only. Prints which of the above have been run and which haven't. | |
 
 ## Running one

@@ -45,10 +45,20 @@ export function SyncButton({ admin, zoom }: { admin: boolean; zoom: boolean }) {
         </form>
       ) : null}
 
+      {zoom ? (
+        <form action={rereadAction}>
+          <input type="hidden" name="scope" value="me" />
+          <SubmitButton pendingLabel="Clearing…" className="btn-ghost btn-sm">
+            Re-read my transcripts
+          </SubmitButton>
+        </form>
+      ) : null}
+
       {admin && zoom ? (
         <form action={rereadAction}>
+          <input type="hidden" name="scope" value="all" />
           <SubmitButton pendingLabel="Clearing…" className="btn-ghost btn-sm">
-            Re-read transcripts
+            Re-read everyone&apos;s
           </SubmitButton>
         </form>
       ) : null}

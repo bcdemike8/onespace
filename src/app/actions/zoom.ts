@@ -212,25 +212,40 @@ export async function dismissCommitmentAction(formData: FormData): Promise<void>
  * decided that. Dismissed ones are left too, so a promise already turned
  * down doesn't come back a second time.
  */
+/**
+ * Mark calls to be read again.
+ *
+ * Yours by default, everyone's when an admin asks for everyone's. This used
+ * to be admin-only for both, which put the one repair that fixes a bad batch
+ * of write-ups out of reach of the people whose calls they are - and a
+ * consultant re-reading their own calls is not an act that needs a
+ * permission, it just re-reads transcripts they were on.
+ */
 export async function rereadTranscriptsAction(
   _prev: ActionState,
-  _formData: FormData,
+  formData: FormData,
 ): Promise<ActionState> {
   const user = await requireUser();
-  if (!isAdmin(user)) return { error: "Only an admin can re-read transcripts." };
+  const everyone = formData.get("scope") === "all";
+  if (everyone && !isAdmin(user)) {
+    return { error: "Only an admin can re-read everyone's calls." };
+  }
+
+  const mine = everyone ? {} : { userId: user.id };
 
   const cleared = await db.$transaction(async (tx) => {
     const removed = await tx.commitment.deleteMany({
       where: {
         status: "PENDING",
-        source: { in: ["TRANSCRIPT", "ZOOM_SUMMARY"] },
+        source: { in: ["TRANSCRIPT", "ZOOM_SUMMARY", "AI_SUMMARY"] },
+        ...(everyone ? {} : { meeting: { userId: user.id } }),
       },
     });
     // Only meetings there is still a transcript to go back for: the sync
     // finds one by Zoom UUID, so a calendar-only meeting has nothing to
     // re-read and clearing its marker would just cost a lookup.
     await tx.meeting.updateMany({
-      where: { zoomUuid: { not: null }, transcriptReadAt: { not: null } },
+      where: { ...mine, zoomUuid: { not: null }, transcriptReadAt: { not: null } },
       data: { transcriptReadAt: null, transcriptNote: null },
     });
     return removed.count;
@@ -239,7 +254,7 @@ export async function rereadTranscriptsAction(
   refresh();
   return {
     ok: true,
-    message: `Cleared ${cleared} unconfirmed commitment${cleared === 1 ? "" : "s"}. Run Sync Zoom to read the transcripts again.`,
+    message: `${everyone ? "Everyone's calls" : "Your calls"} will be read again — ${cleared} unconfirmed suggestion${cleared === 1 ? "" : "s"} cleared. Run Sync Zoom, or leave it to tonight.`,
   };
 }
 
