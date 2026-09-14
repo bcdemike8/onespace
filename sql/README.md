@@ -27,13 +27,18 @@ bottom.
 | `onespace-subtasks.sql` | Reattaches 91 imported subtasks to their parents | |
 | `onespace-close-stale-tasks-v2.sql` | Closes 299 tasks created or due more than 60 days ago | |
 | `onespace-tag-import.sql` | Tags the first Everhour import so the importer's replace option can see it. **Run before re-uploading the dated export.** | |
-| `onespace-make-admin.sql` | Prints everyone's role, and makes one person an admin. Admin-only screens — People, Clients, Templates, Import, Sync everyone, Re-read transcripts — are simply absent for a member, which looks like a missing feature rather than a permission | Run if your own row says MEMBER |
+| `onespace-make-admin.sql` | Prints everyone's role, and makes `brianna@revoptics.co` an admin. Admin-only screens — People, Clients, Templates, Import, Sync everyone, Re-read transcripts — are simply absent for a member, which looks like a missing feature rather than a permission | Run if your own row says MEMBER |
 | `onespace-status.sql` | Read-only. Prints which of the above have been run and which haven't. | |
 
 ## Running one
 
 Supabase → the RevOptics project → **SQL Editor** → **New query**, paste the
 whole file, **Run**. Read the preview it prints before letting it commit.
+
+Every table is written out in full as `onespace."Thing"`. The editor doesn't
+carry a `SET search_path` from one statement to the next, so a script that
+sets it once at the top fails on the first table it reaches with
+`relation "User" does not exist`.
 
 `onespace-status.sql` is safe to run at any time and changes nothing.
 

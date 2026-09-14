@@ -1,31 +1,37 @@
 -- Who is an admin, and making yourself one.
---
+-- =========================================
 -- Several things in OneSpace are admin-only: People, Clients, Templates,
--- Import, "Sync everyone", and "Re-read transcripts". A member sees none of
--- them - the buttons simply aren't on the page, which looks the same as a
--- feature that hasn't been built.
+-- Import, "Sync everyone" and "Re-read transcripts". A member doesn't see a
+-- greyed-out button - the button isn't on the page at all, which looks
+-- exactly like a feature nobody built.
 --
--- Run the SELECT first. If your own row says MEMBER, that's why.
+-- Run the whole file. It prints who is who, promotes one person, and prints
+-- the result. Safe to run twice; the second time changes nothing.
+--
+-- Every table is written as onespace."User" rather than relying on the search
+-- path, because the Supabase SQL editor doesn't carry a SET across statements
+-- and you get: relation "User" does not exist.
 
-SET search_path TO onespace;
-
--- 1. Who's who.
-SELECT
+-- 1. Who's who now.
+select
   name,
   email,
   role,
-  CASE WHEN "isActive" THEN 'active' ELSE 'switched off' END AS status
-FROM "User"
-ORDER BY role, name;
+  case when "isActive" then 'active' else 'switched off' end as status
+from onespace."User"
+order by role, name;
 
 -- 2. Make yourself an admin.
---
--- Change the address if you sign in as someone else. It only affects the
--- one row, and running it twice does nothing the second time.
-UPDATE "User"
-SET role = 'ADMIN'
-WHERE lower(email) = lower('bri@revoptics.co')
-  AND role <> 'ADMIN';
+--    Change the address if you sign in as somebody else.
+update onespace."User"
+set role = 'ADMIN'
+where lower(email) = lower('brianna@revoptics.co')
+  and role <> 'ADMIN';
 
--- 3. Check it took.
-SELECT name, email, role FROM "User" WHERE role = 'ADMIN' ORDER BY name;
+-- 3. Did it take? If this comes back with no rows for your address, the
+--    address in step 2 doesn't match the one stored - check the list from
+--    step 1 for a different spelling.
+select name, email, role
+from onespace."User"
+where role = 'ADMIN'
+order by name;
