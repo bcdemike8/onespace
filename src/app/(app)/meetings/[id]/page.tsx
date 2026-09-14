@@ -160,6 +160,7 @@ export default async function MeetingPage({
     // Shown in full below rather than folded into the card.
     summary: null,
     summaryDoc: null,
+    transcriptNote: null,
     commitments: pending.map((c) => ({
       id: c.id,
       text: c.text,

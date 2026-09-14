@@ -6,8 +6,8 @@ import { acceptMeetingAction, dismissMeetingAction } from "@/app/actions/google"
 import { SubmitButton } from "@/components/SubmitButton";
 import { ErrorNote } from "@/components/ui";
 import { Commitments, type CommitmentRow } from "./Commitments";
-import { CallSummary } from "@/components/CallSummary";
 import type { SummaryDoc } from "@/lib/summary";
+import { SummaryPeek } from "./SummaryPeek";
 
 export interface ProjectOption {
   id: string;
@@ -39,6 +39,8 @@ export interface MeetingRow {
   /** What the call was about, written from the transcript. */
   summary: string | null;
   summaryDoc: SummaryDoc | null;
+  /** Why there's no write-up, when the sync worked out why. */
+  transcriptNote: string | null;
   commitments: CommitmentRow[];
 }
 
@@ -266,22 +268,15 @@ export function MeetingCard({
         </div>
       ) : null}
 
-      {meeting.summary ? (
-        <details className="mt-3 rounded-lg border border-ink-200 bg-ink-50/60 p-3">
-          <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-ink-600">
-            What the call was about
-          </summary>
-          <div className="mt-2">
-            {meeting.summaryDoc ? (
-              <CallSummary doc={meeting.summaryDoc} text={meeting.summary} />
-            ) : (
-              <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink-700">
-                {meeting.summary}
-              </p>
-            )}
-          </div>
-        </details>
-      ) : null}
+      {hideHeader ? null : (
+        <SummaryPeek
+          id={meeting.id}
+          title={meeting.title}
+          doc={meeting.summaryDoc}
+          text={meeting.summary}
+          note={meeting.transcriptNote}
+        />
+      )}
 
       <Commitments
         items={meeting.commitments}

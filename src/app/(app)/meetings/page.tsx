@@ -60,6 +60,7 @@ export default async function MeetingsPage({
         recordingUrl: true,
         summary: true,
         summaryJson: true,
+        transcriptNote: true,
         user: { select: { name: true } },
         commitments: {
           where: { status: "PENDING" },
@@ -148,11 +149,15 @@ export default async function MeetingsPage({
         recordingUrl: m.recordingUrl,
         summary: m.summary,
         summaryDoc: asSummaryDoc(m.summaryJson),
+        transcriptNote: m.transcriptNote,
         commitments: m.commitments,
       };
     });
 
   const upcoming = pending.length - rows.length;
+  // The one number that answers "is the Claude summarising working at all",
+  // without opening seventy-five meetings to find out.
+  const written = rows.filter((r) => r.summary).length;
 
   if (!googleConfigured()) {
     return (
@@ -176,7 +181,7 @@ export default async function MeetingsPage({
         subtitle={
           rows.length === 0
             ? "Your calendar, waiting to become time entries."
-            : `${rows.length} meeting${rows.length === 1 ? "" : "s"} to deal with.`
+            : `${rows.length} meeting${rows.length === 1 ? "" : "s"} to deal with · ${written} with a write-up.`
         }
         actions={<SyncButton admin={admin} zoom={zoomConfigured()} />}
       />
