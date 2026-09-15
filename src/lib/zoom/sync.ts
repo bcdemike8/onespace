@@ -142,14 +142,29 @@ async function loadCandidates(): Promise<MatchCandidate[]> {
  * night.
  */
 const BUDGET = {
-  // A button somebody is watching. Two minutes is already a long time to sit
-  // on a click; past that the request is likelier to be cut off by something
-  // in between than to finish.
-  interactive: { totalMs: 100_000, callMs: 85_000 },
+  // A button somebody is watching.
+  //
+  // Was 100 seconds, with a single call allowed 85 of them. That is longer
+  // than several things between the browser and this process are willing to
+  // wait, and when one of them gives up first the reply never arrives - the
+  // page says "an unexpected response was received from the server", which
+  // reads as a crash and is really a clock. Under a minute, so the answer
+  // comes back whatever else is in the way. The heavy calls are the nightly
+  // job's work, and it has seven times as long.
+  interactive: { totalMs: 55_000, callMs: 45_000 },
   // Nobody is watching, but every hop still has an opinion about how long it
   // will wait, and the cron loops anyway.
   background: { totalMs: 420_000, callMs: 200_000 },
 } as const;
+
+/**
+ * The least time worth starting a call's read in.
+ *
+ * Below this the download alone can use the remainder, so the model never
+ * runs and the work is thrown away. Better to leave the call for the next
+ * run, which starts with a full budget.
+ */
+const MIN_READ_MS = 20_000;
 
 export async function syncZoom(options?: {
   userId?: string;
@@ -401,7 +416,10 @@ export async function syncZoom(options?: {
           },
         });
         outcome.tooOld += 1;
-      } else if (unread && Date.now() >= deadline) {
+      } else if (unread && deadline - Date.now() < MIN_READ_MS) {
+        // Not just "is there time left" but "is there enough". Starting a
+        // read with eight seconds to go spends the download and gets nothing
+        // for it, and the call is left exactly as it was - the worst of both.
         outcome.transcriptsLeft += 1;
       } else if (unread) {
         if (readButEmpty) {
