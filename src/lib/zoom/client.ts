@@ -369,3 +369,21 @@ export async function getMeetingSummary(uuid: string): Promise<ZoomSummary | nul
     throw e;
   }
 }
+
+/**
+ * One person's recording settings, as Zoom holds them.
+ *
+ * Returned whole rather than picked apart. The names of these flags have
+ * changed across Zoom's API versions and plans, and the point of asking is
+ * to find out what is actually set — reading two fields I remember the names
+ * of would reproduce exactly the mistake this is meant to catch.
+ */
+export async function recordingSettings(
+  zoomUserId: string,
+): Promise<Record<string, unknown>> {
+  const data = await zoomRequest<{ recording?: Record<string, unknown> }>(
+    `/users/${encodeURIComponent(zoomUserId)}/settings`,
+    { option: "recording" },
+  );
+  return data.recording ?? {};
+}

@@ -362,3 +362,72 @@ export async function readCallAction(
     return { error: e instanceof Error ? e.message : "Couldn't read that call." };
   }
 }
+
+/**
+ * Every call in the window, and what Zoom says about each.
+ *
+ * The per-call diagnostic answers "what about this one". This answers "what
+ * is wrong with all of them", which is the actual complaint — and it starts
+ * with the account's recording settings, because if the cloud recording or
+ * the transcript flag is off, nothing downstream can work and every fix
+ * aimed further down is wasted.
+ */
+export async function sweepZoomAction(): Promise<{
+  error?: string;
+  report?: string;
+}> {
+  const user = await requireUser();
+  if (!isAdmin(user)) {
+    return { error: "Only an admin can sweep the whole account." };
+  }
+
+  const { zoomConfigured } = await import("@/lib/zoom/client");
+  if (!zoomConfigured()) {
+    return { error: "Zoom isn't connected on this service." };
+  }
+
+  try {
+    const { diagnoseZoom } = await import("@/lib/zoom/sweep");
+    const found = await diagnoseZoom();
+
+    const out: string[] = [];
+    out.push(`Zoom, last ${found.days} days.`);
+    if (found.note) out.push(found.note);
+    out.push("");
+
+    for (const person of found.people) {
+      out.push(`── ${person.email}`);
+      if (person.settings.length) {
+        out.push("   Recording settings:");
+        for (const line of person.settings) out.push(`     ${line}`);
+      }
+      if (person.note) out.push(`   ${person.note}`);
+      if (person.calls.length === 0) {
+        out.push("   No finished calls in the window.");
+      }
+      out.push("");
+
+      for (const call of person.calls) {
+        out.push(`   ${call.startedAt}  ${call.topic}`);
+        out.push(`     Zoom:      ${call.recording}`);
+        for (const f of call.files) out.push(`                ${f}`);
+        out.push(`     Transcript: ${call.transcript}`);
+        out.push(`     AI summary: ${call.aiSummary}`);
+        out.push(`     OneSpace:   ${call.onespace}`);
+        out.push("");
+      }
+    }
+
+    if (found.truncated) {
+      out.push(
+        "Stopped early — this covers the most recent calls only, so it stays inside one request.",
+      );
+    }
+
+    return { report: out.join("\n") };
+  } catch (e) {
+    return {
+      error: e instanceof Error ? e.message : "Couldn't ask Zoom.",
+    };
+  }
+}

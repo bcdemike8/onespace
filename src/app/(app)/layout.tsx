@@ -25,6 +25,7 @@ const ADMIN_NAV: NavItem[] = [
   { href: "/import", label: "Import", icon: "⇪" },
   { href: "/snowflake", label: "Snowflake", icon: "❄" },
   { href: "/outreach", label: "Outreach", icon: "◉" },
+  { href: "/zoom", label: "Zoom", icon: "◷" },
 ];
 
 export default async function AppLayout({
