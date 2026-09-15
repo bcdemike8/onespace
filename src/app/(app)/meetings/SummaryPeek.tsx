@@ -25,6 +25,7 @@ export function SummaryPeek({
   text,
   note,
   read,
+  hasZoom,
 }: {
   id: string;
   title: string;
@@ -34,6 +35,8 @@ export function SummaryPeek({
   note: string | null;
   /** Whether the transcript has been read at all. */
   read: boolean;
+  /** Whether this meeting was ever matched to a Zoom call. */
+  hasZoom: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [open, setOpen] = useState(false);
@@ -55,9 +58,15 @@ export function SummaryPeek({
   // is a button rather than another sync, which skips anything already read.
   const why =
     note ??
-    (read
-      ? "This call was read before Claude was connected, so nothing was written up from it. A plain sync won't revisit it - use Read this call now on the call itself, or Re-read transcripts at the top of this page to redo them all."
-      : "Nothing has been read from this call yet. If it was cloud recorded, run Sync Zoom - the write-up comes from the transcript.");
+    (!hasZoom
+      ? // The commonest reason, and the one the old wording hid: there is no
+        // Zoom call behind this meeting at all. Telling somebody to run Sync
+        // Zoom for it sends them round a loop that cannot end - the sync has
+        // nothing to find.
+        "This meeting was never matched to a Zoom call, so there's no transcript to read. Either it wasn't recorded to the cloud, or it was hosted on somebody else's Zoom account."
+      : read
+        ? "This call was read before Claude was connected, so nothing was written up from it. Open the call and use Read this call now."
+        : "Waiting to be read. The nightly job writes up everything from the last seven days; Sync Zoom does a couple at a time if you'd rather not wait.");
 
   const preview = (has ? doc?.overview || text || "" : why)
     .replace(/\s+/g, " ")

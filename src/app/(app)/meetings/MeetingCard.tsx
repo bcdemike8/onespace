@@ -43,6 +43,8 @@ export interface MeetingRow {
   transcriptNote: string | null;
   /** Whether the transcript has been read at all. */
   transcriptRead: boolean;
+  /** Whether this meeting was ever matched to a Zoom call. */
+  hasZoom: boolean;
   commitments: CommitmentRow[];
 }
 
@@ -278,6 +280,7 @@ export function MeetingCard({
           text={meeting.summary}
           note={meeting.transcriptNote}
           read={meeting.transcriptRead}
+          hasZoom={meeting.hasZoom}
         />
       )}
 

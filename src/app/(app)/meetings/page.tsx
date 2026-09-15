@@ -63,6 +63,7 @@ export default async function MeetingsPage({
         summaryJson: true,
         transcriptNote: true,
         transcriptReadAt: true,
+        zoomUuid: true,
         user: { select: { name: true } },
         commitments: {
           where: { status: "PENDING" },
@@ -153,6 +154,7 @@ export default async function MeetingsPage({
         summaryDoc: asSummaryDoc(m.summaryJson),
         transcriptNote: m.transcriptNote,
         transcriptRead: m.transcriptReadAt !== null,
+        hasZoom: m.zoomUuid !== null,
         commitments: m.commitments,
       };
     });

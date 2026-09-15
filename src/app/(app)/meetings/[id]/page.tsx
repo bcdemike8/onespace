@@ -162,6 +162,7 @@ export default async function MeetingPage({
     summaryDoc: null,
     transcriptNote: null,
     transcriptRead: meeting.transcriptReadAt !== null,
+    hasZoom: meeting.zoomUuid !== null,
     commitments: pending.map((c) => ({
       id: c.id,
       text: c.text,
