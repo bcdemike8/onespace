@@ -9,12 +9,8 @@ import {
 } from "@/lib/slack/digest";
 
 /** Where links in Slack messages point. Railway sets the domain for us. */
-export function appUrl(): string {
-  const explicit = process.env.APP_URL?.replace(/\/+$/, "");
-  if (explicit) return explicit;
-  const railway = process.env.RAILWAY_PUBLIC_DOMAIN;
-  return railway ? `https://${railway}` : "http://localhost:3000";
-}
+import { appUrl } from "@/lib/app-url";
+export { appUrl };
 
 export interface DigestOutcome {
   sent: number;
