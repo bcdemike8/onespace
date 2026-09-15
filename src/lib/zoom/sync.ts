@@ -260,6 +260,15 @@ export async function syncZoom(options?: {
     }
     outcome.people += 1;
 
+    // Newest first. Zoom hands these back oldest first, and the budget is
+    // finite - so a sync with two hundred calls behind it spent its whole
+    // allowance walking August and never reached the call from yesterday,
+    // which is the only one anybody was waiting for. The old ones are cheap
+    // to pass over; do them last.
+    meetings.sort(
+      (a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime(),
+    );
+
     for (const zm of meetings) {
       outcome.seen += 1;
       const startsAt = new Date(zm.start_time);
@@ -365,7 +374,20 @@ export async function syncZoom(options?: {
       // open for twenty minutes. What's left is picked up by the next sync
       // and by the nightly cron, and the result says how many remain so
       // nobody thinks it has finished when it hasn't.
-      if (!row.transcriptReadAt && startsAt < tooOldBefore) {
+      // A call read by a version of this code that stored neither a write-up
+      // nor a reason. Every path today leaves one or the other, so both
+      // missing means the read happened before they existed - and the sync
+      // never looks at a read call again, which is why fifteen calls from
+      // this week sat there while opening any one of them by hand worked
+      // first time. Treated as unread, once: the next read leaves a summary
+      // or a reason, so it cannot come round again.
+      const readButEmpty =
+        row.transcriptReadAt !== null &&
+        row.summary === null &&
+        row.transcriptNote === null;
+      const unread = row.transcriptReadAt === null || readButEmpty;
+
+      if (unread && startsAt < tooOldBefore) {
         // Checked before anything is asked of Zoom, so passing over a
         // backlog costs nothing. Marked read so it stops being offered as
         // work the sync still owes - it doesn't, and saying it does would
@@ -378,9 +400,18 @@ export async function syncZoom(options?: {
           },
         });
         outcome.tooOld += 1;
-      } else if (!row.transcriptReadAt && Date.now() >= deadline) {
+      } else if (unread && Date.now() >= deadline) {
         outcome.transcriptsLeft += 1;
-      } else if (!row.transcriptReadAt) {
+      } else if (unread) {
+        if (readButEmpty) {
+          // Whatever the earlier read offered came from the weaker rules and
+          // is about to be offered again by a better reader. Clear the ones
+          // nobody has ruled on, exactly as the per-call button does, so the
+          // queue doesn't end up holding both readings of the same call.
+          await db.commitment.deleteMany({
+            where: { meetingId: row.id, status: "PENDING" },
+          });
+        }
         const found = await readCommitments(
           zm.uuid,
           isOurs,
