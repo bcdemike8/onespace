@@ -13,6 +13,7 @@ import {
   type ZoomPastMeeting,
 } from "@/lib/zoom/client";
 import { pickTranscript, type TranscriptPick } from "@/lib/zoom/files";
+import { readFromZoomSummary } from "@/lib/zoom/zoom-summary";
 import {
   extractCommitments,
   fromNextSteps,
@@ -1021,12 +1022,22 @@ async function readCommitments(
   // ------------------------------------- no transcript: Zoom's own summary
   try {
     const summary = await getMeetingSummary(uuid);
-    if (summary?.next_steps && summary.next_steps.length > 0) {
+    const zoomWrite = readFromZoomSummary(summary);
+
+    if (zoomWrite) {
       return {
         recordingUrl,
-        commitments: fromNextSteps(summary.next_steps),
+        commitments: summary?.next_steps?.length
+          ? fromNextSteps(summary.next_steps)
+          : [],
         fromSummary: true,
-        note: transcript.reason,
+        // Zoom's summary is a write-up. It used to be mined for next steps
+        // and thrown away, which left "no write-up" on a call Zoom had
+        // already written up - the single most confusing thing in this
+        // pipeline, because Zoom's own screen showed a transcript.
+        ai: { read: zoomWrite, model: zoomWrite.model, items: [] },
+        note:
+          "Zoom had no audio transcript for this call, so this write-up is Zoom's own AI Companion summary rather than a full read of the words.",
         retry: false,
         didRead: true,
       };
