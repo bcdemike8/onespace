@@ -4,26 +4,37 @@ import { useActionState } from "react";
 import {
   discoverOutreachAction,
   huntTranscriptAction,
+  reconcileKaiaAction,
   type OutreachState,
 } from "@/app/actions/outreach";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ErrorNote } from "@/components/ui";
 
-export function DiscoverOutreach({ hunt = false }: { hunt?: boolean }) {
+type Job = "discover" | "hunt" | "reconcile";
+
+const LABEL: Record<Job, { idle: string; busy: string }> = {
+  discover: { idle: "Ask Outreach what it has", busy: "Asking Outreach…" },
+  hunt: { idle: "Look for the transcript", busy: "Looking…" },
+  reconcile: { idle: "Check every recorded call", busy: "Comparing…" },
+};
+
+const RUN: Record<Job, () => Promise<OutreachState>> = {
+  discover: discoverOutreachAction,
+  hunt: huntTranscriptAction,
+  reconcile: reconcileKaiaAction,
+};
+
+export function DiscoverOutreach({ job = "discover" }: { job?: Job }) {
   const [state, action] = useActionState(
-    async (_prev: OutreachState) =>
-      hunt ? huntTranscriptAction() : discoverOutreachAction(),
+    async (_prev: OutreachState) => RUN[job](),
     {} as OutreachState,
   );
 
   return (
     <div>
       <form action={action}>
-        <SubmitButton
-          pendingLabel={hunt ? "Looking…" : "Asking Outreach…"}
-          className="btn-primary"
-        >
-          {hunt ? "Look for the transcript" : "Ask Outreach what it has"}
+        <SubmitButton pendingLabel={LABEL[job].busy} className="btn-primary">
+          {LABEL[job].idle}
         </SubmitButton>
       </form>
 

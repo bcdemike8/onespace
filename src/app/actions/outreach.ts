@@ -105,3 +105,98 @@ export async function huntTranscriptAction(): Promise<OutreachState> {
     return { error: e instanceof Error ? e.message : "Couldn't reach Outreach." };
   }
 }
+
+/**
+ * What Kaia recorded, against what OneSpace wrote up.
+ *
+ * The question that has gone unanswered all week is which calls are actually
+ * broken. "No write-up" has been the answer for a call nobody recorded, a
+ * call Zoom refused, and a call that simply hasn't been read yet — and only
+ * one of those is a fault. Kaia knows independently which calls had a bot in
+ * the room, so this lines the two lists up and gives a reason per call.
+ */
+export async function reconcileKaiaAction(): Promise<OutreachState> {
+  await requireAdmin();
+
+  const { outreachConfigured, installId } = await import("@/lib/outreach/auth");
+  if (!outreachConfigured() || !(await installId())) {
+    return { error: "Outreach isn't connected yet." };
+  }
+
+  try {
+    const { recentSince, recentDays } = await import("@/lib/recency");
+    const { recentRecordings } = await import("@/lib/outreach/kaia");
+    const { reconcile, tally } = await import("@/lib/outreach/reconcile");
+    const { db } = await import("@/lib/db");
+
+    const since = await recentSince();
+    const days = await recentDays();
+
+    const [recordings, meetings] = await Promise.all([
+      recentRecordings(since),
+      db.meeting.findMany({
+        where: { startsAt: { gte: new Date(since.getTime() - 86_400_000) } },
+        select: {
+          id: true,
+          title: true,
+          startsAt: true,
+          googleId: true,
+          zoomUuid: true,
+          summary: true,
+          transcriptNote: true,
+          transcriptReadAt: true,
+          user: { select: { name: true } },
+        },
+      }),
+    ]);
+
+    const lines = reconcile(
+      recordings,
+      meetings.map((m) => ({ ...m, ownerName: m.user.name })),
+    );
+    const counts = tally(lines);
+
+    const out: string[] = [];
+    out.push(
+      `Kaia recorded ${recordings.length} call${
+        recordings.length === 1 ? "" : "s"
+      } in the last ${days} days.`,
+    );
+    out.push("");
+    out.push(`  ${counts["written-up"]} have a write-up`);
+    out.push(`  ${counts["never-read"]} haven't been read yet`);
+    out.push(`  ${counts["read-failed"]} were read and refused`);
+    out.push(`  ${counts["read-empty"]} were read and came back empty`);
+    out.push(`  ${counts["no-meeting"]} aren't in OneSpace at all`);
+    out.push("");
+
+    // Worst first: a person looking at this wants the broken ones, and the
+    // ones that worked are the least interesting rows on the page.
+    const order = [
+      "never-read",
+      "read-failed",
+      "no-meeting",
+      "read-empty",
+      "written-up",
+    ] as const;
+
+    for (const verdict of order) {
+      const group = lines.filter((l) => l.verdict === verdict);
+      if (group.length === 0) continue;
+      out.push(`${verdict} (${group.length}):`);
+      for (const line of group) {
+        out.push(
+          `  ${line.when.toISOString().slice(0, 16).replace("T", " ")}  ${line.title}${
+            line.host ? ` · ${line.host}` : ""
+          }`,
+        );
+        out.push(`      ${line.detail}`);
+      }
+      out.push("");
+    }
+
+    return { ok: true, report: out.join("\n") };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Couldn't reach Outreach." };
+  }
+}

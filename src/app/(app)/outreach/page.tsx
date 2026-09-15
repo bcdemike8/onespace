@@ -85,7 +85,24 @@ export default async function OutreachPage() {
         </code>
       </div>
 
+      <div className="card mb-4 p-4">
+        <h2 className="mb-1 text-sm font-medium text-ink-900">
+          Every recorded call, and why it has no write-up
+        </h2>
+        <p className="mb-4 text-sm leading-relaxed text-ink-700">
+          Kaia knows which calls had a bot in the room, independently of Zoom.
+          This lines that list up against what OneSpace holds and gives a
+          reason per call — so &ldquo;no write-up&rdquo; stops covering a call
+          nobody recorded, a call Zoom refused, and a call nothing has read
+          yet, which need three different fixes.
+        </p>
+        <DiscoverOutreach job="reconcile" />
+      </div>
+
       <div className="card p-4">
+        <h2 className="mb-1 text-sm font-medium text-ink-900">
+          What the API exposes
+        </h2>
         <p className="mb-4 text-sm leading-relaxed text-ink-700">
           This reads two records from each of a handful of endpoints and prints
           what came back — the field names, their types, and the first hundred
@@ -106,14 +123,15 @@ export default async function OutreachPage() {
           The last is a real answer too, and cheaper to have now than after a
           sync has been written on the assumption it isn&apos;t.
         </p>
-        <DiscoverOutreach hunt />
+        <DiscoverOutreach job="hunt" />
       </div>
 
       <p className="mt-4 text-xs leading-relaxed text-ink-500">
-        If the transcript turns out not to be in the API, the remaining route
-        is Kaia&apos;s daily export, which drops recordings and transcripts
-        into storage you own. That needs somewhere to put them, which is a
-        decision rather than a detail.
+        Answered, and the answer was no: a Kaia recording has exactly three
+        relationships — account, opportunity and owner — and there is no
+        transcript resource anywhere in the REST API. The words stay in Zoom,
+        which is where OneSpace reads them from. What Kaia is good for is
+        knowing which calls were actually recorded, which is the panel below.
       </p>
     </div>
   );
