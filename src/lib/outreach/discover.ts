@@ -1,7 +1,7 @@
 import "server-only";
 import { OutreachError } from "@/lib/outreach/errors";
 import { outreachGet, type JsonApiList } from "@/lib/outreach/client";
-import { describeRecord, type Field } from "@/lib/outreach/shape";
+import { describeRecord, redactTokens, type Field } from "@/lib/outreach/shape";
 
 /**
  * Ask Outreach what a Kaia recording actually is, before anything is built
@@ -77,7 +77,7 @@ async function probe(path: string): Promise<Probe> {
         // there to keep client conversation out of a report; an error body
         // from an auth endpoint is install metadata, and cutting it off is
         // how a diagnostic turns into another round trip.
-        note: [e.message, e.body ? `Outreach said: ${e.body}` : null]
+        note: [e.message, e.body ? `Outreach said: ${redactTokens(e.body)}` : null]
           .filter(Boolean)
           .join(" "),
       };

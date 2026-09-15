@@ -1,7 +1,6 @@
 import "server-only";
-import { OutreachError, accessToken, forgetToken } from "@/lib/outreach/auth";
+import { OutreachError, connection, forgetToken } from "@/lib/outreach/auth";
 
-const API = "https://api.outreach.io/api/v2";
 const TIMEOUT_MS = 45_000;
 
 /**
@@ -20,11 +19,14 @@ export async function outreachGet<T = unknown>(
   const query = new URLSearchParams(
     Object.entries(params).map(([k, v]) => [k, String(v)]),
   ).toString();
-  const url = `${API}${path}${query ? `?${query}` : ""}`;
 
   const attempt = async (): Promise<Response> => {
-    const token = await accessToken();
-    const res = await fetch(url, {
+    // The host comes with the token: Outreach shards organisations, and this
+    // one answers at app1f rather than the generic api.outreach.io.
+    const { token, apiBase } = await connection();
+    const url = `${apiBase}${path}${query ? `?${query}` : ""}`;
+
+    return fetch(url, {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/vnd.api+json",
@@ -35,7 +37,6 @@ export async function outreachGet<T = unknown>(
         `Couldn't reach Outreach.${e instanceof Error ? ` ${e.message}` : ""}`,
       );
     });
-    return res;
   };
 
   let res = await attempt();

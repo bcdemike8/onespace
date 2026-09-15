@@ -79,14 +79,18 @@ export function findAccessToken(
 ): { token: string; via: string } | null {
   const places: Array<[string, unknown]> = [];
 
-  if (json && typeof json === "object") {
-    places.push(["", json]);
-    const data = (json as { data?: unknown }).data;
-    if (data && typeof data === "object") {
-      places.push(["data.", data]);
-      const attrs = (data as { attributes?: unknown }).attributes;
-      if (attrs && typeof attrs === "object") places.push(["data.attributes.", attrs]);
+  const branch = (prefix: string, node: unknown) => {
+    if (!node || typeof node !== "object") return;
+    places.push([prefix, node]);
+    for (const child of ["attributes", "meta"] as const) {
+      const sub = (node as Record<string, unknown>)[child];
+      if (sub && typeof sub === "object") places.push([`${prefix}${child}.`, sub]);
     }
+  };
+
+  if (json && typeof json === "object") {
+    branch("", json);
+    branch("data.", (json as { data?: unknown }).data);
   }
 
   for (const [prefix, object] of places) {
@@ -117,4 +121,35 @@ export function keysSeen(json: unknown): string[] {
     }
   }
   return out;
+}
+
+/**
+ * Blank out anything shaped like a JWT before a diagnostic is shown.
+ *
+ * The report exists to be pasted to somebody who can read it, and the reply
+ * that revealed where the token lives contained a live one. It expires in an
+ * hour, but an hour is enough, and a diagnostic should never be the reason a
+ * credential leaves the building.
+ */
+export function redactTokens(text: string): string {
+  return text.replace(
+    /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g,
+    "[token redacted]",
+  );
+}
+
+/**
+ * Where this organisation's API actually lives.
+ *
+ * Outreach shards orgs across hosts — the token calls it a "bento" — and
+ * hands the right base URL back with every token, under the org
+ * relationship. Hardcoding api.outreach.io works in documentation and fails
+ * against a real org, which is the whole argument for reading what a service
+ * tells you rather than what you remember about it.
+ */
+export function apiBaseFrom(json: unknown): string | null {
+  const link = (json as {
+    data?: { relationships?: { org?: { links?: { api?: unknown } } } };
+  })?.data?.relationships?.org?.links?.api;
+  return typeof link === "string" && link.startsWith("https://") ? link : null;
 }

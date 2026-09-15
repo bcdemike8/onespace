@@ -2,7 +2,12 @@ import "server-only";
 import { db } from "@/lib/db";
 import { OutreachError } from "@/lib/outreach/errors";
 import { signAppToken } from "@/lib/outreach/jwt";
-import { findAccessToken, keysSeen } from "@/lib/outreach/shape";
+import {
+  apiBaseFrom,
+  findAccessToken,
+  keysSeen,
+  redactTokens,
+} from "@/lib/outreach/shape";
 
 /**
  * Outreach, over their server-to-server protocol.
@@ -169,11 +174,29 @@ export async function installId(): Promise<string | null> {
   return row?.value?.trim() || null;
 }
 
-let cached: { token: string; expiresAt: number } | null = null;
+/**
+ * Where this organisation's API actually lives.
+ *
+ * Outreach shards orgs across hosts - the token calls it a "bento", and this
+ * one is app1f - and hands the right base URL back with every token, under
+ * the org relationship. Hardcoding api.outreach.io would have worked in
+ * documentation and failed here, which is the whole argument for reading
+ * what a service tells you instead of what you remember about it.
+ */
+const FALLBACK_API = "https://api.outreach.io/api/v2";
 
-/** The token the API itself accepts. Good for an hour; cached until it isn't. */
-export async function accessToken(): Promise<string> {
-  if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token;
+let cached: { token: string; apiBase: string; expiresAt: number } | null = null;
+
+/**
+ * The token the API accepts, and the host to spend it at. Good for an hour.
+ *
+ * Both come from the same reply and neither is useful alone, so they are
+ * fetched and cached together rather than one being looked up twice.
+ */
+export async function connection(): Promise<{ token: string; apiBase: string }> {
+  if (cached && cached.expiresAt > Date.now() + 60_000) {
+    return { token: cached.token, apiBase: cached.apiBase };
+  }
 
   const install = await installId();
   if (!install) {
@@ -185,7 +208,10 @@ export async function accessToken(): Promise<string> {
   const json = (await postAsApp(
     `/api/app/installs/${encodeURIComponent(install)}/actions/accessToken`,
   )) as {
-    data?: { attributes?: Record<string, unknown> };
+    data?: {
+      attributes?: Record<string, unknown>;
+      relationships?: { org?: { links?: { api?: string } } };
+    };
     expires_in?: number;
   };
 
@@ -201,7 +227,7 @@ export async function accessToken(): Promise<string> {
         keysSeen(json).join(", ") || "nothing"
       }.`,
       200,
-      JSON.stringify(json).slice(0, 4000),
+      redactTokens(JSON.stringify(json)).slice(0, 4000),
     );
   }
 
@@ -214,9 +240,10 @@ export async function accessToken(): Promise<string> {
 
   cached = {
     token: found.token,
+    apiBase: apiBaseFrom(json) ?? FALLBACK_API,
     expiresAt: Number.isFinite(expiresAt) ? expiresAt : Date.now() + 3_600_000,
   };
-  return found.token;
+  return { token: cached.token, apiBase: cached.apiBase };
 }
 
 /** Drop the cached token. Used when a call comes back 401 mid-hour. */
