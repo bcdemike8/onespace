@@ -1,6 +1,10 @@
 import "server-only";
 import { OutreachError } from "@/lib/outreach/errors";
-import { outreachGet, type JsonApiList } from "@/lib/outreach/client";
+import {
+  outreachGet,
+  outreachProbe,
+  type JsonApiList,
+} from "@/lib/outreach/client";
 import { describeRecord, redactTokens, type Field } from "@/lib/outreach/shape";
 
 /**
@@ -98,5 +102,84 @@ export async function discoverOutreach(): Promise<Probe[]> {
   for (const path of CANDIDATES) {
     out.push(await probe(path));
   }
+  return out;
+}
+
+/**
+ * Hunt for the transcript.
+ *
+ * The recording list has no field holding what was said — only metadata and
+ * a link to a player page. That leaves three possibilities, and guessing
+ * between them has already cost this project more than asking would have:
+ * the words hang off the recording as a relationship, they live at a
+ * resource of their own, or the REST API simply doesn't carry them and the
+ * daily export to storage is the only route.
+ *
+ * So this asks in the order that settles it fastest. A deliberately invalid
+ * `include` comes first, because a JSON:API service answering one usually
+ * lists the includes it does accept — which is the published relationship
+ * list nobody published.
+ */
+export type Attempt = { what: string; status: number; body: string };
+
+export async function huntTranscript(): Promise<Attempt[]> {
+  const out: Attempt[] = [];
+  const say = (what: string, r: { status: number; body: string }) =>
+    out.push({ what, status: r.status, body: redactTokens(r.body).slice(0, 1200) });
+
+  // The newest recording, for its id. Everything below is asked about a real
+  // record rather than a placeholder.
+  const listed = await outreachProbe("/kaiaRecordings", {
+    "page[size]": 1,
+    sort: "-createdAt",
+  });
+  say("newest recording", listed);
+
+  let id: string | null = null;
+  try {
+    const parsed = JSON.parse(listed.body) as JsonApiList;
+    const first = parsed.data?.[0]?.id;
+    if (first !== undefined && first !== null) id = String(first);
+  } catch {
+    // Leave id null; the attempts below that need one are skipped.
+  }
+
+  // A wrong include, to make Outreach name the right ones.
+  say(
+    "invalid include (expect a list of valid ones)",
+    await outreachProbe("/kaiaRecordings", {
+      "page[size]": 1,
+      include: "thisIsNotARelationship",
+    }),
+  );
+
+  for (const relationship of ["transcript", "transcripts", "utterances"]) {
+    say(
+      `include=${relationship}`,
+      await outreachProbe("/kaiaRecordings", {
+        "page[size]": 1,
+        include: relationship,
+      }),
+    );
+  }
+
+  if (id) {
+    say(`single recording ${id}`, await outreachProbe(`/kaiaRecordings/${id}`));
+    say(
+      `sub-resource /kaiaRecordings/${id}/transcript`,
+      await outreachProbe(`/kaiaRecordings/${id}/transcript`),
+    );
+  }
+
+  for (const resource of [
+    "/kaiaRecordingTranscripts",
+    "/kaiaTranscripts",
+    "/transcripts",
+    "/callTranscripts",
+    "/kaiaUtterances",
+  ]) {
+    say(`resource ${resource}`, await outreachProbe(resource, { "page[size]": 1 }));
+  }
+
   return out;
 }

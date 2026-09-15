@@ -73,3 +73,35 @@ export async function discoverOutreachAction(): Promise<OutreachState> {
     };
   }
 }
+
+/**
+ * Go looking for the transcript, and print every answer verbatim.
+ *
+ * The recording list settled that the words aren't on the record itself.
+ * This settles where they are, or that they aren't in the REST API at all —
+ * which is a real answer too, and a cheaper one to get now than after a
+ * sync has been written on the assumption that they are.
+ */
+export async function huntTranscriptAction(): Promise<OutreachState> {
+  await requireAdmin();
+
+  const { outreachConfigured, installId } = await import("@/lib/outreach/auth");
+  if (!outreachConfigured() || !(await installId())) {
+    return { error: "Outreach isn't connected yet." };
+  }
+
+  try {
+    const { huntTranscript } = await import("@/lib/outreach/discover");
+    const attempts = await huntTranscript();
+
+    const lines: string[] = [];
+    for (const a of attempts) {
+      lines.push(`${a.status === 200 ? "✓" : "✗"} ${a.what}  HTTP ${a.status}`);
+      lines.push(`    ${a.body}`);
+      lines.push("");
+    }
+    return { ok: true, report: lines.join("\n") };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Couldn't reach Outreach." };
+  }
+}

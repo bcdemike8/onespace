@@ -94,13 +94,26 @@ export default async function OutreachPage() {
         <DiscoverOutreach />
       </div>
 
+      <div className="card mt-4 p-4">
+        <h2 className="mb-1 text-sm font-medium text-ink-900">
+          Where is the transcript?
+        </h2>
+        <p className="mb-4 text-sm leading-relaxed text-ink-700">
+          A Kaia recording carries the call&apos;s shape — who was on it, how
+          long it ran, a link to the player — but not a word of what was said.
+          This asks Outreach where the words are: as a relationship on the
+          recording, as a resource of their own, or not in the REST API at all.
+          The last is a real answer too, and cheaper to have now than after a
+          sync has been written on the assumption it isn&apos;t.
+        </p>
+        <DiscoverOutreach hunt />
+      </div>
+
       <p className="mt-4 text-xs leading-relaxed text-ink-500">
-        What matters in the answer: whether a kaiaRecording has a field holding
-        the transcript itself. If it does, the sync gets written against these
-        exact names and Kaia replaces Zoom as the source of write-ups. If it
-        only carries a link to a recording, summarising means fetching media
-        and transcribing it, which is a different and much larger job — worth
-        knowing before it&apos;s started rather than after.
+        If the transcript turns out not to be in the API, the remaining route
+        is Kaia&apos;s daily export, which drops recordings and transcripts
+        into storage you own. That needs somewhere to put them, which is a
+        decision rather than a detail.
       </p>
     </div>
   );

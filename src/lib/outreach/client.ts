@@ -98,3 +98,26 @@ export type JsonApiList = {
   meta?: Record<string, unknown>;
   links?: Record<string, unknown>;
 };
+
+/**
+ * A read that reports what happened instead of throwing.
+ *
+ * For probing: when the question is "does this endpoint exist, and what does
+ * it say", an exception is the wrong shape. JSON:API services tend to answer
+ * a bad `include` by naming the valid ones, which makes a deliberate mistake
+ * the cheapest way to get a relationship list nobody published.
+ */
+export async function outreachProbe(
+  path: string,
+  params: Record<string, string | number> = {},
+): Promise<{ status: number; body: string }> {
+  try {
+    const json = await outreachGet<unknown>(path, params);
+    return { status: 200, body: JSON.stringify(json) };
+  } catch (e) {
+    if (e instanceof OutreachError) {
+      return { status: e.status, body: e.body ?? e.message };
+    }
+    return { status: 0, body: e instanceof Error ? e.message : "Unknown failure." };
+  }
+}
