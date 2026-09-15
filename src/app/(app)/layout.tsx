@@ -14,6 +14,7 @@ const BASE_NAV: NavItem[] = [
   { href: "/timesheet", label: "Timesheet", icon: "▦" },
   { href: "/inbox", label: "Inbox", icon: "✉" },
   { href: "/meetings", label: "Meetings", icon: "◷" },
+  { href: "/crm", label: "Accounts", icon: "◈" },
   { href: "/projects", label: "Projects", icon: "▤" },
   { href: "/reports", label: "Reports", icon: "◔" },
 ];
@@ -23,6 +24,7 @@ const ADMIN_NAV: NavItem[] = [
   { href: "/clients", label: "Clients", icon: "◈" },
   { href: "/people", label: "People", icon: "◍" },
   { href: "/import", label: "Import", icon: "⇪" },
+  { href: "/crm/import", label: "Salesforce", icon: "☁" },
   { href: "/snowflake", label: "Snowflake", icon: "❄" },
   { href: "/outreach", label: "Outreach", icon: "◉" },
   { href: "/zoom", label: "Zoom", icon: "◷" },

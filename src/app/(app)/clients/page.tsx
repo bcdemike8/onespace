@@ -23,6 +23,12 @@ export default async function ClientsPage() {
 
   const [clients, partners, ignored] = await Promise.all([
     db.client.findMany({
+      // Delivery clients only. After the Salesforce import this table holds
+      // 1,037 companies, 618 of them cold prospects - and this page loads
+      // every one of them with its projects, domains and mail count. It is a
+      // settings screen for the clients work is done for; the rest of the
+      // CRM lives at /crm, which pages and searches.
+      where: { accountType: { notIn: ["PROSPECT", "COMPETITOR"] } },
       include: {
         projects: { select: { id: true, name: true, status: true } },
         domains: { select: { id: true, domain: true }, orderBy: { domain: "asc" } },

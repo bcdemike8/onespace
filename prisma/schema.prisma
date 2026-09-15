@@ -77,6 +77,48 @@ enum MailStatus {
 /// Where a meeting came from. A Zoom call that was never on anyone's
 /// calendar - an instant meeting, or a dial into a personal room - is real
 /// billable time that the calendar sync can never see.
+/**
+ * What a company is to RevOptics.
+ * Salesforce held this as an Account record type. The names are kept because
+ * they are what everyone already says, and because the import has to land
+ * 618 prospects and 365 customers in the right place without a translation
+ * table nobody can remember.
+ * COMPETITOR exists in the export's record types and on nothing at all - no
+ * account was ever filed under it. Kept so the import can't fail on a row
+ * that turns up later, not because it earns a place in the UI.
+ */
+enum AccountType {
+  PROSPECT
+  CURRENT_CUSTOMER
+  PREVIOUS_CUSTOMER
+  PARTNER
+  COMPETITOR
+}
+
+/// Whether the work came through a partner or straight from the client.
+enum DealRecordType {
+  DIRECT
+  PARTNER
+}
+
+/**
+ * Where a deal got to.
+ * Eight stages were defined; seven were ever used, and QUALIFICATION never
+ * once. It is kept because the stage list is the shape of the process rather
+ * than a summary of the past - dropping it would quietly remove a step from
+ * the process itself.
+ */
+enum DealStage {
+  QUALIFICATION
+  DISCOVERY
+  ASSIGNED
+  INTRODUCTION
+  PROPOSAL
+  CONTRACT
+  CLOSED_WON
+  CLOSED_LOST
+}
+
 enum MeetingSource {
   CALENDAR
   ZOOM
@@ -138,6 +180,14 @@ model User {
   meetings      Meeting[]
   mailThreads   MailThread[]
 
+  // The CRM. Salesforce spread ownership across five different fields and
+  // all five pointed at the same eight people.
+  ownedClients       Client[]  @relation("ClientOwner")
+  ownedContacts      Contact[] @relation("ContactOwner")
+  ownedDeals         Deal[]    @relation("DealOwner")
+  leadConsultantOn   Deal[]    @relation("DealLeadConsultant")
+  secondConsultantOn Deal[]    @relation("DealSecondaryConsultant")
+
   @@index([isActive])
 }
 
@@ -163,9 +213,283 @@ model Client {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
+  // ------------------------------------------------------------- the CRM
+  //
+  // A client and a Salesforce account are the same company, so they are one
+  // row. Two tables would mean Muck Rack existing twice and the two copies
+  // disagreeing inside a month - and it is the same company whether the
+  // relationship is a cold prospect or six years of invoices.
+  //
+  // Everything below is optional, because a client typed into OneSpace by
+  // hand has none of it and is not lesser for that.
+
+  /// Salesforce's 18-character id. What makes a re-import an update rather
+  /// than a duplicate, and what every relationship in the export resolves
+  /// against.
+  sfdcId String? @unique
+
+  /// CURRENT_CUSTOMER, not PROSPECT, because somebody typing a client into a
+  /// delivery tool by hand means a customer - and because it makes the column
+  /// backfill correctly for the clients that existed before the CRM did. The
+  /// import overwrites it with the real record type.
+  accountType AccountType @default(CURRENT_CUSTOMER)
+
+  /// The name on the contract, where it differs from the name people use.
+  legalName String?
+
+  website     String?
+  phone       String?
+  linkedinUrl String?
+  description String?
+
+  /// Free text, deliberately. The export holds 99 distinct values for what
+  /// was meant to be a picklist of 24 - so it is imported verbatim and
+  /// tidied by a person afterwards, rather than guessed at on the way in.
+  industry String?
+
+  employees     Int?
+  annualRevenue Decimal? @db.Decimal(14, 2)
+
+  /// From Salesforce's Shipping address, not Billing. Shipping is filled on
+  /// 46% of accounts and Billing on 24% - following the field names in the
+  /// mapping document would have left half the addresses behind.
+  street     String?
+  city       String?
+  state      String?
+  postalCode String?
+  country    String?
+
+  /// How they sell, and how big that team is.
+  teamSize   Int?
+  xdrSize    Int?
+  salesRoles String[] @default([])
+
+  /// What they already run. Sparse - 15% - but the 15% is useful.
+  technologyUsed String[] @default([])
+
+  /// Who owns the relationship.
+  ownerId String?
+  owner   User?   @relation("ClientOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  /// Which platform this account came through. The same Partner rows the
+  /// projects already use, rather than a second list of the same names.
+  partnerId String?
+  partner   Partner? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+
+  /// When Salesforce first knew about them. Distinct from createdAt, which
+  /// is when OneSpace did.
+  firstSeenAt DateTime?
+
   projects Project[]
   domains  ClientDomain[]
   mail     MailThread[]
+  contacts Contact[]
+  deals    Deal[]
+
+  @@index([accountType, name])
+}
+
+/**
+ * A person at a client.
+ * 7,485 of them across 745 accounts, which is the reason this is its own
+ * table rather than a field on the client. Most of what Salesforce held
+ * about them was empty: pronouns, referral source, thirteen Outreach
+ * sequence columns and forty other fields had no value on any row. What is
+ * here is what was actually filled in.
+ */
+model Contact {
+  id String @id @default(cuid())
+
+  sfdcId String? @unique
+
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  firstName String?
+  lastName  String
+  email     String?
+  title     String?
+
+  phone       String?
+  mobile      String?
+  linkedinUrl String?
+
+  city    String?
+  state   String?
+  country String?
+
+  /// 165 of them. The single most useful flag in the whole export: it stops
+  /// anyone emailing someone who left two years ago.
+  noLongerHere Boolean @default(false)
+
+  /// They asked not to be emailed. Kept because the obligation outlives the
+  /// system it was recorded in.
+  optedOutOfEmail Boolean @default(false)
+
+  notes      String?
+  leadSource String?
+
+  ownerId String?
+  owner   User?   @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  firstSeenAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  primaryFor Deal[] @relation("DealPrimaryContact")
+  billingFor Deal[] @relation("DealBillingContact")
+
+  @@index([clientId, lastName])
+  @@index([email])
+}
+
+/**
+ * A piece of business, won or lost.
+ * Called a Deal rather than an Opportunity because that is what people say,
+ * and because 98% of these are closed - this is a record of what happened
+ * far more than a forecast of what might.
+ * The forecast machinery Salesforce carried - probability weighting,
+ * forecast categories, stage gating by record type - is deliberately absent.
+ * Twenty of 1,269 deals are open. Building a forecast for twenty rows would
+ * be building the part of Salesforce that was least used.
+ */
+model Deal {
+  id String @id @default(cuid())
+
+  sfdcId String? @unique
+
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  name  String
+  stage DealStage      @default(QUALIFICATION)
+  type  DealRecordType @default(DIRECT)
+
+  /// What it was worth. Filled on 99% of deals, and absent from the mapping
+  /// document entirely - without it there is no revenue history, which is
+  /// the most valuable thing in the export.
+  amount    Decimal?  @db.Decimal(14, 2)
+  closeDate DateTime?
+
+  isWon    Boolean @default(false)
+  isClosed Boolean @default(false)
+
+  /// Salesforce kept platform and business type in one field - Outreach and
+  /// Salesloft alongside New Business and Existing Business. They answer
+  /// different questions, so they are two fields here.
+  partnerId    String?
+  partner      Partner? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  /// "New Business" or "Existing Business", where it was recorded.
+  businessType String?
+
+  leadSource   String?
+  paymentTerms String?
+  nextStep     String?
+  description  String?
+
+  lostReason       String?
+  lostReasonDetail String?
+
+  /// What was sold, in words, when the products didn't cover it.
+  customScopeDetail String?
+  futurePhaseNotes  String?
+  billingNotes      String?
+
+  projectStartDate      DateTime?
+  projectCompletionDate DateTime?
+
+  subcontract      Boolean @default(false)
+  partnerHold      Boolean @default(false)
+  performancePulse Boolean @default(false)
+
+  invoiceSentAt DateTime?
+  invoicePaidAt DateTime?
+  csatScore     Int?
+
+  ownerId String?
+  owner   User?   @relation("DealOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  leadConsultantId String?
+  leadConsultant   User?   @relation("DealLeadConsultant", fields: [leadConsultantId], references: [id], onDelete: SetNull)
+
+  secondaryConsultantId String?
+  secondaryConsultant   User?   @relation("DealSecondaryConsultant", fields: [secondaryConsultantId], references: [id], onDelete: SetNull)
+
+  primaryContactId String?
+  primaryContact   Contact? @relation("DealPrimaryContact", fields: [primaryContactId], references: [id], onDelete: SetNull)
+
+  billingContactId String?
+  billingContact   Contact? @relation("DealBillingContact", fields: [billingContactId], references: [id], onDelete: SetNull)
+
+  /// The project this deal turned into, once it was won. The link that makes
+  /// a CRM worth having inside a delivery tool rather than beside one.
+  projectId String?  @unique
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  firstSeenAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  lines DealProduct[]
+
+  @@index([clientId, closeDate])
+  @@index([stage, closeDate])
+}
+
+/**
+ * Something RevOptics sells.
+ * Imported rather than invented: the export holds the real catalogue, and
+ * every entry carries the URL of its statement of work. That link is what
+ * lets a won deal propose the right project template instead of asking.
+ */
+model Product {
+  id String @id @default(cuid())
+
+  sfdcId String? @unique
+
+  name        String  @unique
+  description String?
+  family      String?
+
+  /// Salesforce's own note on how the product is delivered - "Asana &
+  /// Salesforce", "Salesforce Only (as product)". It is the closest thing
+  /// the data has to "does this become a project".
+  delivery String?
+
+  /// The statement of work for this product, as a link.
+  sowUrl String?
+
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lines DealProduct[]
+}
+
+/// One product on one deal.
+model DealProduct {
+  id String @id @default(cuid())
+
+  sfdcId String? @unique
+
+  dealId String
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  /// Kept even when the product no longer exists, so an old deal still says
+  /// what was sold.
+  productName String?
+
+  quantity   Decimal? @db.Decimal(12, 2)
+  unitPrice  Decimal? @db.Decimal(14, 2)
+  totalPrice Decimal? @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now())
+
+  @@index([dealId])
 }
 
 /**
@@ -204,6 +528,8 @@ model Partner {
 
   projects Project[]
   domains  PartnerDomain[]
+  clients  Client[]
+  deals    Deal[]
 }
 
 /**
@@ -288,6 +614,11 @@ model Project {
   statusUpdates StatusUpdate[]
   meetings      Meeting[]
   mailThreads   MailThread[]
+
+  /// The deal this project came from, where it came from one. Optional in
+  /// both directions: projects predate the CRM, and not every deal becomes
+  /// a project.
+  deal Deal?
 
   @@index([clientId])
   @@index([partnerId])
@@ -596,7 +927,7 @@ model Meeting {
   /// recorded to the cloud" and "Zoom refused the download" look identical
   /// from the meetings list, and only one of them is worth doing anything
   /// about.
-  transcriptNote   String?
+  transcriptNote String?
 
   syncedAt  DateTime @default(now())
   updatedAt DateTime @updatedAt
