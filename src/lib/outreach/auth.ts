@@ -2,6 +2,7 @@ import "server-only";
 import { db } from "@/lib/db";
 import { OutreachError } from "@/lib/outreach/errors";
 import { signAppToken } from "@/lib/outreach/jwt";
+import { findAccessToken, keysSeen } from "@/lib/outreach/shape";
 
 /**
  * Outreach, over their server-to-server protocol.
@@ -184,33 +185,38 @@ export async function accessToken(): Promise<string> {
   const json = (await postAsApp(
     `/api/app/installs/${encodeURIComponent(install)}/actions/accessToken`,
   )) as {
-    data?: { attributes?: { accessToken?: string; expiresAt?: string } };
-    access_token?: string;
+    data?: { attributes?: Record<string, unknown> };
     expires_in?: number;
   };
 
-  // Outreach's app endpoints speak JSON:API, but this token has been seen
-  // described both ways. Take whichever is actually there rather than
-  // insisting on the shape we expected.
-  const token = json?.data?.attributes?.accessToken ?? json?.access_token ?? null;
+  // Outreach's documented example and their live reply don't agree on where
+  // the token sits, and the endpoint answers 200 either way. Insisting on one
+  // field name turns a working connection into a dead end with nothing in it
+  // to act on, so take whichever key actually holds a token.
+  const found = findAccessToken(json);
 
-  if (!token) {
+  if (!found) {
     throw new OutreachError(
-      "Outreach issued a reply with no access token in it.",
+      `Outreach's reply had no field that looks like an access token. It contained: ${
+        keysSeen(json).join(", ") || "nothing"
+      }.`,
       200,
-      JSON.stringify(json).slice(0, 2000),
+      JSON.stringify(json).slice(0, 4000),
     );
   }
 
-  const expiresAt = json?.data?.attributes?.expiresAt
-    ? Date.parse(json.data.attributes.expiresAt)
-    : Date.now() + (json?.expires_in ?? 3600) * 1000;
+  const attrs = json?.data?.attributes ?? {};
+  const stated = attrs.expiresAt;
+  const expiresAt =
+    typeof stated === "string"
+      ? Date.parse(stated)
+      : Date.now() + (json?.expires_in ?? 3600) * 1000;
 
   cached = {
-    token,
+    token: found.token,
     expiresAt: Number.isFinite(expiresAt) ? expiresAt : Date.now() + 3_600_000,
   };
-  return token;
+  return found.token;
 }
 
 /** Drop the cached token. Used when a call comes back 401 mid-hour. */

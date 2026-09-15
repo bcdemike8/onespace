@@ -58,3 +58,63 @@ export function transcriptCandidates(fields: Field[] | undefined): string[] {
     })
     .map((f) => `${f.name} ${f.type}`);
 }
+
+/**
+ * Find the access token in a reply, whatever Outreach decided to call it.
+ *
+ * The documented example and the live response don't agree, and the endpoint
+ * answers 200 either way — so insisting on one field name turns a working
+ * connection into a dead end with no clue in it. This looks for any key that
+ * plausibly names a token, at the top level or inside a JSON:API
+ * `data.attributes`, and takes the first that holds a string long enough to
+ * be one.
+ */
+const TOKEN_KEY = /^(access_?token|token|api_?token|bearer_?token|jwt)$/i;
+
+/** Shorter than this and it is a flag or an id, not a bearer token. */
+const TOKEN_MIN = 20;
+
+export function findAccessToken(
+  json: unknown,
+): { token: string; via: string } | null {
+  const places: Array<[string, unknown]> = [];
+
+  if (json && typeof json === "object") {
+    places.push(["", json]);
+    const data = (json as { data?: unknown }).data;
+    if (data && typeof data === "object") {
+      places.push(["data.", data]);
+      const attrs = (data as { attributes?: unknown }).attributes;
+      if (attrs && typeof attrs === "object") places.push(["data.attributes.", attrs]);
+    }
+  }
+
+  for (const [prefix, object] of places) {
+    for (const [key, value] of Object.entries(object as Record<string, unknown>)) {
+      if (TOKEN_KEY.test(key) && typeof value === "string" && value.length >= TOKEN_MIN) {
+        return { token: value, via: `${prefix}${key}` };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Every field name a reply contained, so an error can say what was actually
+ * there instead of only what was missing. One round trip rather than two.
+ */
+export function keysSeen(json: unknown): string[] {
+  const out: string[] = [];
+  if (!json || typeof json !== "object") return out;
+
+  out.push(...Object.keys(json as object));
+  const data = (json as { data?: unknown }).data;
+  if (data && typeof data === "object") {
+    out.push(...Object.keys(data as object).map((k) => `data.${k}`));
+    const attrs = (data as { attributes?: unknown }).attributes;
+    if (attrs && typeof attrs === "object") {
+      out.push(...Object.keys(attrs as object).map((k) => `data.attributes.${k}`));
+    }
+  }
+  return out;
+}
