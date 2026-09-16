@@ -1,4 +1,10 @@
-import "server-only";
+// Not marked server-only, because this is also run straight from a terminal
+// by scripts/import-sfdc.ts - which is how a 4MB file gets loaded without
+// going through a server action, and how a failure prints a real error
+// instead of "an unexpected response was received from the server".
+//
+// The guard is not lost: everything here reaches for @/lib/db, and
+// check:client fails the build if a client component imports any of it.
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { parseSheet } from "@/lib/csv";
