@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import type { Option } from "@/components/crm/FormFields";
+import { byPlatformOrder, isPlatform } from "@/lib/crm/platforms";
 
 /**
  * The dropdown contents every CRM form needs.
@@ -32,13 +33,33 @@ export async function accountOptions(exclude?: string): Promise<Option[]> {
   return rows.map((c) => ({ value: c.id, label: c.name }));
 }
 
+/**
+ * The platforms, and only the platforms.
+ *
+ * The partner table holds more than platforms: the Asana import created a
+ * row for every value it found in a "Partner" column, which were referring
+ * companies - so the Type dropdown was offering "Murdoch Marketing" and
+ * "DailyPay" alongside Outreach.
+ *
+ * Filtered by name against the canonical list rather than by a flag, so it
+ * is right before anybody runs the cleanup script as well as after. Anything
+ * a deal still points at that isn't a platform keeps showing on that deal;
+ * it just isn't offered as a choice for the next one.
+ */
 export async function partnerOptions(): Promise<Option[]> {
   const rows = await db.partner.findMany({
     where: { archivedAt: null },
     select: { id: true, name: true },
-    orderBy: { name: "asc" },
   });
-  return rows.map((p) => ({ value: p.id, label: p.name }));
+  return rows
+    .filter((p) => isPlatform(p.name))
+    .sort((a, b) => byPlatformOrder(a.name, b.name))
+    .map((p) => ({ value: p.id, label: p.name }));
+}
+
+/** The same list as names, for the filter rows that key on a name. */
+export async function platformNames(): Promise<string[]> {
+  return (await partnerOptions()).map((p) => p.label);
 }
 
 export async function peopleOptions(): Promise<Option[]> {
@@ -136,4 +157,20 @@ export async function partnerContactOptions(
       [c.firstName, c.lastName].filter(Boolean).join(" ") +
       (c.client ? ` — ${c.client.name}` : ""),
   }));
+}
+
+/**
+ * The partner accounts themselves - Outreach, Salesloft and the rest as
+ * companies, which is what an AE gets added to.
+ *
+ * Accounts typed PARTNER, not the partner table: an AE is a person at a
+ * company, and the company is an account like any other.
+ */
+export async function partnerAccountOptions(): Promise<Option[]> {
+  const rows = await db.client.findMany({
+    where: { accountType: "PARTNER", archivedAt: null },
+    select: { id: true, name: true },
+    orderBy: { name: "asc" },
+  });
+  return rows.map((c) => ({ value: c.id, label: c.name }));
 }

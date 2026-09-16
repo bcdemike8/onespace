@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { formatMedium } from "@/lib/dates";
 import { crmHref, money, searchWhere } from "@/lib/crm/view";
 import { sections, summary, type PipelineDeal, type Section } from "@/lib/crm/pipeline";
+import { platformNames } from "@/lib/crm/options";
 import { EmptyState, PageHeader } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -95,7 +96,9 @@ export default async function DealsPage({
       select: { name: true },
       orderBy: { name: "asc" },
     }),
-    db.partner.findMany({ select: { name: true }, orderBy: { name: "asc" } }),
+    // Platforms only. The partner table also holds companies the Asana
+    // import filed there, which are not something to filter deals by.
+    platformNames(),
     db.deal.findMany({
       where: { closeDate: { not: null } },
       select: { closeDate: true },
@@ -238,7 +241,7 @@ export default async function DealsPage({
           name="type"
           current={current}
           value={params.type}
-          options={["Direct", ...partners.map((p) => p.name)]}
+          options={["Direct", ...partners]}
         />
         <Picker
           label="Owner"

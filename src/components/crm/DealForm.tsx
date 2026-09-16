@@ -1,5 +1,6 @@
 import { saveDealAction } from "@/app/actions/crm-records";
 import { RecordForm } from "@/components/crm/RecordForm";
+import { PartnerAePicker } from "@/components/crm/PartnerAePicker";
 import {
   Check,
   DateInput,
@@ -91,6 +92,7 @@ export function DealForm({
   people,
   contacts,
   partnerContacts,
+  partnerAccounts,
   cancelHref,
 }: {
   values: DealValues;
@@ -101,6 +103,8 @@ export function DealForm({
   contacts: Option[];
   /** Contacts at the partner accounts, for the Partner AE. */
   partnerContacts: Option[];
+  /** The partner accounts themselves, for adding an AE to one. */
+  partnerAccounts: Option[];
   cancelHref: string;
 }) {
   const isNew = !values.id;
@@ -160,17 +164,13 @@ export function DealForm({
             <Check label="Partner hold" name="partnerHold" value={values.partnerHold} />
             <DateInput label="SQL date" name="sqlDate" value={values.sqlDate} />
             <Check label="SQL" name="isSql" value={values.isSql} />
-            <Select
-              label="Partner AE"
+            <PartnerAePicker
               name="partnerAeId"
+              label="Partner AE"
               value={values.partnerAeId}
               options={partnerContacts}
-              empty="— nobody —"
-              hint={
-                partnerContacts.length === 0
-                  ? "Nobody is recorded on the partner accounts yet."
-                  : "The person at Outreach or Salesloft who brought it."
-              }
+              partners={partnerAccounts}
+              hint="The person at the partner who brought it. Type to narrow, or add them."
             />
             <NumberInput label="CSAT score" name="csatScore" value={values.csatScore} />
             <Check

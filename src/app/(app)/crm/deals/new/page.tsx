@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import {
   accountOptions,
   contactOptions,
+  partnerAccountOptions,
   partnerContactOptions,
   partnerOptions,
   peopleOptions,
@@ -27,12 +28,14 @@ export default async function NewDealPage({
       })
     : null;
 
-  const [accounts, partners, people, contacts, partnerContacts] = await Promise.all([
+  const [accounts, partners, people, contacts, partnerContacts, partnerAccounts] =
+    await Promise.all([
     accountOptions(),
     partnerOptions(),
     peopleOptions(),
     contactOptions(client?.id),
     partnerContactOptions(),
+    partnerAccountOptions(),
   ]);
 
   return (
@@ -61,6 +64,7 @@ export default async function NewDealPage({
         people={people}
         contacts={contacts}
         partnerContacts={partnerContacts}
+        partnerAccounts={partnerAccounts}
         cancelHref={client ? `/crm/${client.id}` : "/crm/deals"}
       />
     </div>

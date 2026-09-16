@@ -5,6 +5,7 @@ import { dateValue } from "@/lib/crm/form";
 import {
   accountOptions,
   contactOptions,
+  partnerAccountOptions,
   partnerContactOptions,
   partnerOptions,
   peopleOptions,
@@ -25,13 +26,15 @@ export default async function EditDealPage({
   const deal = await db.deal.findUnique({ where: { id } });
   if (!deal) notFound();
 
-  const [accounts, partners, people, contacts, partnerContacts] = await Promise.all([
+  const [accounts, partners, people, contacts, partnerContacts, partnerAccounts] =
+    await Promise.all([
     accountOptions(),
     partnerOptions(),
     peopleOptions(),
     // Whoever is already set stays offered, even if they work somewhere else.
     contactOptions(deal.clientId, [deal.primaryContactId, deal.billingContactId]),
     partnerContactOptions([deal.partnerAeId]),
+    partnerAccountOptions(),
   ]);
 
   const money = (v: unknown) => (v === null || v === undefined ? null : String(v));
@@ -57,6 +60,7 @@ export default async function EditDealPage({
         people={people}
         contacts={contacts}
         partnerContacts={partnerContacts}
+        partnerAccounts={partnerAccounts}
         cancelHref={`/crm/deals/${id}`}
       />
     </div>
