@@ -11,6 +11,7 @@ type Step = {
   title: string;
   why: string;
   needsRecordTypes?: boolean;
+  needsUnmatched?: boolean;
 };
 
 /**
@@ -23,6 +24,7 @@ const STEPS: Step[] = [
     file: "User.csv",
     title: "People",
     why: "Matches Salesforce users to OneSpace accounts by email, so owners and consultants come through as real people rather than ids. Everything below depends on it.",
+    needsUnmatched: true,
   },
   {
     key: "accounts",
@@ -87,12 +89,15 @@ function Report({ state }: { state: CrmImportState }) {
 function StepCard({
   step,
   recordTypes,
+  people,
 }: {
   step: Step;
   recordTypes: string | null;
+  people: Person[];
 }) {
   const [csv, setCsv] = useState<string | null>(null);
   const [name, setName] = useState<string | null>(null);
+  const [unmatched, setUnmatched] = useState("create");
   const [state, action] = useActionState(importSfdcAction, {} as CrmImportState);
 
   return (
@@ -102,6 +107,32 @@ function StepCard({
         <code className="text-xs text-ink-500">{step.file}</code>
       </div>
       <p className="mt-1 mb-3 text-sm leading-relaxed text-ink-600">{step.why}</p>
+
+      {step.needsUnmatched ? (
+        <label className="mb-3 block">
+          <span className="label">People who have left</span>
+          <select
+            className="input"
+            value={unmatched}
+            onChange={(e) => setUnmatched(e.target.value)}
+          >
+            <option value="create">
+              Keep them — add as inactive people (recommended)
+            </option>
+            {people.map((p) => (
+              <option key={p.id} value={p.id}>
+                Give their records to {p.name}
+              </option>
+            ))}
+            <option value="none">Leave their records unowned</option>
+          </select>
+          <span className="mt-1 block text-xs leading-relaxed text-ink-500">
+            Anyone in Salesforce without a OneSpace account. Keeping them as
+            inactive people preserves who owned what; they can&apos;t sign in
+            and won&apos;t show up as assignees.
+          </span>
+        </label>
+      ) : null}
 
       <input
         type="file"
@@ -121,6 +152,9 @@ function StepCard({
         {step.needsRecordTypes ? (
           <input type="hidden" name="recordTypes" value={recordTypes ?? ""} />
         ) : null}
+        {step.needsUnmatched ? (
+          <input type="hidden" name="unmatched" value={unmatched} />
+        ) : null}
         <SubmitButton
           pendingLabel="Loading…"
           className={csv ? "btn-primary" : "btn-ghost"}
@@ -134,7 +168,9 @@ function StepCard({
   );
 }
 
-export function ImportSfdc() {
+export type Person = { id: string; name: string };
+
+export function ImportSfdc({ people }: { people: Person[] }) {
   // Shared across the two steps that need it, so it is chosen once.
   const [recordTypes, setRecordTypes] = useState<string | null>(null);
   const [rtName, setRtName] = useState<string | null>(null);
@@ -171,7 +207,12 @@ export function ImportSfdc() {
 
       <ol className="space-y-3">
         {STEPS.map((step) => (
-          <StepCard key={step.key} step={step} recordTypes={recordTypes} />
+          <StepCard
+            key={step.key}
+            step={step}
+            recordTypes={recordTypes}
+            people={people}
+          />
         ))}
       </ol>
     </div>

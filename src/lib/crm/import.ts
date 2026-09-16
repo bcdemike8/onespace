@@ -78,20 +78,98 @@ async function sfdcUserMap(): Promise<Map<string, string>> {
  * Process, Chatter Expert, a Salesloft connector - which match nobody, and
  * are meant not to.
  */
-export async function importPeople(csv: string): Promise<StepReport> {
+/**
+ * What to do about a Salesforce user OneSpace has never heard of.
+ *
+ * Three of them here are people who have left - and between them they own
+ * several hundred deals and created most of the contacts. Dropping their
+ * ownership loses real history; reassigning it to whoever is still here
+ * rewrites it. Which of those is the lesser loss is not a decision the
+ * import gets to make on its own.
+ */
+export type UnmatchedPeople =
+  /** Create them as inactive people: history intact, no way in, no clutter. */
+  | { kind: "create" }
+  /** Give everything they owned to somebody who is still here. */
+  | { kind: "assign"; userId: string }
+  /** Leave those records unowned. */
+  | { kind: "none" };
+
+/** A real colleague, as opposed to Salesforce's own integration accounts. */
+const INTEGRATION = /salesforce\.com|@00d|example\.com|\.ext$|^autoproc|^sfdcadmin/i;
+
+export async function importPeople(
+  csv: string,
+  unmatchedPolicy: UnmatchedPeople = { kind: "none" },
+): Promise<StepReport> {
   const { rows } = parseSheet(csv);
   const emails = userEmails(rows);
+
+  // Names too, so anyone created reads as a person rather than an address.
+  const names = new Map<string, string>();
+  for (const row of rows) {
+    const key = (row.Id ?? "").trim().slice(0, 15);
+    const name = [row.FirstName, row.LastName]
+      .map((v) => (v ?? "").trim())
+      .filter(Boolean)
+      .join(" ");
+    if (key && name) names.set(key, name);
+  }
 
   const people = await db.user.findMany({ select: { id: true, email: true } });
   const byEmail = new Map(people.map((p) => [p.email.toLowerCase(), p.id]));
 
   const map: Record<string, string> = {};
-  const unmatched: string[] = [];
+  const unmatched: { sfdcId: string; email: string }[] = [];
 
   for (const [sfdcId, email] of emails) {
     const userId = byEmail.get(email);
     if (userId) map[sfdcId] = userId;
-    else unmatched.push(email);
+    else unmatched.push({ sfdcId, email });
+  }
+
+  const real = unmatched.filter((u) => !INTEGRATION.test(u.email));
+  const notes: string[] = [];
+  let created = 0;
+
+  if (real.length && unmatchedPolicy.kind === "create") {
+    for (const u of real) {
+      const row = await db.user.upsert({
+        where: { email: u.email },
+        create: {
+          email: u.email,
+          name: names.get(u.sfdcId) ?? u.email,
+          // Never a valid hash, and verifyPassword refuses anything that
+          // isn't scrypt$salt$hash - so there is no password to guess.
+          passwordHash: "disabled",
+          isActive: false,
+        },
+        update: {},
+        select: { id: true },
+      });
+      map[u.sfdcId] = row.id;
+      created++;
+    }
+    notes.push(
+      `Added ${created} former ${created === 1 ? "colleague" : "colleagues"} as inactive people so their deals and contacts keep the right owner: ${real
+        .map((u) => u.email)
+        .join(", ")}. They can't sign in and won't appear as assignees.`,
+    );
+  } else if (real.length && unmatchedPolicy.kind === "assign") {
+    const owner = await db.user.findUnique({
+      where: { id: unmatchedPolicy.userId },
+      select: { id: true, name: true },
+    });
+    if (!owner) return { step: "people", rows: rows.length, created: 0, updated: 0, skipped: 0, notes: ["That person no longer exists in OneSpace."] };
+
+    for (const u of real) map[u.sfdcId] = owner.id;
+    notes.push(
+      `Records owned by ${real.map((u) => u.email).join(", ")} will be assigned to ${owner.name}. Salesforce's own record of who owned them is not kept.`,
+    );
+  } else if (real.length) {
+    notes.push(
+      `No OneSpace account for: ${real.map((u) => u.email).join(", ")}. Their records will import with no owner. Re-run this step with a different choice above if you'd rather they were kept.`,
+    );
   }
 
   await db.appSetting.upsert({
@@ -100,22 +178,11 @@ export async function importPeople(csv: string): Promise<StepReport> {
     update: { value: JSON.stringify(map) },
   });
 
-  const notes: string[] = [];
-  if (unmatched.length) {
-    // Named, not counted: "3 unmatched" is unactionable, a list is not.
-    const real = unmatched.filter((e) => !/salesforce\.com|@00d|example\.com|\.ext$/i.test(e));
-    if (real.length) {
-      notes.push(
-        `No OneSpace account for: ${real.join(", ")}. Their records will import with no owner.`,
-      );
-    }
-  }
-
   return {
     step: "people",
     rows: rows.length,
-    created: 0,
-    updated: Object.keys(map).length,
+    created,
+    updated: Object.keys(map).length - created,
     skipped: rows.length - Object.keys(map).length,
     notes,
   };

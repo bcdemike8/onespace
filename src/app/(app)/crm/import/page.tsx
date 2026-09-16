@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
+import { db } from "@/lib/db";
 import { PageHeader } from "@/components/ui";
 import { ImportSfdc } from "./ImportSfdc";
 
@@ -16,6 +17,14 @@ export const dynamic = "force-dynamic";
  */
 export default async function CrmImportPage() {
   await requireAdmin();
+
+  // Who a departed colleague's records could be given to, if that is the
+  // choice made on the first step.
+  const people = await db.user.findMany({
+    where: { isActive: true },
+    select: { id: true, name: true },
+    orderBy: { name: "asc" },
+  });
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -36,7 +45,7 @@ export default async function CrmImportPage() {
         </p>
       </div>
 
-      <ImportSfdc />
+      <ImportSfdc people={people} />
 
       <p className="mt-4 text-xs leading-relaxed text-ink-500">
         Afterwards: <Link href="/clients" className="underline">Clients</Link>{" "}

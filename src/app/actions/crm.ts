@@ -28,6 +28,7 @@ export async function importSfdcAction(
   const step = formData.get("step");
   const csv = formData.get("csv");
   const recordTypes = formData.get("recordTypes");
+  const unmatched = formData.get("unmatched");
 
   if (!isStep(step)) return { error: "Unknown import step." };
   if (typeof csv !== "string" || csv.trim() === "") {
@@ -38,9 +39,18 @@ export async function importSfdcAction(
 
   try {
     const lib = await import("@/lib/crm/import");
+    // What to do about Salesforce users OneSpace has never heard of - people
+    // who have left, mostly, who between them own several hundred deals.
+    const policy: import("@/lib/crm/import").UnmatchedPeople =
+      unmatched === "create"
+        ? { kind: "create" }
+        : typeof unmatched === "string" && unmatched && unmatched !== "none"
+          ? { kind: "assign", userId: unmatched }
+          : { kind: "none" };
+
     const report =
       step === "people"
-        ? await lib.importPeople(csv)
+        ? await lib.importPeople(csv, policy)
         : step === "accounts"
           ? await lib.importAccounts(csv, types)
           : step === "products"
