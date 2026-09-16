@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { formatMedium } from "@/lib/dates";
 import { ACCOUNT_LABEL, ACCOUNT_RECORD_TYPE, STAGE_LABEL, money } from "@/lib/crm/view";
 import { addressLines, employeeRange, revenueRange } from "@/lib/crm/account";
+import { Field, Related, Section } from "@/components/crm/Record";
 import { PageHeader } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -255,13 +256,14 @@ export default async function AccountPage({
           <Related title="Contacts" count={client.contacts.length}>
             {client.contacts.slice(0, 15).map((p) => (
               <li key={p.id} className="py-2">
-                <span
-                  className={`text-sm ${
+                <Link
+                  href={`/crm/contacts/${p.id}`}
+                  className={`text-sm underline ${
                     p.noLongerHere ? "text-ink-400 line-through" : "text-ink-900"
                   }`}
                 >
                   {contactName(p)}
-                </span>
+                </Link>
                 <p className="text-xs text-ink-500">
                   {p.title ?? ""}
                   {p.email ? (
@@ -322,85 +324,5 @@ function Figure({
       <p className="text-lg font-medium tabular-nums text-ink-900">{value}</p>
       {note ? <p className="text-xs text-ink-400">{note}</p> : null}
     </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="card mb-4 p-5">
-      <h2 className="mb-3 border-b border-ink-100 pb-2 text-sm font-medium text-ink-900">
-        {title}
-      </h2>
-      <dl className="grid gap-x-8 gap-y-3 sm:grid-cols-2">{children}</dl>
-    </section>
-  );
-}
-
-/**
- * One field, shown even when it is empty.
- *
- * The blank is the point: an account page is a list of what is known and
- * what isn't, and a field that disappears when unfilled can never be
- * noticed as missing.
- */
-function Field({
-  label,
-  value,
-  note,
-  href,
-  wide,
-}: {
-  label: string;
-  value?: string | null;
-  note?: string | null;
-  href?: string;
-  wide?: boolean;
-}) {
-  const shown = value && value.trim() !== "" ? value : null;
-  return (
-    <div className={wide ? "sm:col-span-2" : undefined}>
-      <dt className="text-xs text-ink-500">{label}</dt>
-      <dd
-        className={`text-sm whitespace-pre-line ${shown ? "text-ink-900" : "text-ink-300"}`}
-      >
-        {shown ? (
-          href ? (
-            <Link href={href} className="underline">
-              {shown}
-            </Link>
-          ) : (
-            shown
-          )
-        ) : (
-          "—"
-        )}
-        {shown && note ? (
-          <span className="block text-xs text-ink-500">{note}</span>
-        ) : null}
-      </dd>
-    </div>
-  );
-}
-
-function Related({
-  title,
-  count,
-  children,
-}: {
-  title: string;
-  count: number;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="card p-4">
-      <h2 className="mb-1 text-sm font-medium text-ink-900">
-        {title} <span className="text-ink-400">({count})</span>
-      </h2>
-      {count === 0 ? (
-        <p className="text-sm text-ink-400">None yet.</p>
-      ) : (
-        <ul className="divide-y divide-ink-100">{children}</ul>
-      )}
-    </section>
   );
 }

@@ -560,6 +560,7 @@ export function mapDeal(
 export interface MappedProduct {
   sfdcId: string;
   name: string;
+  code: string | null;
   description: string | null;
   family: string | null;
   delivery: string | null;
@@ -575,6 +576,7 @@ export function mapProduct(row: Record<string, string>): MappedProduct | null {
   return {
     sfdcId,
     name,
+    code: text(row.ProductCode),
     description: text(row.Description),
     family: text(row.Family),
     delivery: text(row.Type__c),
@@ -588,9 +590,17 @@ export interface MappedLine {
   dealKey: string | null;
   productKey: string | null;
   productName: string | null;
+  productCode: string | null;
   quantity: number | null;
   unitPrice: number | null;
   totalPrice: number | null;
+  listPrice: number | null;
+  serviceDate: Date | null;
+  description: string | null;
+  createdByKey: string | null;
+  lastModifiedByKey: string | null;
+  lastModifiedAt: Date | null;
+  firstSeenAt: Date | null;
 }
 
 export function mapLine(row: Record<string, string>): MappedLine | null {
@@ -605,9 +615,24 @@ export function mapLine(row: Record<string, string>): MappedLine | null {
     // the name carries the meaning.
     productKey: refKey(row.Product2Id),
     productName: text(row.Name) ?? text(row.ProductName),
+    productCode: text(row.ProductCode),
     quantity: decimal(row.Quantity),
+    // Salesforce's own naming: UnitPrice is what was charged, ListPrice is
+    // what the catalogue said. The two together are the discount, and the
+    // discount is the one number on this record that cannot be worked out
+    // afterwards from anything else.
     unitPrice: decimal(row.UnitPrice),
     totalPrice: decimal(row.TotalPrice),
+    listPrice: decimal(row.ListPrice),
+    serviceDate: date(row.ServiceDate),
+    // The line's own description, labelled "Line Description" on the page.
+    // Distinct from the product's - "Includes Amplify" is the difference
+    // between two otherwise identical implementations.
+    description: text(pick(row, "Description", "Line_Description__c")),
+    createdByKey: refKey(row.CreatedById),
+    lastModifiedByKey: refKey(row.LastModifiedById),
+    lastModifiedAt: date(row.LastModifiedDate),
+    firstSeenAt: date(row.CreatedDate),
   };
 }
 

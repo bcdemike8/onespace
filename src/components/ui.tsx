@@ -6,14 +6,23 @@ export function PageHeader({
   title,
   subtitle,
   actions,
+  eyebrow,
 }: {
   title: string;
   subtitle?: React.ReactNode;
   actions?: React.ReactNode;
+  /// What kind of thing this is, above its name. Only worth it where the
+  /// name alone doesn't say - a line item's name is its deal's name with a
+  /// product stuck on the end, and reads as a deal until something says
+  /// otherwise.
+  eyebrow?: string;
 }) {
   return (
     <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
       <div>
+        {eyebrow ? (
+          <p className="text-xs tracking-wide text-ink-500 uppercase">{eyebrow}</p>
+        ) : null}
         <h1 className="text-2xl font-semibold tracking-tight text-ink-900">
           {title}
         </h1>

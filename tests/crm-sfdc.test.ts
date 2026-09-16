@@ -9,6 +9,7 @@ import {
   mapAccount,
   mapContact,
   mapDeal,
+  mapLine,
   mapProduct,
   multi,
   pick,
@@ -409,4 +410,55 @@ test("none of the new contact fields invent a value", () => {
   assert.equal(c.createdByKey, null);
   assert.equal(c.lastModifiedByKey, null);
   assert.equal(c.lastModifiedAt, null);
+});
+
+// ------------------------------------------------ the Opportunity Product page
+
+const LINE = { Id: "00kao00000000001", OpportunityId: "006ao00000000001" };
+
+test("a line keeps the catalogue price alongside the price charged", () => {
+  // The pair is the discount. With only UnitPrice, 6,300 is just 6,300;
+  // with both, it is 6,300 against a list of 5,000 and somebody decided that.
+  const l = mapLine({ ...LINE, UnitPrice: "6300.00", ListPrice: "5000.00", TotalPrice: "6300.00" })!;
+  assert.equal(l.unitPrice, 6300);
+  assert.equal(l.listPrice, 5000);
+  assert.equal(l.totalPrice, 6300);
+});
+
+test("the line's own description is not the product's", () => {
+  const l = mapLine({ ...LINE, Description: "Includes Amplify" })!;
+  assert.equal(l.description, "Includes Amplify");
+});
+
+test("the service date, the product code and who made the line", () => {
+  const l = mapLine({
+    ...LINE,
+    ProductCode: "ENG-IMP-19",
+    ServiceDate: "2026-08-01",
+    CreatedById: "005ao00000000001",
+    CreatedDate: "2026-07-14 11:30:00",
+    LastModifiedById: "005ao00000000001",
+    LastModifiedDate: "2026-07-14 11:30:00",
+  })!;
+  assert.equal(l.productCode, "ENG-IMP-19");
+  assert.equal(l.serviceDate?.toISOString().slice(0, 10), "2026-08-01");
+  assert.equal(l.createdByKey, "005ao0000000000");
+  assert.equal(l.firstSeenAt?.toISOString(), "2026-07-14T11:30:00.000Z");
+  assert.equal(l.lastModifiedAt?.toISOString(), "2026-07-14T11:30:00.000Z");
+});
+
+test("a line with no list price says so rather than guessing one", () => {
+  const l = mapLine({ ...LINE, UnitPrice: "6300.00" })!;
+  assert.equal(l.listPrice, null);
+  assert.equal(l.serviceDate, null);
+  assert.equal(l.description, null);
+  assert.equal(l.productCode, null);
+});
+
+test("a product carries its code", () => {
+  assert.equal(
+    mapProduct({ Id: "01tao00000000001", Name: "Engage Implementation (1-19)", ProductCode: "ENG-IMP-19" })!.code,
+    "ENG-IMP-19",
+  );
+  assert.equal(mapProduct({ Id: "01tao00000000001", Name: "Engage" })!.code, null);
 });

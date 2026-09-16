@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { formatMedium } from "@/lib/dates";
 import { ACCOUNT_RECORD_TYPE, STAGE_LABEL, money } from "@/lib/crm/view";
 import { addressLines } from "@/lib/crm/account";
+import { Columns, Field, Related } from "@/components/crm/Record";
 import { PageHeader } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -182,7 +183,7 @@ export default async function ContactPage({
 
       <div className="grid gap-4 lg:grid-cols-[1fr_20rem]">
         <div>
-          <Section
+          <Columns
             title="Contact information"
             left={
               <>
@@ -225,7 +226,7 @@ export default async function ContactPage({
             }
           />
 
-          <Section
+          <Columns
             title="Additional information"
             left={
               <>
@@ -253,7 +254,7 @@ export default async function ContactPage({
             }
           />
 
-          <Section
+          <Columns
             title="Address information"
             left={
               <Field
@@ -264,13 +265,13 @@ export default async function ContactPage({
             right={null}
           />
 
-          <Section
+          <Columns
             title="Description information"
             left={<Field label="Description" value={contact.description} />}
             right={null}
           />
 
-          <Section
+          <Columns
             title="System information"
             left={
               <Field
@@ -335,107 +336,5 @@ export default async function ContactPage({
         <p className="mt-4 text-xs text-ink-400">Salesforce id {contact.sfdcId}</p>
       ) : null}
     </div>
-  );
-}
-
-/**
- * Two columns that fill downwards, the way Salesforce filled them.
- *
- * Not a two-column grid: a grid fills across, which pairs the first left
- * field with the first right one and then interleaves the rest. When the
- * columns hold nine fields and three, the result is unreadable.
- */
-function Section({
-  title,
-  left,
-  right,
-}: {
-  title: string;
-  left: React.ReactNode;
-  right: React.ReactNode;
-}) {
-  return (
-    <section className="card mb-4 p-5">
-      <h2 className="mb-3 border-b border-ink-100 pb-2 text-sm font-medium text-ink-900">
-        {title}
-      </h2>
-      <div className="grid gap-x-8 sm:grid-cols-2">
-        <dl className="space-y-3">{left}</dl>
-        <dl className="space-y-3">{right}</dl>
-      </div>
-    </section>
-  );
-}
-
-/** One field, shown even when it is empty. */
-function Field({
-  label,
-  value,
-  note,
-  href,
-  mailto,
-  tel,
-}: {
-  label: string;
-  value?: string | null;
-  note?: string | null;
-  href?: string;
-  mailto?: string;
-  tel?: string;
-}) {
-  const shown = value && value.trim() !== "" ? value : null;
-  const link = href ?? (mailto ? `mailto:${mailto}` : tel ? `tel:${tel}` : undefined);
-
-  return (
-    <div>
-      <dt className="text-xs text-ink-500">{label}</dt>
-      <dd
-        className={`text-sm whitespace-pre-line ${shown ? "text-ink-900" : "text-ink-300"}`}
-      >
-        {shown ? (
-          link ? (
-            href ? (
-              <Link href={href} className="underline">
-                {shown}
-              </Link>
-            ) : (
-              <a href={link} className="underline">
-                {shown}
-              </a>
-            )
-          ) : (
-            shown
-          )
-        ) : (
-          "—"
-        )}
-        {shown && note ? (
-          <span className="block text-xs text-ink-500">{note}</span>
-        ) : null}
-      </dd>
-    </div>
-  );
-}
-
-function Related({
-  title,
-  count,
-  children,
-}: {
-  title: string;
-  count: number;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="card p-4">
-      <h2 className="mb-1 text-sm font-medium text-ink-900">
-        {title} <span className="text-ink-400">({count})</span>
-      </h2>
-      {count === 0 ? (
-        <p className="text-sm text-ink-400">None.</p>
-      ) : (
-        <ul className="divide-y divide-ink-100">{children}</ul>
-      )}
-    </section>
   );
 }

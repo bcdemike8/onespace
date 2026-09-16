@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { formatMedium } from "@/lib/dates";
 import { STAGE_LABEL, money, stagePath } from "@/lib/crm/view";
+import { Field, Figure, Related, Section } from "@/components/crm/Record";
 import { PageHeader } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -321,9 +322,9 @@ export default async function DealPage({
             {deal.lines.map((l) => (
               <li key={l.id} className="py-2 text-sm">
                 <div className="flex items-baseline gap-2">
-                  <span className="text-ink-900">
+                  <Link href={`/crm/lines/${l.id}`} className="text-ink-900 underline">
                     {l.product?.name ?? l.productName ?? "Unnamed product"}
-                  </span>
+                  </Link>
                   {l.product?.sowUrl ? (
                     <a
                       href={l.product.sowUrl}
@@ -365,95 +366,5 @@ export default async function DealPage({
         </div>
       </div>
     </div>
-  );
-}
-
-function Figure({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-xs text-ink-500">{label}</p>
-      <p className="text-sm font-medium text-ink-900">{value}</p>
-    </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="card mb-4 p-5">
-      <h2 className="mb-3 border-b border-ink-100 pb-2 text-sm font-medium text-ink-900">
-        {title}
-      </h2>
-      <dl className="grid gap-x-8 gap-y-3 sm:grid-cols-2">{children}</dl>
-    </section>
-  );
-}
-
-/**
- * One field, shown even when it is empty - the same bargain the account page
- * makes, for the same reason.
- *
- * Salesforce read down two columns rather than across, so the order here is
- * the order of the fields as they sat on that page: left, right, left,
- * right. Change the grid and the pairs come apart.
- */
-function Field({
-  label,
-  value,
-  note,
-  href,
-  wide,
-}: {
-  label: string;
-  value?: string | null;
-  note?: string | null;
-  href?: string;
-  wide?: boolean;
-}) {
-  const shown = value && value.trim() !== "" ? value : null;
-  return (
-    <div className={wide ? "sm:col-span-2" : undefined}>
-      <dt className="text-xs text-ink-500">{label}</dt>
-      <dd
-        className={`text-sm whitespace-pre-line ${shown ? "text-ink-900" : "text-ink-300"}`}
-      >
-        {shown ? (
-          href ? (
-            <Link href={href} className="underline">
-              {shown}
-            </Link>
-          ) : (
-            shown
-          )
-        ) : (
-          "—"
-        )}
-        {shown && note ? (
-          <span className="block text-xs text-ink-500">{note}</span>
-        ) : null}
-      </dd>
-    </div>
-  );
-}
-
-function Related({
-  title,
-  count,
-  children,
-}: {
-  title: string;
-  count: number;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="card p-4">
-      <h2 className="mb-1 text-sm font-medium text-ink-900">
-        {title} <span className="text-ink-400">({count})</span>
-      </h2>
-      {count === 0 ? (
-        <p className="text-sm text-ink-400">None.</p>
-      ) : (
-        <ul className="divide-y divide-ink-100">{children}</ul>
-      )}
-    </section>
   );
 }

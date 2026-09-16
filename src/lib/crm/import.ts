@@ -426,6 +426,7 @@ export async function importProducts(csv: string): Promise<StepReport> {
 
     const data = {
       name: p.name,
+      code: p.code,
       description: p.description,
       family: p.family,
       delivery: p.delivery,
@@ -786,6 +787,9 @@ export async function importDeals(
 
 export async function importLines(csv: string): Promise<StepReport> {
   const { rows } = parseSheet(csv);
+  // New here: the line records who created it, and that is a Salesforce user
+  // id like every other one.
+  const users = await sfdcUserMap();
 
   const [deals, products, lines] = await Promise.all([
     db.deal.findMany({
@@ -836,9 +840,19 @@ export async function importLines(csv: string): Promise<StepReport> {
       dealId,
       productId,
       productName: l.productName,
+      productCode: l.productCode,
       quantity: l.quantity,
       unitPrice: l.unitPrice,
       totalPrice: l.totalPrice,
+      listPrice: l.listPrice,
+      serviceDate: l.serviceDate,
+      description: l.description,
+      createdById: l.createdByKey ? (users.get(l.createdByKey) ?? null) : null,
+      lastModifiedById: l.lastModifiedByKey
+        ? (users.get(l.lastModifiedByKey) ?? null)
+        : null,
+      lastModifiedAt: l.lastModifiedAt,
+      firstSeenAt: l.firstSeenAt,
     };
 
     const known = lineBySfdc.get(l.sfdcId);

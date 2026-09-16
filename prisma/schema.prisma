@@ -187,6 +187,8 @@ model User {
   ownedContacts      Contact[] @relation("ContactOwner")
   createdContacts    Contact[] @relation("ContactCreatedBy")
   modifiedContacts   Contact[] @relation("ContactLastModifiedBy")
+  createdLines       DealProduct[] @relation("LineCreatedBy")
+  modifiedLines      DealProduct[] @relation("LineLastModifiedBy")
   ownedDeals         Deal[]    @relation("DealOwner")
   createdDeals       Deal[]    @relation("DealCreatedBy")
   modifiedDeals      Deal[]    @relation("DealLastModifiedBy")
@@ -630,6 +632,9 @@ model Product {
   sfdcId String? @unique
 
   name        String  @unique
+  /// Salesforce's product code. Blank on most of the catalogue and worth
+  /// carrying anyway: where it is set it is what an invoice quotes.
+  code        String?
   description String?
   family      String?
 
@@ -664,10 +669,35 @@ model DealProduct {
   /// Kept even when the product no longer exists, so an old deal still says
   /// what was sold.
   productName String?
+  productCode String?
 
   quantity   Decimal? @db.Decimal(12, 2)
   unitPrice  Decimal? @db.Decimal(14, 2)
   totalPrice Decimal? @db.Decimal(14, 2)
+
+  /// The catalogue price, against the unit price actually charged. The pair
+  /// is the discount, and the discount is the only thing on this record that
+  /// nobody can reconstruct later: 6,300 against a list of 5,000 says
+  /// something happened, and without the list price it just says 6,300.
+  listPrice Decimal? @db.Decimal(14, 2)
+
+  /// Salesforce's "Date" on a line - when the thing is delivered or starts,
+  /// as distinct from when the deal closes.
+  serviceDate DateTime?
+
+  /// What was actually sold on this line, where the product name didn't
+  /// cover it. "Includes Amplify" is the whole difference between two
+  /// otherwise identical implementations.
+  description String?
+
+  createdById String?
+  createdBy   User?   @relation("LineCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  lastModifiedById String?
+  lastModifiedBy   User?   @relation("LineLastModifiedBy", fields: [lastModifiedById], references: [id], onDelete: SetNull)
+
+  lastModifiedAt DateTime?
+  firstSeenAt    DateTime?
 
   createdAt DateTime @default(now())
 
