@@ -76,9 +76,14 @@ export default async function DealsPage({
             {tab.label}
           </Link>
         ))}
-        <Link href="/crm" className="btn-ghost btn-sm ml-auto">
-          Accounts
-        </Link>
+        <span className="ml-auto flex gap-2">
+          <Link href="/crm/dashboard" className="btn-ghost btn-sm">
+            Dashboard
+          </Link>
+          <Link href="/crm" className="btn-ghost btn-sm">
+            Accounts
+          </Link>
+        </span>
       </div>
 
       <form className="mb-4 flex gap-2" action="/crm/deals">
@@ -114,7 +119,12 @@ export default async function DealsPage({
             {rows.map((d) => (
               <li key={d.id} className="px-4 py-3">
                 <div className="flex flex-wrap items-baseline gap-2">
-                  <span className="text-sm font-medium text-ink-900">{d.name}</span>
+                  <Link
+                    href={`/crm/deals/${d.id}`}
+                    className="text-sm font-medium text-ink-900 underline decoration-ink-200 hover:decoration-ink-500"
+                  >
+                    {d.name}
+                  </Link>
                   <span
                     className={`chip ${
                       d.isWon

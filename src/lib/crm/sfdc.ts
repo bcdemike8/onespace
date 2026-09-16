@@ -358,6 +358,8 @@ export interface MappedDeal {
   secondaryConsultantKey: string | null;
   primaryContactKey: string | null;
   billingContactKey: string | null;
+  /// The partner AE, a Contact on the partner's own account.
+  partnerAeKey: string | null;
   firstSeenAt: Date | null;
 }
 
@@ -406,6 +408,7 @@ export function mapDeal(
     secondaryConsultantKey: refKey(row.Secondary_Consultant__c),
     primaryContactKey: refKey(row.Primary_Contact__c) ?? refKey(row.ContactId),
     billingContactKey: refKey(row.Billing_Contact__c),
+    partnerAeKey: refKey(row.Partner_AE__c),
     firstSeenAt: date(row.CreatedDate),
   };
 }

@@ -134,7 +134,12 @@ export default async function AccountPage({
         <ul className="card mb-6 divide-y divide-ink-100">
           {client.deals.slice(0, 40).map((d) => (
             <li key={d.id} className="flex flex-wrap items-baseline gap-2 px-4 py-2.5">
-              <span className="text-sm text-ink-900">{d.name}</span>
+              <Link
+                href={`/crm/deals/${d.id}`}
+                className="text-sm text-ink-900 underline decoration-ink-200 hover:decoration-ink-500"
+              >
+                {d.name}
+              </Link>
               <span
                 className={`chip ${
                   d.isWon

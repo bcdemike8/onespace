@@ -336,8 +336,9 @@ model Contact {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  primaryFor Deal[] @relation("DealPrimaryContact")
-  billingFor Deal[] @relation("DealBillingContact")
+  primaryFor   Deal[] @relation("DealPrimaryContact")
+  billingFor   Deal[] @relation("DealBillingContact")
+  partnerAeFor Deal[] @relation("DealPartnerAe")
 
   @@index([clientId, lastName])
   @@index([email])
@@ -420,6 +421,13 @@ model Deal {
 
   billingContactId String?
   billingContact   Contact? @relation("DealBillingContact", fields: [billingContactId], references: [id], onDelete: SetNull)
+
+  /// The partner's account executive - the person at Outreach or Salesloft
+  /// who brought the deal. Filled on 762 of the 1,269 deals, and the field
+  /// most asked for after the client: on partner business it is who the
+  /// relationship actually runs through.
+  partnerAeId String?
+  partnerAe   Contact? @relation("DealPartnerAe", fields: [partnerAeId], references: [id], onDelete: SetNull)
 
   /// The project this deal turned into, once it was won. The link that makes
   /// a CRM worth having inside a delivery tool rather than beside one.

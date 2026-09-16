@@ -76,6 +76,9 @@ export default async function CrmPage({
           </Link>
         ))}
         <span className="ml-auto flex gap-2">
+          <Link href="/crm/dashboard" className="btn-ghost btn-sm">
+            Dashboard
+          </Link>
           <Link href="/crm/deals" className="btn-ghost btn-sm">
             Deals
           </Link>

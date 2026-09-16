@@ -556,6 +556,9 @@ export async function importDeals(
       billingContactId: d.billingContactKey
         ? (contactBySfdc.get(d.billingContactKey) ?? null)
         : null,
+      partnerAeId: d.partnerAeKey
+        ? (contactBySfdc.get(d.partnerAeKey) ?? null)
+        : null,
       firstSeenAt: d.firstSeenAt,
     };
 
