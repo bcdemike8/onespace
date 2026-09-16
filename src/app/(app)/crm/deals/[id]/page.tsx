@@ -36,6 +36,16 @@ export default async function DealPage({
       primaryContact: { select: { id: true, firstName: true, lastName: true, email: true, title: true } },
       billingContact: { select: { id: true, firstName: true, lastName: true, email: true } },
       partnerAe: { select: { id: true, firstName: true, lastName: true, email: true, title: true } },
+      createdBy: { select: { name: true } },
+      contactRoles: {
+        orderBy: [{ isPrimary: "desc" }, { role: "asc" }],
+        select: {
+          id: true,
+          role: true,
+          isPrimary: true,
+          contact: { select: { id: true, firstName: true, lastName: true, email: true } },
+        },
+      },
       project: { select: { id: true, name: true, status: true } },
       lines: {
         orderBy: { createdAt: "asc" },
@@ -95,6 +105,20 @@ export default async function DealPage({
   ];
 
   const moneyRows: Row[] = [
+    {
+      label: "Expected revenue",
+      value:
+        deal.expectedRevenue === null
+          ? null
+          : money(Number(deal.expectedRevenue)),
+      note:
+        deal.probability === null ? undefined : `at ${deal.probability}% probability`,
+    },
+    { label: "Forecast category", value: deal.forecastCategory },
+    {
+      label: "Quantity",
+      value: deal.quantity === null ? null : String(Number(deal.quantity)),
+    },
     { label: "Payment terms", value: deal.paymentTerms },
     { label: "Invoice sent", value: deal.invoiceSentAt ? formatMedium(deal.invoiceSentAt) : null },
     { label: "Invoice paid", value: deal.invoicePaidAt ? formatMedium(deal.invoicePaidAt) : null },
@@ -104,6 +128,30 @@ export default async function DealPage({
   const outcome: Row[] = [
     { label: "Lost reason", value: deal.lostReason },
     { label: "Detail", value: deal.lostReasonDetail },
+  ];
+
+  // Salesforce's own dates, which are not OneSpace's - firstSeenAt is when
+  // the deal was created there, createdAt only when the import ran.
+  const history: Row[] = [
+    { label: "Created", value: deal.firstSeenAt ? formatMedium(deal.firstSeenAt) : null,
+      note: deal.createdBy?.name ? `by ${deal.createdBy.name}` : undefined },
+    {
+      label: "Fiscal period",
+      value: deal.fiscalYear ? `${deal.fiscalYear} Q${deal.fiscalQuarter ?? "?"}` : null,
+    },
+    {
+      label: "Stage last changed",
+      value: deal.lastStageChangeAt ? formatMedium(deal.lastStageChangeAt) : null,
+    },
+    {
+      label: "Last activity",
+      value: deal.lastActivityAt ? formatMedium(deal.lastActivityAt) : null,
+    },
+    {
+      label: "Last edited in Salesforce",
+      value: deal.lastModifiedAt ? formatMedium(deal.lastModifiedAt) : null,
+    },
+    { label: "Legacy id", value: deal.legacyId },
   ];
 
   return (
@@ -186,9 +234,41 @@ export default async function DealPage({
         </section>
       ) : null}
 
+      {deal.contactRoles.length > 0 ? (
+        <section className="card mb-4 p-5">
+          <h2 className="mb-3 text-sm font-medium text-ink-900">
+            Who played what part
+          </h2>
+          <ul className="divide-y divide-ink-100">
+            {deal.contactRoles.map((r) => (
+              <li key={r.id} className="flex flex-wrap items-baseline gap-2 py-2">
+                <span className="text-sm text-ink-900">
+                  {person(r.contact) ?? "Someone no longer in the contacts"}
+                </span>
+                {r.role ? (
+                  <span className="chip bg-ink-100 text-ink-600">{r.role}</span>
+                ) : null}
+                {r.isPrimary ? (
+                  <span className="chip bg-brand-100 text-brand-700">Primary</span>
+                ) : null}
+                {r.contact?.email ? (
+                  <a
+                    href={`mailto:${r.contact.email}`}
+                    className="ml-auto shrink-0 text-xs text-brand-600 underline"
+                  >
+                    {r.contact.email}
+                  </a>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       <Group title="Delivery" rows={delivery} />
       <Group title="Money" rows={moneyRows} />
       {deal.isClosed && !deal.isWon ? <Group title="Why it was lost" rows={outcome} /> : null}
+      <Group title="History" rows={history} />
 
       {[
         ["Scope", deal.customScopeDetail],

@@ -31,7 +31,14 @@ import {
  * the database, not by holding state from an earlier step.
  */
 
-export type Step = "people" | "accounts" | "products" | "contacts" | "deals" | "lines";
+export type Step =
+  | "people"
+  | "accounts"
+  | "products"
+  | "contacts"
+  | "deals"
+  | "lines"
+  | "roles";
 
 export interface StepReport {
   step: Step;
@@ -522,6 +529,17 @@ export async function importDeals(
       type: d.type,
       amount: d.amount,
       closeDate: d.closeDate,
+      expectedRevenue: d.expectedRevenue,
+      probability: d.probability,
+      forecastCategory: d.forecastCategory,
+      fiscalYear: d.fiscalYear,
+      fiscalQuarter: d.fiscalQuarter,
+      quantity: d.quantity,
+      legacyId: d.legacyId,
+      createdById: d.createdByKey ? (users.get(d.createdByKey) ?? null) : null,
+      lastStageChangeAt: d.lastStageChangeAt,
+      lastActivityAt: d.lastActivityAt,
+      lastModifiedAt: d.lastModifiedAt,
       isWon: d.isWon,
       isClosed: d.isClosed,
       partnerId: d.platform ? (partners.get(d.platform) ?? null) : null,
@@ -578,8 +596,21 @@ export async function importDeals(
 
   const notes: string[] = [];
   if (noClient) {
+    // Named precisely, because "deals aren't being created" has two very
+    // different causes and this is the one the import can see. If the
+    // accounts are loaded and this still fires, the Salesforce ids don't
+    // line up - which is a different problem from the step failing.
     notes.push(
-      `${noClient} deals name an account that isn't here — import Accounts first, then run this again.`,
+      `${noClient} of ${rows.length} deals point at an account that isn't in OneSpace. ${
+        clients.length === 0
+          ? "No accounts have been imported at all — run the Accounts step first."
+          : `${clients.length} accounts are loaded, so these particular ones are missing or their Salesforce ids don't match.`
+      }`,
+    );
+  }
+  if (created === 0 && toCreate.length > 0) {
+    notes.push(
+      `${toCreate.length} deals were ready to create and none were written. That is a database refusal rather than a mapping problem — tell me and I'll read it.`,
     );
   }
 
@@ -670,6 +701,7 @@ export const STEP_FILES: Record<Step, string> = {
   contacts: "Contact",
   deals: "Opportunity",
   lines: "OpportunityLineItem",
+  roles: "OpportunityContactRole",
 };
 
 export const STEP_ORDER: Step[] = [
@@ -679,7 +711,92 @@ export const STEP_ORDER: Step[] = [
   "contacts",
   "deals",
   "lines",
+  "roles",
 ];
+
+// ------------------------------------------------------------ 6. contact roles
+
+/**
+ * Who played what part on each deal.
+ *
+ * Its own object because the role belongs to the pairing: the same person is
+ * the billing contact on one deal and the admin on another.
+ */
+export async function importContactRoles(csv: string): Promise<StepReport> {
+  const { rows } = parseSheet(csv);
+  const { mapContactRole } = await import("@/lib/crm/sfdc");
+
+  const [deals, contacts, existing] = await Promise.all([
+    db.deal.findMany({
+      where: { sfdcId: { not: null } },
+      select: { id: true, sfdcId: true },
+    }),
+    db.contact.findMany({
+      where: { sfdcId: { not: null } },
+      select: { id: true, sfdcId: true },
+    }),
+    db.dealContactRole.findMany({
+      where: { sfdcId: { not: null } },
+      select: { id: true, sfdcId: true },
+    }),
+  ]);
+  const dealBySfdc = new Map(deals.map((d) => [d.sfdcId!, d.id]));
+  const contactBySfdc = new Map(contacts.map((c) => [c.sfdcId!, c.id]));
+  const roleBySfdc = new Map(existing.map((r) => [r.sfdcId!, r.id]));
+
+  const toCreate: Prisma.DealContactRoleCreateManyInput[] = [];
+  const toUpdate: { id: string; data: Prisma.DealContactRoleUpdateInput }[] = [];
+  let skipped = 0;
+  let noDeal = 0;
+
+  for (const raw of rows) {
+    const r = mapContactRole(raw);
+    if (!r) {
+      skipped++;
+      continue;
+    }
+    const dealId = r.dealKey ? dealBySfdc.get(r.dealKey) : undefined;
+    if (!dealId) {
+      noDeal++;
+      skipped++;
+      continue;
+    }
+
+    const data = {
+      dealId,
+      contactId: r.contactKey ? (contactBySfdc.get(r.contactKey) ?? null) : null,
+      role: r.role,
+      isPrimary: r.isPrimary,
+    };
+
+    const known = roleBySfdc.get(r.sfdcId);
+    if (known) toUpdate.push({ id: known, data });
+    else toCreate.push({ sfdcId: r.sfdcId, ...data });
+  }
+
+  let created = 0;
+  for (const group of chunk(toCreate, 1000)) {
+    const result = await db.dealContactRole.createMany({
+      data: group,
+      skipDuplicates: true,
+    });
+    created += result.count;
+  }
+  await inBatches(toUpdate, 20, async (u) => {
+    await db.dealContactRole.update({ where: { id: u.id }, data: u.data });
+  });
+
+  return {
+    step: "roles",
+    rows: rows.length,
+    created,
+    updated: toUpdate.length,
+    skipped,
+    notes: noDeal
+      ? [`${noDeal} roles name a deal that isn't here — import Deals first, then run this again.`]
+      : [],
+  };
+}
 
 /** Unused here, but it keeps the id helper honest across the module. */
 export const _idKey = idKey;

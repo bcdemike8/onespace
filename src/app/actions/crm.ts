@@ -59,7 +59,9 @@ export async function importSfdcAction(
               ? await lib.importContacts(csv)
               : step === "deals"
                 ? await lib.importDeals(csv, types)
-                : await lib.importLines(csv);
+                : step === "lines"
+                  ? await lib.importLines(csv)
+                  : await lib.importContactRoles(csv);
 
     ["/clients", "/crm", "/projects"].forEach((p) => revalidatePath(p, "layout"));
     return { report };

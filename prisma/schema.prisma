@@ -185,6 +185,7 @@ model User {
   ownedClients       Client[]  @relation("ClientOwner")
   ownedContacts      Contact[] @relation("ContactOwner")
   ownedDeals         Deal[]    @relation("DealOwner")
+  createdDeals       Deal[]    @relation("DealCreatedBy")
   leadConsultantOn   Deal[]    @relation("DealLeadConsultant")
   secondConsultantOn Deal[]    @relation("DealSecondaryConsultant")
 
@@ -336,9 +337,10 @@ model Contact {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  primaryFor   Deal[] @relation("DealPrimaryContact")
-  billingFor   Deal[] @relation("DealBillingContact")
-  partnerAeFor Deal[] @relation("DealPartnerAe")
+  primaryFor   Deal[]            @relation("DealPrimaryContact")
+  billingFor   Deal[]            @relation("DealBillingContact")
+  partnerAeFor Deal[]            @relation("DealPartnerAe")
+  dealRoles    DealContactRole[]
 
   @@index([clientId, lastName])
   @@index([email])
@@ -371,6 +373,29 @@ model Deal {
   /// the most valuable thing in the export.
   amount    Decimal?  @db.Decimal(14, 2)
   closeDate DateTime?
+
+  /// Amount weighted by the stage's probability. Salesforce computed it;
+  /// kept as it stood rather than recomputed, so an old deal still reads the
+  /// way it read at the time.
+  expectedRevenue Decimal? @db.Decimal(14, 2)
+
+  /// The stage's odds, 0-100. Not used to forecast anything here - twenty
+  /// deals are open - but it is what the stage meant on the day.
+  probability Int?
+
+  /// Pipeline / Best Case / Commit / Closed / Omitted. The mapping document
+  /// listed four of those five and left out Omitted, which is what 472 lost
+  /// deals actually carry.
+  forecastCategory String?
+
+  /// Salesforce's own fiscal placement, kept because a year read from the
+  /// close date and a year read from the fiscal calendar can differ, and
+  /// arguments about revenue are usually arguments about which was meant.
+  fiscalYear    Int?
+  fiscalQuarter Int?
+
+  /// Total quantity across the line items, as Salesforce held it.
+  quantity Decimal? @db.Decimal(12, 2)
 
   isWon    Boolean @default(false)
   isClosed Boolean @default(false)
@@ -434,14 +459,56 @@ model Deal {
   projectId String?  @unique
   project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
 
+  /// The id this record had in the Salesforce org before the last migration.
+  /// Half the deals carry one, and it is how anything older than that org is
+  /// traced.
+  legacyId String?
+
+  /// Who made it, and when it last moved. Distinct from OneSpace's own
+  /// timestamps, which only know when the import ran.
+  createdById String?
+  createdBy   User?   @relation("DealCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  lastStageChangeAt DateTime?
+  lastActivityAt    DateTime?
+  lastModifiedAt    DateTime?
+
   firstSeenAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  lines DealProduct[]
+  lines        DealProduct[]
+  contactRoles DealContactRole[]
 
   @@index([clientId, closeDate])
   @@index([stage, closeDate])
+}
+
+/**
+ * Who played what part on a deal.
+ * Its own object in Salesforce and its own table here, because a person can
+ * be the billing contact on one deal and the admin on another - the role
+ * belongs to the pairing, not to the person.
+ */
+model DealContactRole {
+  id String @id @default(cuid())
+
+  sfdcId String? @unique
+
+  dealId String
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  contactId String?
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  /// Billing, Audit, Admin, Sales Leader - whatever the org actually used.
+  role String?
+
+  isPrimary Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([dealId])
 }
 
 /**

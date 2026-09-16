@@ -332,6 +332,17 @@ export interface MappedDeal {
   type: "DIRECT" | "PARTNER";
   amount: number | null;
   closeDate: Date | null;
+  expectedRevenue: number | null;
+  probability: number | null;
+  forecastCategory: string | null;
+  fiscalYear: number | null;
+  fiscalQuarter: number | null;
+  quantity: number | null;
+  legacyId: string | null;
+  createdByKey: string | null;
+  lastStageChangeAt: Date | null;
+  lastActivityAt: Date | null;
+  lastModifiedAt: Date | null;
   isWon: boolean;
   isClosed: boolean;
   platform: string | null;
@@ -382,6 +393,18 @@ export function mapDeal(
     type: dealRecordType(row.RecordTypeId, types),
     amount: decimal(row.Amount),
     closeDate: date(row.CloseDate),
+    expectedRevenue: decimal(row.ExpectedRevenue),
+    probability: int(row.Probability),
+    // The readable name, not the code: "Best Case" rather than "BestCase".
+    forecastCategory: text(row.ForecastCategoryName) ?? text(row.ForecastCategory),
+    fiscalYear: int(row.FiscalYear),
+    fiscalQuarter: int(row.FiscalQuarter),
+    quantity: decimal(row.TotalOpportunityQuantity),
+    legacyId: text(row.Legacy_Record_ID__c),
+    createdByKey: refKey(row.CreatedById),
+    lastStageChangeAt: date(row.LastStageChangeDate),
+    lastActivityAt: date(row.LastActivityDate),
+    lastModifiedAt: date(row.LastModifiedDate),
     isWon,
     isClosed: bool(row.IsClosed),
     platform: split.platform,
@@ -482,4 +505,28 @@ export function userEmails(rows: Record<string, string>[]): Map<string, string> 
     if (key && email) out.set(key, email);
   }
   return out;
+}
+
+export interface MappedContactRole {
+  sfdcId: string;
+  dealKey: string | null;
+  contactKey: string | null;
+  role: string | null;
+  isPrimary: boolean;
+}
+
+/** Who played what part on a deal - billing, audit, admin, sales leader. */
+export function mapContactRole(
+  row: Record<string, string>,
+): MappedContactRole | null {
+  const sfdcId = idKey(row.Id);
+  if (!sfdcId) return null;
+
+  return {
+    sfdcId,
+    dealKey: refKey(row.OpportunityId),
+    contactKey: refKey(row.ContactId),
+    role: text(row.Role),
+    isPrimary: bool(row.IsPrimary),
+  };
 }

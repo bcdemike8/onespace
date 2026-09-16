@@ -58,6 +58,12 @@ const STEPS: Step[] = [
     title: "What was sold",
     why: "The products on each deal. Needs Deals and Products already loaded.",
   },
+  {
+    key: "roles",
+    file: "OpportunityContactRole.csv",
+    title: "Who played what part",
+    why: "Billing, audit, admin, sales leader — the role a person had on a particular deal. Needs Deals and Contacts already loaded.",
+  },
 ];
 
 function Report({ state }: { state: CrmImportState }) {
