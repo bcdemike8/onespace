@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { timingSafeEqual } from "node:crypto";
+import { checkCronSecret } from "@/lib/cron-auth";
 import { zoomConfigured } from "@/lib/zoom/client";
 import { syncZoom } from "@/lib/zoom/sync";
 
@@ -8,24 +8,13 @@ export const dynamic = "force-dynamic";
 // Reads Zoom: real call lengths, calls that never hit a calendar, and the
 // commitments inside the transcripts. Same shared secret as the other jobs.
 
-function authorised(request: Request): boolean {
-  const expected = process.env.CRON_SECRET;
-  if (!expected) return false;
-
-  const header = request.headers.get("authorization") ?? "";
-  const bearer = header.startsWith("Bearer ") ? header.slice(7) : "";
-  const query = new URL(request.url).searchParams.get("secret") ?? "";
-  const supplied = bearer || query;
-  if (!supplied) return false;
-
-  const a = Buffer.from(expected);
-  const b = Buffer.from(supplied);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
 
 async function run(request: Request) {
-  if (!authorised(request)) {
-    return NextResponse.json({ error: "Not authorised." }, { status: 401 });
+  const auth = checkCronSecret(request);
+  if (!auth.ok) {
+    // The reason, not just the refusal. This is the line somebody reads in a
+    // cron log at midnight, and "Not authorised" told them nothing.
+    return NextResponse.json({ error: auth.reason }, { status: 401 });
   }
   if (!zoomConfigured()) {
     return NextResponse.json(

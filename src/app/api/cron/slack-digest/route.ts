@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { timingSafeEqual } from "node:crypto";
+import { checkCronSecret } from "@/lib/cron-auth";
 import { slackConfigured } from "@/lib/slack/client";
 import { sendDailyDigests } from "@/lib/slack/send";
 
@@ -8,24 +8,13 @@ export const dynamic = "force-dynamic";
 // Railway's scheduler calls this. It's a public URL, so the shared secret is the
 // only thing keeping it from being a free way to spam everyone's DMs.
 
-function authorised(request: Request): boolean {
-  const expected = process.env.CRON_SECRET;
-  if (!expected) return false;
-
-  const header = request.headers.get("authorization") ?? "";
-  const bearer = header.startsWith("Bearer ") ? header.slice(7) : "";
-  const query = new URL(request.url).searchParams.get("secret") ?? "";
-  const supplied = bearer || query;
-  if (!supplied) return false;
-
-  const a = Buffer.from(expected);
-  const b = Buffer.from(supplied);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
 
 async function run(request: Request) {
-  if (!authorised(request)) {
-    return NextResponse.json({ error: "Not authorised." }, { status: 401 });
+  const auth = checkCronSecret(request);
+  if (!auth.ok) {
+    // The reason, not just the refusal. This is the line somebody reads in a
+    // cron log at midnight, and "Not authorised" told them nothing.
+    return NextResponse.json({ error: auth.reason }, { status: 401 });
   }
   if (!slackConfigured()) {
     return NextResponse.json(
