@@ -1,4 +1,3 @@
-import { Fragment } from "react";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -19,16 +18,27 @@ export const dynamic = "force-dynamic";
  *
  * Three sections in reading order - what is still live, what was won, what
  * was lost - with the pipeline grouped by stage and the closed work grouped
- * by month, newest first. Pipeline is the one place that isn't newest-first:
- * it leads with what is closest to signing, because that is the order
- * somebody works down it. The stages there are the stage path reversed.
+ * by month. Everything is newest first. The pipeline stages run in the order
+ * of the stage path reversed, so the work closest to signing leads.
+ *
+ * Every group arrives rolled up. The page you land on is a summary - each
+ * stage and each month with its count and its total - and you open the one
+ * you came for. See Band below for why that is <details> and not React
+ * state.
  *
  * The filters narrow every section and every total at once, so the headline
  * and the rows below it can never be counting different deals.
  */
 
-/** Enough to read; past this the page is a data export, not a report. */
-const LIMIT = 600;
+/**
+ * The cap on how many deals the page loads.
+ *
+ * It was 600, from when every deal rendered its own row and the page was
+ * thirty screens long. Rolled up, the whole thing is one screen whatever the
+ * count - so the cap can sit above the size of the org and the figures at
+ * the top can count every deal rather than the most recent 600 of them.
+ */
+const LIMIT = 5000;
 
 export default async function DealsPage({
   searchParams,
@@ -70,7 +80,7 @@ export default async function DealsPage({
       where,
       // Ordered again in the report, but ordering here decides which deals
       // survive the cap - and the newest are the ones worth keeping.
-      orderBy: [{ closeDate: "desc" }, { createdAt: "desc" }],
+      orderBy: [{ firstSeenAt: "desc" }, { createdAt: "desc" }],
       take: LIMIT,
       select: {
         id: true,
@@ -83,6 +93,7 @@ export default async function DealsPage({
         probability: true,
         nextStep: true,
         businessType: true,
+        firstSeenAt: true,
         createdAt: true,
         client: { select: { id: true, name: true } },
         owner: { select: { name: true } },
@@ -124,7 +135,10 @@ export default async function DealsPage({
     businessType: d.businessType,
     consultantName: d.leadConsultant?.name ?? null,
     nextStep: d.nextStep,
-    createdAt: d.createdAt,
+    // Salesforce's Created Date where there is one. OneSpace's own createdAt
+    // only knows when the import ran, which would make "newest first" mean
+    // "in whatever order the CSV was read".
+    createdAt: d.firstSeenAt ?? d.createdAt,
   }));
 
   const stats = summary(deals);
@@ -289,6 +303,26 @@ export default async function DealsPage({
   );
 }
 
+/**
+ * One band - the pipeline, or the won, or the lost - with every group inside
+ * it rolled up.
+ *
+ * Two levels of <details>, and no JavaScript at all. The band opens by
+ * default so its stage headings are visible; each stage or month starts
+ * closed, so the page arrives as a summary you can read in one screen and
+ * opens to the deals you actually want. A browser's find-in-page opens a
+ * closed <details> to show a match, which a state-in-React version would
+ * have broken.
+ *
+ * Divs rather than a table, because a <details> cannot live inside a <tbody>
+ * without the parser throwing it out. The grid keeps the columns lined up
+ * across every group, which is the only thing the table was doing for us.
+ */
+
+/** The five columns, shared by every row so they line up across groups. */
+const ROW =
+  "sm:grid sm:grid-cols-[minmax(0,2.4fr)_minmax(0,1fr)_minmax(0,1.3fr)_auto_auto] sm:items-baseline";
+
 function Band({
   section,
   reportHref,
@@ -300,8 +334,9 @@ function Band({
     section.band === "PIPELINE" ? "pipeline" : section.band === "WON" ? "won" : "lost";
 
   return (
-    <section className="card mb-4 overflow-hidden p-0">
-      <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-ink-200 px-4 py-3">
+    <details open className="card group/band mb-4 overflow-hidden p-0">
+      <summary className="flex cursor-pointer list-none flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-ink-200 px-4 py-3 hover:bg-ink-50 [&::-webkit-details-marker]:hidden">
+        <Caret className="group-open/band:rotate-90" />
         <h2 className="text-sm font-medium text-ink-900">{section.label}</h2>
         <span className="text-xs text-ink-500">
           {section.count.toLocaleString()} {section.count === 1 ? "deal" : "deals"}
@@ -312,82 +347,75 @@ function Band({
             {section.totalLabel}
           </span>
         </span>
-      </header>
+      </summary>
 
-      <table className="w-full text-sm">
-        <tbody>
-          {section.groups.map((group) => (
-            // A keyed Fragment, because a group is a heading row plus its
-            // deals and a table cannot nest a wrapper around them.
-            <Fragment key={group.key}>
-              <tr className="bg-ink-50/70">
-                <th
-                  colSpan={5}
-                  className="px-4 py-1.5 text-left text-xs font-medium text-ink-700"
-                >
-                  {/* A stage heading opens that stage; a month heading has no
-                      filter of its own, so it opens the section sorted by
-                      close date, which lands the month at the top. */}
-                  {section.band === "PIPELINE" ? (
-                    <Link
-                      href={reportHref({ band, stage: group.key })}
-                      className="underline"
-                    >
-                      {group.label}
-                    </Link>
-                  ) : (
-                    group.label
-                  )}{" "}
-                  <span className="font-normal text-ink-500">
-                    · {group.deals.length}{" "}
-                    {group.deals.length === 1 ? "deal" : "deals"} ·{" "}
-                    {money(group.total)}
-                  </span>
-                  {group.note ? (
-                    <span className="block font-normal text-ink-500">{group.note}</span>
+      {section.groups.map((group) => (
+        <details key={group.key} className="group/stage border-b border-ink-100 last:border-b-0">
+          <summary className="flex cursor-pointer list-none items-baseline gap-2 bg-ink-50/70 px-4 py-2 text-xs hover:bg-ink-100 [&::-webkit-details-marker]:hidden">
+            <Caret className="group-open/stage:rotate-90" />
+            <span className="font-medium text-ink-800">{group.label}</span>
+            <span className="text-ink-500">
+              {group.deals.length} {group.deals.length === 1 ? "deal" : "deals"}
+            </span>
+            <span className="ml-auto font-medium tabular-nums text-ink-800">
+              {money(group.total)}
+            </span>
+          </summary>
+
+          {group.note ? (
+            <p className="px-4 pt-2 text-xs text-ink-500">{group.note}</p>
+          ) : null}
+
+          <div>
+            {group.deals.map((d) => (
+              <div
+                key={d.id}
+                className={`${ROW} gap-x-3 border-t border-ink-100/70 px-4 py-2 text-sm hover:bg-ink-50/50`}
+              >
+                <div>
+                  <Link href={`/crm/deals/${d.id}`} className="text-ink-900 underline">
+                    {d.name}
+                  </Link>
+                  {d.nextStep && section.band === "PIPELINE" ? (
+                    <p className="text-xs text-ink-500">Next: {d.nextStep}</p>
                   ) : null}
-                </th>
-              </tr>
+                </div>
+                <div>
+                  <Link
+                    href={`/crm/${d.clientId}`}
+                    className="text-xs text-ink-600 underline"
+                  >
+                    {d.clientName}
+                  </Link>
+                </div>
+                <div className="text-xs text-ink-500">
+                  {[d.partnerName ?? "Direct", d.ownerName].filter(Boolean).join(" · ")}
+                </div>
+                <div className="text-xs whitespace-nowrap text-ink-500 sm:text-right">
+                  {d.closeDate ? formatMedium(d.closeDate) : "no close date"}
+                  {section.band === "PIPELINE" && d.probability !== null ? (
+                    <span className="sm:block"> {d.probability}%</span>
+                  ) : null}
+                </div>
+                <div className="font-medium tabular-nums whitespace-nowrap text-ink-900 sm:text-right">
+                  {money(d.amount)}
+                </div>
+              </div>
+            ))}
+          </div>
 
-              {group.deals.map((d) => (
-                <tr
-                  key={d.id}
-                  className="border-b border-ink-100/70 align-baseline hover:bg-ink-50/50"
-                >
-                  <td className="px-4 py-2">
-                    <Link href={`/crm/deals/${d.id}`} className="text-ink-900 underline">
-                      {d.name}
-                    </Link>
-                    {d.nextStep && section.band === "PIPELINE" ? (
-                      <p className="text-xs text-ink-500">Next: {d.nextStep}</p>
-                    ) : null}
-                  </td>
-                  <td className="px-3 py-2">
-                    <Link
-                      href={`/crm/${d.clientId}`}
-                      className="text-xs text-ink-600 underline"
-                    >
-                      {d.clientName}
-                    </Link>
-                  </td>
-                  <td className="px-3 py-2 text-xs whitespace-nowrap text-ink-500">
-                    {[d.partnerName ?? "Direct", d.ownerName].filter(Boolean).join(" · ")}
-                  </td>
-                  <td className="px-3 py-2 text-right text-xs whitespace-nowrap text-ink-500">
-                    {d.closeDate ? formatMedium(d.closeDate) : "no close date"}
-                    {section.band === "PIPELINE" && d.probability !== null ? (
-                      <span className="block">{d.probability}%</span>
-                    ) : null}
-                  </td>
-                  <td className="px-4 py-2 text-right font-medium tabular-nums whitespace-nowrap text-ink-900">
-                    {money(d.amount)}
-                  </td>
-                </tr>
-              ))}
-            </Fragment>
-          ))}
-        </tbody>
-      </table>
+          {section.band === "PIPELINE" ? (
+            <p className="border-t border-ink-100 px-4 py-2 text-xs">
+              <Link
+                href={reportHref({ band, stage: group.key })}
+                className="text-brand-600 underline"
+              >
+                View report ({group.label})
+              </Link>
+            </p>
+          ) : null}
+        </details>
+      ))}
 
       <footer className="border-t border-ink-100 px-4 py-2.5 text-xs">
         <Link href={reportHref({ band })} className="text-brand-600 underline">
@@ -395,7 +423,19 @@ function Band({
         </Link>
         <span className="text-ink-400"> — every row, sortable, with a CSV.</span>
       </footer>
-    </section>
+    </details>
+  );
+}
+
+/** The twist-down arrow. Points right when shut, down when open. */
+function Caret({ className = "" }: { className?: string }) {
+  return (
+    <span
+      aria-hidden
+      className={`inline-block w-3 shrink-0 text-ink-400 transition-transform ${className}`}
+    >
+      ▸
+    </span>
   );
 }
 

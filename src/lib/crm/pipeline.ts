@@ -30,7 +30,11 @@ export interface PipelineDeal {
   businessType: string | null;
   consultantName: string | null;
   nextStep: string | null;
-  /** When it was created, for deals with no close date to sort by. */
+  /**
+   * When the deal was created - Salesforce's own Created Date where we have
+   * it, not the night the import ran. That distinction is the difference
+   * between "newest first" meaning something and meaning nothing.
+   */
   createdAt: Date;
 }
 
@@ -84,17 +88,18 @@ function monthOf(d: Date): { key: string; label: string } {
 export const PIPELINE_STAGE_ORDER: DealStage[] = [...OPEN_STAGES].reverse();
 
 /**
- * Deals closing soonest first, then the undated.
+ * Newest first, by when the deal was created.
  *
- * A deal with no close date is not "closing today" - it is unscheduled, and
- * sorting it to the top would put the least certain work where the most
- * urgent should be.
+ * What the pipeline is sorted by. An open deal's close date is a forecast,
+ * and sorting by it descending leads with whatever is furthest away - the
+ * least certain work at the top of the list. When it came in is a fact.
  */
-function bySoonest(a: PipelineDeal, b: PipelineDeal): number {
-  if (!a.closeDate && !b.closeDate) return b.createdAt.getTime() - a.createdAt.getTime();
-  if (!a.closeDate) return 1;
-  if (!b.closeDate) return -1;
-  return a.closeDate.getTime() - b.closeDate.getTime();
+export function byNewestCreated(a: PipelineDeal, b: PipelineDeal): number {
+  const d = b.createdAt.getTime() - a.createdAt.getTime();
+  // A stable-enough tie-break: the import gives a whole Salesforce export the
+  // same second when CreatedDate is missing, and a list that reshuffles
+  // between two loads of the same page looks broken.
+  return d !== 0 ? d : a.name.localeCompare(b.name);
 }
 
 /** Newest first. Undated deals fall back to when they were created. */
@@ -112,6 +117,8 @@ function byNewest(a: PipelineDeal, b: PipelineDeal): number {
  * to close" is a stage question and a month grouping would scatter the four
  * deals at Contract across four headings. Won and lost are grouped by month,
  * newest first, so "recently" is a heading rather than a calculation.
+ *
+ * Everything inside a group is newest first.
  */
 export function sections(deals: PipelineDeal[]): Section[] {
   const open = deals.filter((d) => bandOf(d) === "PIPELINE");
@@ -149,7 +156,7 @@ export function sections(deals: PipelineDeal[]): Section[] {
 function byStage(deals: PipelineDeal[]): DealGroup[] {
   const out: DealGroup[] = [];
   for (const stage of PIPELINE_STAGE_ORDER) {
-    const inStage = deals.filter((d) => d.stage === stage).sort(bySoonest);
+    const inStage = deals.filter((d) => d.stage === stage).sort(byNewestCreated);
     if (inStage.length === 0) continue;
     out.push({
       key: stage,
@@ -164,7 +171,7 @@ function byStage(deals: PipelineDeal[]): DealGroup[] {
   // rather than silently dropped, because a deal missing from the pipeline
   // is worse than a deal in an odd heading.
   const placed = new Set(out.flatMap((g) => g.deals.map((d) => d.id)));
-  const rest = deals.filter((d) => !placed.has(d.id)).sort(bySoonest);
+  const rest = deals.filter((d) => !placed.has(d.id)).sort(byNewestCreated);
   if (rest.length > 0) {
     out.push({
       key: "__other",

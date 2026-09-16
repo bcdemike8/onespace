@@ -68,22 +68,68 @@ test("the pipeline leads with what is closest to signing", () => {
   ]);
 });
 
-test("inside a stage, the soonest close comes first", () => {
+test("inside a stage, the newest deal comes first", () => {
+  // Newest by when the deal was created, not by its close date. An open
+  // deal's close date is a forecast, so sorting by it descending leads with
+  // whatever is furthest away — the least certain work at the top.
   const [pipeline] = sections([
-    deal({ id: "later", closeDate: new Date(Date.UTC(2026, 11, 1)) }),
-    deal({ id: "sooner", closeDate: new Date(Date.UTC(2026, 6, 1)) }),
+    deal({ id: "old", createdAt: new Date(Date.UTC(2026, 0, 1)) }),
+    deal({ id: "new", createdAt: new Date(Date.UTC(2026, 5, 1)) }),
+    deal({ id: "middle", createdAt: new Date(Date.UTC(2026, 2, 1)) }),
   ]);
-  assert.deepEqual(pipeline.groups[0].deals.map((d) => d.id), ["sooner", "later"]);
+  assert.deepEqual(pipeline.groups[0].deals.map((d) => d.id), [
+    "new",
+    "middle",
+    "old",
+  ]);
 });
 
-test("an undated open deal sorts last rather than first", () => {
-  // No close date is "unscheduled", not "closing today". Sorting it to the
-  // top would put the least certain work where the most urgent should be.
+test("a close date, near or far, does not reorder the pipeline", () => {
   const [pipeline] = sections([
-    deal({ id: "undated", closeDate: null }),
-    deal({ id: "dated", closeDate: new Date(Date.UTC(2026, 11, 1)) }),
+    deal({
+      id: "soon-but-old",
+      closeDate: new Date(Date.UTC(2026, 6, 1)),
+      createdAt: new Date(Date.UTC(2026, 0, 1)),
+    }),
+    deal({
+      id: "far-but-new",
+      closeDate: new Date(Date.UTC(2026, 11, 1)),
+      createdAt: new Date(Date.UTC(2026, 5, 1)),
+    }),
   ]);
-  assert.deepEqual(pipeline.groups[0].deals.map((d) => d.id), ["dated", "undated"]);
+  assert.deepEqual(pipeline.groups[0].deals.map((d) => d.id), [
+    "far-but-new",
+    "soon-but-old",
+  ]);
+});
+
+test("an undated open deal keeps its place by when it was created", () => {
+  // No close date is "unscheduled", and it is no reason to hide a deal at
+  // the bottom of the stage it is actually sitting in.
+  const [pipeline] = sections([
+    deal({
+      id: "dated",
+      closeDate: new Date(Date.UTC(2026, 11, 1)),
+      createdAt: new Date(Date.UTC(2026, 0, 1)),
+    }),
+    deal({ id: "undated", closeDate: null, createdAt: new Date(Date.UTC(2026, 5, 1)) }),
+  ]);
+  assert.deepEqual(pipeline.groups[0].deals.map((d) => d.id), ["undated", "dated"]);
+});
+
+test("deals created in the same second keep a stable order", () => {
+  // The import stamps a whole Salesforce export with one timestamp where
+  // CreatedDate is missing. A list that reshuffles between two loads of the
+  // same page looks broken.
+  const same = new Date(Date.UTC(2026, 0, 1));
+  const order = () =>
+    sections([
+      deal({ id: "c", name: "Charlie", createdAt: same }),
+      deal({ id: "a", name: "Alpha", createdAt: same }),
+      deal({ id: "b", name: "Bravo", createdAt: same }),
+    ])[0].groups[0].deals.map((d) => d.id);
+  assert.deepEqual(order(), ["a", "b", "c"]);
+  assert.deepEqual(order(), order());
 });
 
 test("an open deal with an unrecognised stage is shown, not dropped", () => {
