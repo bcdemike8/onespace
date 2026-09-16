@@ -45,6 +45,16 @@ Filenames are matched loosely, so `Account.csv` and
 `Account - Sheet1.csv` both work. A file that isn't there is skipped rather
 than treated as an error, so you can import a subset.
 
+## Checking what landed
+
+    npm run crm:status
+
+Counts what's in the database against what the export contains, and then how
+many deals carry each of the fields that were added late — the owner, the
+partner AE, the probability, the contact roles. A percentage well under the
+export's own means that step needs running again. It reads totals and writes
+nothing.
+
 ## Running less than all of it
 
 One step on its own:
