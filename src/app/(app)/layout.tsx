@@ -15,6 +15,7 @@ const BASE_NAV: NavItem[] = [
   { href: "/inbox", label: "Inbox", icon: "✉" },
   { href: "/meetings", label: "Meetings", icon: "◷" },
   { href: "/crm/dashboard", label: "Closed business", icon: "◑" },
+  { href: "/crm/deals", label: "Deals", icon: "◇" },
   { href: "/crm", label: "Accounts", icon: "◈" },
   { href: "/projects", label: "Projects", icon: "▤" },
   { href: "/reports", label: "Reports", icon: "◔" },
