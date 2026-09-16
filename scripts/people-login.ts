@@ -5,6 +5,12 @@
  *   npm run people:login -- --set         give everyone who can't a password
  *   npm run people:login -- --set --email=ricky@revoptics.co     just one person
  *   npm run people:login -- --set --password='the same for all'  your own, not generated
+ *   npm run people:login -- --set --all --password='...'  everybody, including
+ *                                         people whose password already works
+ *
+ * Note the single quotes around a password. In bash a "!" inside double
+ * quotes is history expansion, so --password="OneSpace2026!" sets something
+ * other than what you typed and you find out when nobody can sign in.
  *
  * Why this exists: the Salesforce import creates a person for every
  * colleague it finds who has no OneSpace account, so their deals and
@@ -39,6 +45,16 @@ const flag = (name: string): string | undefined => {
 const set = flag("set") !== undefined;
 const onlyEmail = flag("email")?.trim().toLowerCase();
 const given = flag("password");
+/**
+ * Everybody, not just the locked-out.
+ *
+ * Off by default, and deliberately: the people who can already sign in have
+ * passwords that work, and one of them is whoever is running this. Resetting
+ * them to a shared string is a real choice with real costs - it ends their
+ * sessions and hands one credential to the whole team - so it is a flag
+ * somebody types rather than something that happens quietly.
+ */
+const everyone = flag("all") !== undefined;
 
 /**
  * A password somebody has to read off a screen and type into a phone.
@@ -102,10 +118,21 @@ async function main() {
     console.log("");
   }
 
-  if (stuck.length === 0) {
+  if (stuck.length === 0 && !(set && everyone)) {
     console.log("Everybody can sign in. Nothing to do.\n");
+    if (!set) {
+      console.log(
+        "To give everybody the same password anyway:\n\n" +
+          "  npm run people:login -- --set --all --password='your password'\n\n" +
+          "Single quotes: in bash a ! inside double quotes means something else.\n",
+      );
+    }
     await db.$disconnect();
     return;
+  }
+
+  if (stuck.length === 0) {
+    console.log("Everybody can already sign in — --all is resetting them anyway.\n");
   }
 
   console.log("Cannot sign in:");
@@ -126,9 +153,10 @@ async function main() {
     return;
   }
 
+  const pool = everyone ? people : stuck;
   const targets = onlyEmail
-    ? stuck.filter((p) => p.email.toLowerCase() === onlyEmail)
-    : stuck;
+    ? pool.filter((p) => p.email.toLowerCase() === onlyEmail)
+    : pool;
 
   if (targets.length === 0) {
     // Two very different situations, and "nobody matched" describes neither.
@@ -153,6 +181,13 @@ async function main() {
     process.exit(1);
   }
 
+  if (everyone) {
+    console.log(
+      "Resetting everybody, including accounts that already worked. Anyone signed\n" +
+        "in right now will be signed out.\n",
+    );
+  }
+
   console.log("Setting logins. Send each person their own line:\n");
 
   for (const p of targets) {
@@ -169,9 +204,14 @@ async function main() {
 
   console.log(
     `\n${targets.length} ${targets.length === 1 ? "person" : "people"} can now sign in.\n\n` +
-      "These are starting passwords, not secrets to keep: anyone who sees this\n" +
-      "terminal or the message you paste them into has them. Have each person change\n" +
-      "theirs once they are in.\n",
+      (given && given.trim()
+        ? "One password for the whole team is a fine way to get everybody in today and\n" +
+          "a poor one to leave in place: it cannot be taken away from one person, and\n" +
+          "it ends up in a Slack thread forever. Have each person change theirs from\n" +
+          "their own account page once they are in.\n"
+        : "These are starting passwords, not secrets to keep: anyone who sees this\n" +
+          "terminal or the message you paste them into has them. Have each person\n" +
+          "change theirs once they are in.\n"),
   );
 
   await db.$disconnect();
