@@ -10,6 +10,7 @@
 
 import "./load-env";
 import { requireDatabaseUrl } from "./load-env";
+import { requireCurrentClient } from "./check-generated-client";
 import { db } from "@/lib/db";
 
 /** What the export contains, so the report can say more than a number. */
@@ -26,6 +27,7 @@ const mark = (actual: number, expected: number) =>
 
 async function main() {
   requireDatabaseUrl();
+  requireCurrentClient();
 
   const [clients, contacts, deals, products, lines, roles, won, partners] =
     await Promise.all([

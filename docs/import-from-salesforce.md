@@ -34,6 +34,23 @@ If you'd rather not keep it on disk, pass it for a single run instead:
 
     DATABASE_URL='postgresql://…' npm run crm:status
 
+## After a `git pull`
+
+Run this, every time, before anything else:
+
+    npm install
+
+Not `git pull` alone. The pull brings the schema; the database client the
+scripts actually talk to is built *from* that schema into `node_modules`,
+and only an install rebuilds it. Skip it and the import fails on every row
+with a message that looks like a bug in the importer:
+
+    Unknown argument `funders`. Available options are marked with ?.
+
+If that happens, `npx prisma generate` fixes it on its own in a couple of
+seconds. The scripts now check for this before they touch anything and say
+so in one line rather than printing a thousand of those.
+
 ## Every time
 
 Put the CSVs in a folder — anywhere, a folder on your Desktop is fine. Then:
@@ -84,6 +101,19 @@ The steps, in the order they have to run:
 
 `RecordType.csv` is read automatically if it's in the folder, and used by
 accounts and deals.
+
+## When a field arrives empty
+
+    npm run import:sfdc -- ~/Desktop/sfdc-export --columns
+
+Prints each file's column names and stops without touching the database.
+
+Salesforce's own fields — `Amount`, `CloseDate`, `AccountId` — are named the
+same in every org. Custom ones carry whatever API name somebody typed when
+they created the field, years ago, and the export header is the only place
+that name survives. So if a field shows on the Salesforce page but lands
+blank in OneSpace, run this, find the column that looks like it, and send me
+the name. Adding it is a one-line change.
 
 ## People who have left
 

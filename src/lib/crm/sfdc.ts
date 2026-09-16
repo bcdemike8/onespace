@@ -68,6 +68,40 @@ export function date(value: string | undefined): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+/**
+ * A column, under whichever of its names this export happens to use.
+ *
+ * Standard fields are safe to name once - AccountId is AccountId in every
+ * org. Custom ones are not: the API name is whatever somebody typed when
+ * they made the field, and the export header is the only surviving record
+ * of it. So the candidates are tried in order, exact first, then against a
+ * flattened form of every header - lower case, no underscores, no trailing
+ * __c - which catches the spelling drift without catching a different field.
+ *
+ * Listing several names is not a guess dressed up as tolerance: it is the
+ * difference between a field arriving empty and somebody noticing, six
+ * months later, that it was never imported.
+ */
+const flatten = (name: string): string =>
+  name
+    .toLowerCase()
+    .replace(/__c$/, "")
+    .replace(/[^a-z0-9]/g, "");
+
+export function pick(
+  row: Record<string, string>,
+  ...names: string[]
+): string | undefined {
+  for (const name of names) {
+    if (row[name] !== undefined) return row[name];
+  }
+  const wanted = new Set(names.map(flatten));
+  for (const key of Object.keys(row)) {
+    if (wanted.has(flatten(key))) return row[key];
+  }
+  return undefined;
+}
+
 /** A multi-select picklist. Salesforce joins the values with semicolons. */
 export function multi(value: string | undefined): string[] {
   return (value ?? "")
@@ -402,6 +436,17 @@ export interface MappedDeal {
   /// The partner AE, a Contact on the partner's own account.
   partnerAeKey: string | null;
   firstSeenAt: Date | null;
+  isSql: boolean;
+  sqlDate: Date | null;
+  dealLength: number | null;
+  auditCompleted: boolean;
+  auditCompletedDate: Date | null;
+  threeMonthAuditDate: Date | null;
+  projectDuration: number | null;
+  contractRef: string | null;
+  syncedQuoteRef: string | null;
+  campaignSourceRef: string | null;
+  lastModifiedByKey: string | null;
 }
 
 export function mapDeal(
@@ -463,6 +508,30 @@ export function mapDeal(
     billingContactKey: refKey(row.Billing_Contact__c),
     partnerAeKey: refKey(row.Partner_AE__c),
     firstSeenAt: date(row.CreatedDate),
+
+    // The rest of the Opportunity page. Named tolerantly because these are
+    // custom fields: the labels are what the page shows, the API names are
+    // whatever they were created as, and the two need not resemble each
+    // other. A field that starts with a digit gets an X in front of it -
+    // hence X3_Month_Audit_Date__c for "3 Month Audit Date".
+    isSql: bool(pick(row, "SQL__c", "Is_SQL__c", "Sales_Qualified__c")),
+    sqlDate: date(pick(row, "SQL_Date__c", "Sales_Qualified_Date__c")),
+    dealLength: int(pick(row, "Deal_Length__c", "Deal_Length_Days__c")),
+    auditCompleted: bool(pick(row, "Audit_Completed__c")),
+    auditCompletedDate: date(pick(row, "Audit_Completed_Date__c")),
+    threeMonthAuditDate: date(
+      pick(
+        row,
+        "X3_Month_Audit_Date__c",
+        "3_Month_Audit_Date__c",
+        "Three_Month_Audit_Date__c",
+      ),
+    ),
+    projectDuration: int(pick(row, "Project_Duration__c")),
+    contractRef: text(pick(row, "ContractId", "Contract__c")),
+    syncedQuoteRef: text(pick(row, "SyncedQuoteId", "Synced_Quote__c")),
+    campaignSourceRef: text(pick(row, "CampaignId", "Primary_Campaign_Source__c")),
+    lastModifiedByKey: refKey(row.LastModifiedById),
   };
 }
 

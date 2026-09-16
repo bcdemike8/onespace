@@ -19,10 +19,17 @@
  *   --from=contacts         start at a step and carry on
  *   --people=create         what to do about people who have left:
  *                           create (default) | none | their@email.address
+ *   --columns               print each file's column names and stop, without
+ *                           touching the database. Custom Salesforce fields
+ *                           carry whatever API name somebody typed years ago,
+ *                           and the export header is the only record of it -
+ *                           so when a field arrives empty, this is how to
+ *                           find out what it is really called.
  */
 
 import "./load-env";
 import { requireDatabaseUrl } from "./load-env";
+import { requireCurrentClient } from "./check-generated-client";
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { STEP_FILES, STEP_ORDER, type Step, type StepReport } from "@/lib/crm/import";
@@ -56,6 +63,7 @@ if (!existsSync(folder) || !statSync(folder).isDirectory()) {
   die(`There's no folder at ${folder}.`);
 }
 requireDatabaseUrl();
+requireCurrentClient();
 
 /**
  * Find the file for a step.
@@ -141,6 +149,26 @@ async function main() {
 
   const present = readdirSync(folder!).filter((f) => f.toLowerCase().endsWith(".csv"));
   console.log(`${present.length} CSV files found.`);
+
+  if (flags.has("columns")) {
+    for (const step of STEP_ORDER) {
+      const base = STEP_FILES[step];
+      const csv = read(base);
+      if (!csv) {
+        console.log(`\n${base}.csv — not in that folder.`);
+        continue;
+      }
+      const header = csv.split("\n")[0] ?? "";
+      const names = header
+        .split(",")
+        .map((c) => c.trim().replace(/^"|"$/g, ""))
+        .filter(Boolean);
+      console.log(`\n${base}.csv — ${names.length} columns`);
+      console.log(names.map((n) => `  ${n}`).join("\n"));
+    }
+    await db.$disconnect();
+    return;
+  }
 
   const recordTypes = read("RecordType") ?? undefined;
   if (!recordTypes) {

@@ -11,6 +11,7 @@ import {
   mapDeal,
   mapProduct,
   multi,
+  pick,
   recordTypes,
   refKey,
   splitType,
@@ -253,4 +254,94 @@ test("users map id to email, which is what OneSpace matches on", () => {
   ]);
   assert.equal(map.get("005ao000005StjR"), "brianna@revoptics.co");
   assert.equal(map.size, 1, "a user with no email maps to nobody");
+});
+
+// --------------------------------------------- the rest of the Opportunity page
+
+test("a column is found under whichever of its names the export used", () => {
+  // Exact first.
+  assert.equal(pick({ SQL_Date__c: "a", sqldate: "b" }, "SQL_Date__c"), "a");
+  // Then flattened: case, spaces, underscores and the __c suffix don't count.
+  assert.equal(pick({ "SQL Date": "2026-07-14" }, "SQL_Date__c"), "2026-07-14");
+  assert.equal(pick({ sql_date: "x" }, "SQL_Date__c"), "x");
+  // Candidates are tried in order.
+  assert.equal(
+    pick({ Sales_Qualified_Date__c: "x" }, "SQL_Date__c", "Sales_Qualified_Date__c"),
+    "x",
+  );
+  // But a longer name is a different field, not a spelling of this one.
+  assert.equal(pick({ SQL_Date_Owner__c: "x" }, "SQL_Date__c"), undefined);
+  assert.equal(pick({ Id: "1" }, "SQL_Date__c"), undefined);
+});
+
+const DEAL = { Id: "006ao00000000001", Name: "State Affairs - DS" };
+
+test("the SQL checkbox and the date it was ticked both come across", () => {
+  const d = mapDeal(
+    { ...DEAL, SQL__c: "1", SQL_Date__c: "2026-07-14 11:29:00" },
+    TYPES,
+  )!;
+  assert.equal(d.isSql, true);
+  assert.equal(d.sqlDate?.toISOString(), "2026-07-14T11:29:00.000Z");
+});
+
+test("a field whose label starts with a digit is read through its X", () => {
+  const d = mapDeal(
+    {
+      ...DEAL,
+      Audit_Completed__c: "1",
+      Audit_Completed_Date__c: "2026-08-01",
+      X3_Month_Audit_Date__c: "2026-10-14",
+    },
+    TYPES,
+  )!;
+  assert.equal(d.auditCompleted, true);
+  assert.equal(d.auditCompletedDate?.toISOString().slice(0, 10), "2026-08-01");
+  assert.equal(d.threeMonthAuditDate?.toISOString().slice(0, 10), "2026-10-14");
+});
+
+test("a deal length of zero is zero, not missing", () => {
+  // The screenshot that started this showed "Deal Length 0". A truthiness
+  // check anywhere in the chain would have turned it into an em dash.
+  assert.equal(mapDeal({ ...DEAL, Deal_Length__c: "0" }, TYPES)!.dealLength, 0);
+  assert.equal(mapDeal({ ...DEAL, Project_Duration__c: "0" }, TYPES)!.projectDuration, 0);
+});
+
+test("the three lookups with nowhere to point are kept as they stood", () => {
+  const d = mapDeal(
+    {
+      ...DEAL,
+      ContractId: "800ao00000000001",
+      SyncedQuoteId: "",
+      CampaignId: "701ao00000000001",
+    },
+    TYPES,
+  )!;
+  assert.equal(d.contractRef, "800ao00000000001");
+  assert.equal(d.syncedQuoteRef, null);
+  assert.equal(d.campaignSourceRef, "701ao00000000001");
+});
+
+test("who last touched the deal is kept alongside when", () => {
+  const d = mapDeal(
+    { ...DEAL, LastModifiedById: "005ao00000000009", LastModifiedDate: "2026-07-20 17:50:00" },
+    TYPES,
+  )!;
+  assert.equal(d.lastModifiedByKey, "005ao0000000000");
+  assert.equal(d.lastModifiedAt?.toISOString(), "2026-07-20T17:50:00.000Z");
+});
+
+test("none of the new fields invent a value when the column isn't exported", () => {
+  const d = mapDeal(DEAL, TYPES)!;
+  assert.equal(d.isSql, false);
+  assert.equal(d.sqlDate, null);
+  assert.equal(d.dealLength, null);
+  assert.equal(d.auditCompleted, false);
+  assert.equal(d.auditCompletedDate, null);
+  assert.equal(d.threeMonthAuditDate, null);
+  assert.equal(d.projectDuration, null);
+  assert.equal(d.contractRef, null);
+  assert.equal(d.syncedQuoteRef, null);
+  assert.equal(d.campaignSourceRef, null);
+  assert.equal(d.lastModifiedByKey, null);
 });

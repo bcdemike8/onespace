@@ -78,6 +78,61 @@ export const STAGE_LABEL: Record<DealStage, string> = {
   CLOSED_LOST: "Closed Lost",
 };
 
+/**
+ * The path a deal walks, in order.
+ *
+ * Six open stages and then one of two endings. Salesforce drew this as a row
+ * of chevrons across the top of every opportunity, and it is the one part of
+ * that page people read without meaning to: it answers "where is this" before
+ * you have finished looking at it.
+ */
+export const OPEN_STAGES: DealStage[] = [
+  "QUALIFICATION",
+  "DISCOVERY",
+  "ASSIGNED",
+  "INTRODUCTION",
+  "PROPOSAL",
+  "CONTRACT",
+];
+
+export type StageStep = {
+  stage: DealStage;
+  label: string;
+  state: "done" | "current" | "todo";
+};
+
+/**
+ * A won deal walked the whole road, so every stage behind it is ticked.
+ *
+ * A lost one did not, and nothing in the export says where it stopped -
+ * Salesforce overwrites StageName with "Closed Lost" and keeps no trail. So
+ * the stages before it are left plain rather than ticked: a tick on Contract
+ * would be the page asserting the deal reached contract, which for 472 lost
+ * deals is a claim nobody can stand behind.
+ *
+ * Won and Lost never appear together, because Salesforce replaced the final
+ * chevron rather than adding one.
+ */
+export function stagePath(current: DealStage): StageStep[] {
+  const lost = current === "CLOSED_LOST";
+  const won = current === "CLOSED_WON";
+  const ending: DealStage = lost ? "CLOSED_LOST" : "CLOSED_WON";
+  const at = OPEN_STAGES.indexOf(current);
+
+  const steps: StageStep[] = OPEN_STAGES.map((stage, i) => ({
+    stage,
+    label: STAGE_LABEL[stage],
+    state: won || (at >= 0 && i < at) ? "done" : i === at ? "current" : "todo",
+  }));
+
+  steps.push({
+    stage: ending,
+    label: STAGE_LABEL[ending],
+    state: won || lost ? "current" : "todo",
+  });
+  return steps;
+}
+
 /** A search box that does nothing until it has something to go on. */
 export const searchWhere = (q: string | undefined, fields: string[]) => {
   const term = (q ?? "").trim();

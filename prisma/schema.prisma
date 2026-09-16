@@ -187,6 +187,7 @@ model User {
   ownedContacts      Contact[] @relation("ContactOwner")
   ownedDeals         Deal[]    @relation("DealOwner")
   createdDeals       Deal[]    @relation("DealCreatedBy")
+  modifiedDeals      Deal[]    @relation("DealLastModifiedBy")
   leadConsultantOn   Deal[]    @relation("DealLeadConsultant")
   secondConsultantOn Deal[]    @relation("DealSecondaryConsultant")
 
@@ -452,6 +453,34 @@ model Deal {
   nextStep     String?
   description  String?
 
+  /// Sales-qualified: the box, and the day it was ticked. Everything before
+  /// SQL is conversation; the date is what turns "how long do deals take"
+  /// from a feeling into a number.
+  isSql   Boolean   @default(false)
+  sqlDate DateTime?
+
+  /// Days from qualification to close, as Salesforce computed it. Kept as it
+  /// stood rather than recomputed here: a formula somebody edited in 2025
+  /// would otherwise quietly rewrite 2023.
+  dealLength Int?
+
+  /// The post-delivery audit - whether it happened, when, and when the
+  /// three-month one falls due.
+  auditCompleted      Boolean   @default(false)
+  auditCompletedDate  DateTime?
+  threeMonthAuditDate DateTime?
+
+  /// Start to completion, in days, as Salesforce held it.
+  projectDuration Int?
+
+  /// Three Salesforce lookups with nothing to point at here - a Contract, a
+  /// synced Quote, a Campaign. Carried across as whatever the export held so
+  /// the row on the page stays where it was: a field somebody used to read
+  /// going blank is a question, a field vanishing is a bug report.
+  contractRef       String?
+  syncedQuoteRef    String?
+  campaignSourceRef String?
+
   lostReason       String?
   lostReasonDetail String?
 
@@ -507,6 +536,9 @@ model Deal {
   /// timestamps, which only know when the import ran.
   createdById String?
   createdBy   User?   @relation("DealCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  lastModifiedById String?
+  lastModifiedBy   User?   @relation("DealLastModifiedBy", fields: [lastModifiedById], references: [id], onDelete: SetNull)
 
   lastStageChangeAt DateTime?
   lastActivityAt    DateTime?

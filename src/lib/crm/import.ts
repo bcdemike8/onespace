@@ -680,6 +680,19 @@ export async function importDeals(
         ? (contactBySfdc.get(d.partnerAeKey) ?? null)
         : null,
       firstSeenAt: d.firstSeenAt,
+      isSql: d.isSql,
+      sqlDate: d.sqlDate,
+      dealLength: d.dealLength,
+      auditCompleted: d.auditCompleted,
+      auditCompletedDate: d.auditCompletedDate,
+      threeMonthAuditDate: d.threeMonthAuditDate,
+      projectDuration: d.projectDuration,
+      contractRef: d.contractRef,
+      syncedQuoteRef: d.syncedQuoteRef,
+      campaignSourceRef: d.campaignSourceRef,
+      lastModifiedById: d.lastModifiedByKey
+        ? (users.get(d.lastModifiedByKey) ?? null)
+        : null,
     };
 
     const known = dealBySfdc.get(d.sfdcId);
