@@ -29,9 +29,21 @@ export async function loginAction(
 
   // Same message either way — don't leak which emails exist.
   const invalid = { error: "That email and password don't match." };
-  if (!user || !user.isActive) return invalid;
+  if (!user) return invalid;
   if (!(await verifyPassword(parsed.data.password, user.passwordHash))) {
     return invalid;
+  }
+
+  // Checked after the password, not before. Somebody who has typed the right
+  // password has already proved the account is theirs, so naming the real
+  // problem leaks nothing - and "that email and password don't match" to a
+  // person holding the correct password is true, useless, and sends them
+  // round in circles. It is what the whole team saw.
+  if (!user.isActive) {
+    return {
+      error:
+        "That account isn't switched on yet. An admin can activate it on the People page.",
+    };
   }
 
   await createSession(user.id);

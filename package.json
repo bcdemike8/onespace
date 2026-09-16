@@ -24,7 +24,8 @@
     "test": "node --import tsx --test tests/*.test.ts",
     "import:sfdc": "tsx scripts/import-sfdc.ts",
     "crm:status": "tsx scripts/crm-status.ts",
-    "crm:platforms": "tsx scripts/crm-platforms.ts"
+    "crm:platforms": "tsx scripts/crm-platforms.ts",
+    "people:login": "tsx scripts/people-login.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

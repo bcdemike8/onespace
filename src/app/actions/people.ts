@@ -154,7 +154,15 @@ export async function resetPasswordAction(
 
   await db.user.update({
     where: { id },
-    data: { passwordHash: await hashPassword(password) },
+    data: {
+      passwordHash: await hashPassword(password),
+      // Setting somebody's password is an unambiguous statement that they
+      // should be able to sign in, so it says that in full. Without this,
+      // the colleagues the Salesforce import created - inactive, with no
+      // usable hash - stayed locked out after a reset, and the login page
+      // told them their password was wrong. It wasn't.
+      isActive: true,
+    },
   });
 
   // Force a fresh sign-in everywhere.
