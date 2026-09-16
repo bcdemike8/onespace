@@ -2,6 +2,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { parseSheet } from "@/lib/csv";
+import { planAccounts } from "@/lib/crm/plan";
 import {
   idKey,
   mapAccount,
@@ -203,27 +204,17 @@ export async function importAccounts(
   const existing = await db.client.findMany({
     select: { id: true, sfdcId: true, name: true },
   });
-  const bySfdc = new Map(
-    existing.filter((c) => c.sfdcId).map((c) => [c.sfdcId!, c.id]),
-  );
-  const takenNames = new Map(existing.map((c) => [c.name.toLowerCase(), c.id]));
-
   const partners = await ensurePartners(rows.map((r) => r.Type));
 
-  const notes: string[] = [];
-  let created = 0;
-  let updated = 0;
-  let skipped = 0;
-
-  const mapped = rows.map((r) => mapAccount(r, types));
-
-  for (const a of mapped) {
-    if (!a) {
-      skipped++;
-      continue;
-    }
-
-    const data = {
+  // Decided first, written second. See planAccounts: this used to write one
+  // row at a time inside the loop, which is 1,037 round trips to a database
+  // in another data centre - over a minute, and long enough that the request
+  // was cut off before it finished. The work was correct and nobody ever saw
+  // the result.
+  const plan = planAccounts(
+    rows.map((raw) => mapAccount(raw, types)),
+    existing,
+    (a) => ({
       accountType: a.accountType,
       legalName: a.legalName,
       website: a.website,
@@ -245,54 +236,37 @@ export async function importAccounts(
       ownerId: a.ownerKey ? (users.get(a.ownerKey) ?? null) : null,
       partnerId: a.platform ? (partners.get(a.platform) ?? null) : null,
       firstSeenAt: a.firstSeenAt,
-    };
+    }),
+  );
 
-    const known = bySfdc.get(a.sfdcId);
-    if (known) {
-      await db.client.update({ where: { id: known }, data });
-      updated++;
-      continue;
-    }
+  const creates = plan.creates as unknown as Prisma.ClientCreateManyInput[];
+  const updates = plan.updates as unknown as {
+    id: string;
+    data: Prisma.ClientUpdateInput;
+  }[];
+  const notes = plan.notes;
+  const skipped = plan.skipped;
 
-    // A client of this name already exists, under a different Salesforce id
-    // or none at all. 17 of the 1,037 accounts share a name with another.
-    //
-    // Claiming the existing row would silently merge two companies; failing
-    // would stop the import on row 400. So the new one takes a distinguished
-    // name and the collision is reported for a person to resolve.
-    const clash = takenNames.get(a.name.toLowerCase());
-    let name = a.name;
-    if (clash) {
-      const owner = existing.find((c) => c.id === clash);
-      if (owner && !owner.sfdcId) {
-        // An untagged client of the same name is almost certainly the same
-        // company, typed in by hand before the CRM existed. Adopt it.
-        await db.client.update({
-          where: { id: clash },
-          data: { ...data, sfdcId: a.sfdcId },
-        });
-        bySfdc.set(a.sfdcId, clash);
-        updated++;
-        notes.push(`Matched existing client "${a.name}" to Salesforce by name.`);
-        continue;
-      }
-      let n = 2;
-      while (takenNames.has(`${a.name} (${n})`.toLowerCase())) n++;
-      name = `${a.name} (${n})`;
-      notes.push(`Two accounts are called "${a.name}" — imported the second as "${name}".`);
-    }
-
-    const row = await db.client.create({
-      data: { name, sfdcId: a.sfdcId, ...data },
-      select: { id: true, name: true, sfdcId: true },
-    });
-    existing.push(row);
-    bySfdc.set(a.sfdcId, row.id);
-    takenNames.set(name.toLowerCase(), row.id);
-    created++;
+  let created = 0;
+  for (const group of chunk(creates, 500)) {
+    const result = await db.client.createMany({ data: group, skipDuplicates: true });
+    created += result.count;
   }
 
-  return { step: "accounts", rows: rows.length, created, updated, skipped, notes };
+  // Updates have different values per row, so there is no single statement
+  // for them - but twenty at a time is seconds rather than minutes.
+  await inBatches(updates, 20, async (u) => {
+    await db.client.update({ where: { id: u.id }, data: u.data });
+  });
+
+  return {
+    step: "accounts",
+    rows: rows.length,
+    created,
+    updated: updates.length,
+    skipped,
+    notes,
+  };
 }
 
 /** Outreach, Salesloft, Apollo — as Partner rows, which already exist here. */
@@ -321,8 +295,17 @@ async function ensurePartners(values: (string | undefined)[]): Promise<Map<strin
 
 export async function importProducts(csv: string): Promise<StepReport> {
   const { rows } = parseSheet(csv);
-  let created = 0;
-  let updated = 0;
+
+  // Read the catalogue once rather than asking about each product in turn.
+  const existing = await db.product.findMany({
+    select: { id: true, sfdcId: true, name: true },
+  });
+  const bySfdc = new Map(existing.filter((p) => p.sfdcId).map((p) => [p.sfdcId!, p.id]));
+  const byName = new Map(existing.map((p) => [p.name.toLowerCase(), p.id]));
+
+  const creates: Prisma.ProductCreateManyInput[] = [];
+  const updates: { id: string; data: Prisma.ProductUpdateInput }[] = [];
+  const seen = new Set<string>();
   let skipped = 0;
 
   for (const raw of rows) {
@@ -331,10 +314,7 @@ export async function importProducts(csv: string): Promise<StepReport> {
       skipped++;
       continue;
     }
-    const existing = await db.product.findFirst({
-      where: { OR: [{ sfdcId: p.sfdcId }, { name: p.name }] },
-      select: { id: true },
-    });
+
     const data = {
       name: p.name,
       description: p.description,
@@ -344,21 +324,39 @@ export async function importProducts(csv: string): Promise<StepReport> {
       active: p.active,
       sfdcId: p.sfdcId,
     };
-    if (existing) {
-      await db.product.update({ where: { id: existing.id }, data });
-      updated++;
-    } else {
-      await db.product.create({ data });
-      created++;
+
+    const known = bySfdc.get(p.sfdcId) ?? byName.get(p.name.toLowerCase());
+    if (known) {
+      updates.push({ id: known, data });
+      continue;
     }
+
+    // Product names are unique, and a catalogue can list the same thing
+    // twice. Take the first and count the rest as skipped rather than
+    // letting the insert fail.
+    if (seen.has(p.name.toLowerCase())) {
+      skipped++;
+      continue;
+    }
+    seen.add(p.name.toLowerCase());
+    creates.push(data);
   }
+
+  let created = 0;
+  for (const group of chunk(creates, 500)) {
+    const result = await db.product.createMany({ data: group, skipDuplicates: true });
+    created += result.count;
+  }
+  await inBatches(updates, 20, async (u) => {
+    await db.product.update({ where: { id: u.id }, data: u.data });
+  });
 
   const withSow = rows.filter((r) => text(r.SOW_URL__c)).length;
   return {
     step: "products",
     rows: rows.length,
     created,
-    updated,
+    updated: updates.length,
     skipped,
     notes: withSow
       ? [`${withSow} products carry a statement-of-work link.`]
@@ -614,6 +612,7 @@ export async function importLines(csv: string): Promise<StepReport> {
   let skipped = 0;
 
   const toCreate: Prisma.DealProductCreateManyInput[] = [];
+  const toUpdate: { id: string; data: Prisma.DealProductUpdateInput }[] = [];
 
   for (const raw of rows) {
     const l = mapLine(raw);
@@ -644,18 +643,18 @@ export async function importLines(csv: string): Promise<StepReport> {
     };
 
     const known = lineBySfdc.get(l.sfdcId);
-    if (known) {
-      await db.dealProduct.update({ where: { id: known }, data });
-      updated++;
-    } else {
-      toCreate.push({ sfdcId: l.sfdcId, ...data });
-    }
+    if (known) toUpdate.push({ id: known, data });
+    else toCreate.push({ sfdcId: l.sfdcId, ...data });
   }
 
   for (const group of chunk(toCreate, 1000)) {
     const result = await db.dealProduct.createMany({ data: group, skipDuplicates: true });
     created += result.count;
   }
+  await inBatches(toUpdate, 20, async (u) => {
+    await db.dealProduct.update({ where: { id: u.id }, data: u.data });
+  });
+  updated = toUpdate.length;
 
   return { step: "lines", rows: rows.length, created, updated, skipped, notes: [] };
 }
