@@ -29,7 +29,11 @@ async function main() {
 
   const [clients, contacts, deals, products, lines, roles, won, partners] =
     await Promise.all([
-      db.client.count(),
+      // Only the ones that came from Salesforce. OneSpace had clients of its
+      // own before the CRM existed - real delivery clients, typed in by hand -
+      // and counting those against the export's total makes correct behaviour
+      // look like a fault.
+      db.client.count({ where: { sfdcId: { not: null } } }),
       db.contact.count(),
       db.deal.count(),
       db.product.count(),
@@ -44,8 +48,9 @@ async function main() {
     ]);
 
   const revenue = Math.round(Number(won._sum.amount ?? 0));
+  const ownClients = await db.client.count({ where: { sfdcId: null } });
 
-  console.log("\nWhat's in OneSpace\n");
+  console.log("\nFrom the Salesforce export\n");
   console.log(`  accounts       ${clients.toLocaleString().padStart(7)}   ${mark(clients, EXPECTED.clients)} (export has ${EXPECTED.clients.toLocaleString()})`);
   console.log(`  contacts       ${contacts.toLocaleString().padStart(7)}   ${mark(contacts, EXPECTED.contacts)} (export has ${EXPECTED.contacts.toLocaleString()})`);
   console.log(`  deals          ${deals.toLocaleString().padStart(7)}   ${mark(deals, EXPECTED.deals)} (export has ${EXPECTED.deals.toLocaleString()})`);
@@ -53,6 +58,11 @@ async function main() {
   console.log(`  deal products  ${lines.toLocaleString().padStart(7)}`);
   console.log(`  contact roles  ${roles.toLocaleString().padStart(7)}`);
   console.log(`  partners       ${partners.toLocaleString().padStart(7)}`);
+  if (ownClients > 0) {
+    console.log(
+      `\n  plus ${ownClients.toLocaleString()} clients that were already in OneSpace and aren't in the export.`,
+    );
+  }
 
   console.log(`\n  won            ${won._count.toLocaleString().padStart(7)}   ${mark(won._count, EXPECTED.won)}`);
   console.log(`  revenue        ${("$" + revenue.toLocaleString()).padStart(7)}   ${mark(revenue, EXPECTED.revenue)} (export totals $${EXPECTED.revenue.toLocaleString()})`);
