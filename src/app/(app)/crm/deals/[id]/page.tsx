@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { formatMedium } from "@/lib/dates";
 import { STAGE_LABEL, money, stagePath } from "@/lib/crm/view";
 import { Field, Figure, Related, Section } from "@/components/crm/Record";
+import { StagePath } from "@/components/crm/StagePath";
 import { PageHeader } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -125,27 +126,13 @@ export default async function DealPage({
       />
 
       <div className="card mb-4 p-5">
-        <ol className="flex flex-wrap gap-1">
-          {path.map((step) => (
-            <li
-              key={step.stage}
-              className={`flex-1 rounded px-2 py-1.5 text-center text-[11px] whitespace-nowrap ${
-                step.state === "current"
-                  ? deal.stage === "CLOSED_LOST"
-                    ? "bg-ink-700 font-medium text-white"
-                    : "bg-brand-600 font-medium text-white"
-                  : step.state === "done"
-                    ? "bg-brand-100 text-brand-700"
-                    : "bg-ink-50 text-ink-400"
-              }`}
-            >
-              {/* Labelled throughout, where Salesforce showed a bare tick and
-                  made you hover. Six identical ticks answer "is it done"
-                  and not "done with what", which is the question. */}
-              {step.state === "done" ? `✓ ${step.label}` : step.label}
-            </li>
-          ))}
-        </ol>
+        <StagePath
+          dealId={deal.id}
+          current={deal.stage}
+          path={path}
+          isClosed={deal.isClosed}
+          isWon={deal.isWon}
+        />
         <div className="mt-4 flex flex-wrap items-baseline gap-x-8 gap-y-3">
           <div>
             <p className="text-xs text-ink-500">Amount</p>

@@ -411,3 +411,66 @@ export async function deleteLineAction(
   refresh();
   redirect(`/crm/deals/${line.dealId}`);
 }
+
+// --------------------------------------------------------------- stage moves
+
+/**
+ * Move a deal to a stage, from the path on its own page.
+ *
+ * Its own action rather than a trip through the whole deal form, because a
+ * stage change is one decision and should cost one decision's worth of
+ * effort - but it is not a small write. Won and lost follow from it,
+ * probability follows from it when it closes, and the date it last moved is
+ * what "stage last changed" means.
+ *
+ * Probability is only touched when the deal closes. A closed deal is 100 or
+ * 0 and there is nothing to argue about; an open one's odds are somebody's
+ * judgement, and walking a deal from Discovery to Proposal is no reason to
+ * overwrite it.
+ */
+export async function setDealStageAction(
+  _prev: SaveState,
+  form: FormData,
+): Promise<SaveState> {
+  const user = await requireUser();
+
+  const id = text(form.get("id"));
+  if (!id) return { error: "Which deal?" };
+
+  const stage = choice(form.get("stage"), STAGES, "QUALIFICATION");
+  const lostReason = text(form.get("lostReason"));
+
+  const before = await db.deal.findUnique({
+    where: { id },
+    select: { stage: true, probability: true },
+  });
+  if (!before) return { error: "That deal has gone." };
+
+  if (before.stage === stage && !lostReason) {
+    // Already there. Not an error, and not worth a write that would move
+    // "stage last changed" to today for no reason.
+    return { ok: true };
+  }
+
+  const flags = stageFlags(stage);
+  const closing = flags.isClosed;
+
+  await db.deal.update({
+    where: { id },
+    data: {
+      stage,
+      ...flags,
+      ...(closing ? { probability: defaultProbability(stage) } : {}),
+      // Only when moving to lost, and only when something was typed - so
+      // reopening a deal doesn't strip the reason it was lost last time.
+      ...(stage === "CLOSED_LOST" && lostReason ? { lostReason } : {}),
+      ...(before.stage !== stage ? { lastStageChangeAt: new Date() } : {}),
+      lastModifiedById: user.id,
+      lastModifiedAt: new Date(),
+    },
+  });
+
+  refresh();
+  revalidatePath(`/crm/deals/${id}`);
+  return { ok: true };
+}
