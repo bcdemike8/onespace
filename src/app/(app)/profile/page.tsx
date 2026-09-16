@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { addDays, formatMedium, today } from "@/lib/dates";
+import { addDays, formatMedium, formatMonth, monthEnd, monthStart, today } from "@/lib/dates";
 import { centsToInput, formatHours } from "@/lib/format";
 import {
   clockIn,
@@ -43,11 +43,24 @@ function Card({
 export default async function ProfilePage() {
   const user = await requireUser();
 
-  const [thirtyDays, sessions] = await Promise.all([
-    db.timeEntry.aggregate({
-      where: { userId: user.id, date: { gte: addDays(today(), -29) } },
-      _sum: { minutes: true },
-    }),
+  // Calendar months, not a rolling window. A rolling thirty days answers a
+  // question nobody asks: invoices, utilisation and "have I logged enough
+  // this month" are all month-shaped, and a number that quietly drops the
+  // first of the month off the back can't be checked against any of them.
+  const thisMonth = monthStart(today());
+  const lastMonth = monthStart(addDays(thisMonth, -1));
+
+  const minutesLogged = (from: Date, to: Date) =>
+    db.timeEntry
+      .aggregate({
+        where: { userId: user.id, date: { gte: from, lte: to } },
+        _sum: { minutes: true },
+      })
+      .then((r) => r._sum.minutes ?? 0);
+
+  const [thisMonthMinutes, lastMonthMinutes, sessions] = await Promise.all([
+    minutesLogged(thisMonth, monthEnd(thisMonth)),
+    minutesLogged(lastMonth, monthEnd(lastMonth)),
     db.session.count({ where: { userId: user.id, expiresAt: { gt: new Date() } } }),
   ]);
 
@@ -94,10 +107,16 @@ export default async function ProfilePage() {
         </div>
       </div>
 
-      <div className="mb-6 grid gap-3 sm:grid-cols-3">
+      <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Stat
-          label="Logged (30 days)"
-          value={`${formatHours(thirtyDays._sum.minutes ?? 0)}h`}
+          label="Logged this month"
+          value={`${formatHours(thisMonthMinutes)}h`}
+          hint={formatMonth(thisMonth)}
+        />
+        <Stat
+          label="Logged last month"
+          value={`${formatHours(lastMonthMinutes)}h`}
+          hint={formatMonth(lastMonth)}
         />
         <Stat label="Role" value={user.role === "ADMIN" ? "Admin" : "Member"} />
         <Stat
