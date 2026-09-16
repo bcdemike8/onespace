@@ -50,13 +50,31 @@ export async function peopleOptions(): Promise<Option[]> {
   return rows.map((u) => ({ value: u.id, label: u.name }));
 }
 
+/**
+ * The whole product catalogue, retired products included.
+ *
+ * Filtering to active-only was wrong, and wrong in the way that hides itself:
+ * Salesforce marks a product inactive when it stops being sold, but a deal
+ * that closed in 2023 still has to record what was actually sold in 2023.
+ * A picker that offers only what is on sale today can't describe last year,
+ * so the line gets typed in freehand or not recorded at all.
+ *
+ * Retired products are grouped under a heading rather than mixed in, so
+ * picking one is deliberate.
+ */
 export async function productOptions(): Promise<Option[]> {
   const rows = await db.product.findMany({
-    where: { active: true },
-    select: { id: true, name: true },
+    select: { id: true, name: true, code: true, active: true },
     orderBy: { name: "asc" },
   });
-  return rows.map((p) => ({ value: p.id, label: p.name }));
+  return rows.map((p) => ({
+    value: p.id,
+    // A middot, not brackets: half these names already end in "(1-19)", and
+    // "Engage Implementation (1-19) (ENG-IMP-19)" is two sets of parentheses
+    // doing different jobs.
+    label: p.code ? `${p.name} · ${p.code}` : p.name,
+    group: p.active ? undefined : "No longer sold",
+  }));
 }
 
 /**

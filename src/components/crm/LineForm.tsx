@@ -46,6 +46,17 @@ export function LineForm({
       {values.id ? <input type="hidden" name="id" value={values.id} /> : null}
       <input type="hidden" name="dealId" value={values.dealId} />
 
+      {products.length === 0 ? (
+        // An empty dropdown looks like a broken page. Say which of the two
+        // things it actually is, and where to fix it.
+        <p className="mb-4 rounded-lg border border-warn-500/30 bg-warn-50 px-4 py-2.5 text-sm text-warn-700">
+          There are no products in the catalogue yet, so the dropdown below is
+          empty. Type what was sold into Product name instead — or load
+          Product2.csv with the Products step of the Salesforce import and the
+          whole catalogue appears here.
+        </p>
+      ) : null}
+
       <FormColumns
         title="Details"
         left={
@@ -56,6 +67,11 @@ export function LineForm({
               value={values.productId}
               options={products}
               empty="— not in the catalogue —"
+              hint={
+                products.length === 0
+                  ? undefined
+                  : `${products.length} in the catalogue. Retired ones are listed under "No longer sold" — an old deal still needs them.`
+              }
             />
             <TextInput
               label="Product name"

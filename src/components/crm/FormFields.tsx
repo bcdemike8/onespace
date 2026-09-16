@@ -109,6 +109,8 @@ export function NumberInput({
 export interface Option {
   value: string;
   label: string;
+  /** Optional heading to sit under. Options with none come first, ungrouped. */
+  group?: string;
 }
 
 /**
@@ -137,10 +139,26 @@ export function Select({
         className="input"
       >
         {empty === null ? null : <option value="">{empty}</option>}
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
+        {options
+          .filter((o) => !o.group)
+          .map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        {/* Grouped options keep their heading, so a retired product is
+            offered and labelled rather than hidden. Hiding it is what
+            stops an old deal being recorded at all. */}
+        {[...new Set(options.map((o) => o.group).filter(Boolean))].map((g) => (
+          <optgroup key={g} label={g as string}>
+            {options
+              .filter((o) => o.group === g)
+              .map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+          </optgroup>
         ))}
       </select>
     </Wrap>
