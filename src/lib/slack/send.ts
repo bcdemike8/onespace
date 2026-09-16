@@ -18,6 +18,8 @@ export interface DigestOutcome {
   failed: { name: string; error: string }[];
   /** People with no Slack id yet — the actionable half of "nothing happened". */
   unlinked: string[];
+  /** People who turned the digest off on their own profile. Not a problem. */
+  optedOut: number;
 }
 
 const firstNameOf = (name: string) => name.trim().split(/\s+/)[0] || name;
@@ -48,7 +50,13 @@ export async function sendDailyDigests(): Promise<DigestOutcome> {
 
   const people = await db.user.findMany({
     where: { isActive: true },
-    select: { id: true, name: true, slackUserId: true },
+    select: {
+      id: true,
+      name: true,
+      slackUserId: true,
+      dailyDigest: true,
+      meetingNudges: true,
+    },
     orderBy: { name: "asc" },
   });
   const ids = people.map((p) => p.id);
@@ -97,9 +105,23 @@ export async function sendDailyDigests(): Promise<DigestOutcome> {
 
   const waitingByUser = new Map(meetings.map((m) => [m.userId, m._count]));
 
-  const outcome: DigestOutcome = { sent: 0, skipped: 0, failed: [], unlinked: [] };
+  const outcome: DigestOutcome = {
+    sent: 0,
+    skipped: 0,
+    failed: [],
+    unlinked: [],
+    optedOut: 0,
+  };
 
   for (const person of people) {
+    // Turned off on their own profile. Checked before any of the work below,
+    // because the cheapest way to honour a preference is to not go looking
+    // for reasons to override it.
+    if (!person.dailyDigest) {
+      outcome.optedOut += 1;
+      continue;
+    }
+
     const mine = tasks.filter((t) => t.assigneeId === person.id);
     const overdue: DigestTask[] = [];
     const dueToday: DigestTask[] = [];
@@ -138,7 +160,9 @@ export async function sendDailyDigests(): Promise<DigestOutcome> {
     // Quiet when there's genuinely nothing: no work due, nothing overdue, no
     // project of theirs in trouble, and their time is already up to date. A
     // 5am message that says "all clear" every day gets muted within a week.
-    const meetingsWaiting = waitingByUser.get(person.id) ?? 0;
+    const meetingsWaiting = person.meetingNudges
+      ? (waitingByUser.get(person.id) ?? 0)
+      : 0;
 
     const nothingDue =
       overdue.length === 0 &&

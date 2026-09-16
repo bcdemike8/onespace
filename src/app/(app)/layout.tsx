@@ -6,6 +6,7 @@ import { BRAND } from "@/lib/brand";
 import { NavLinks, type NavItem } from "@/components/NavLinks";
 import { TimerBar } from "@/components/TimerBar";
 import { UpdateNotice } from "@/components/UpdateNotice";
+import { Avatar } from "@/components/Avatar";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,7 @@ const BASE_NAV: NavItem[] = [
   { href: "/crm", label: "Accounts", icon: "◈" },
   { href: "/projects", label: "Projects", icon: "▤" },
   { href: "/reports", label: "Reports", icon: "◔" },
+  { href: "/team", label: "Team", icon: "⊙" },
 ];
 
 const ADMIN_NAV: NavItem[] = [
@@ -78,12 +80,19 @@ export default async function AppLayout({
 
         <div className="border-t border-ink-200 p-3">
           <Link
-            href="/account"
-            className="block truncate text-sm font-medium text-ink-800 hover:text-brand-700"
+            href="/profile"
+            className="flex items-center gap-2.5 rounded-lg p-1 hover:bg-ink-100"
           >
-            {user.name}
+            <Avatar person={user} size={32} />
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-medium text-ink-800">
+                {user.name}
+              </span>
+              <span className="block truncate text-xs text-ink-500">
+                {user.email}
+              </span>
+            </span>
           </Link>
-          <p className="truncate text-xs text-ink-500">{user.email}</p>
           <form action={logoutAction} className="mt-2">
             <button type="submit" className="btn-ghost btn-sm w-full justify-start px-0">
               Sign out
@@ -107,7 +116,14 @@ export default async function AppLayout({
               {item.label}
             </Link>
           ))}
-          <form action={logoutAction} className="ml-auto shrink-0">
+          <Link
+            href="/profile"
+            aria-label="Your profile"
+            className="ml-auto shrink-0"
+          >
+            <Avatar person={user} size={28} />
+          </Link>
+          <form action={logoutAction} className="shrink-0">
             <button type="submit" className="btn-ghost btn-sm">
               Sign out
             </button>

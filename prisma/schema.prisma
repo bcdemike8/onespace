@@ -167,9 +167,49 @@ model User {
   /// separates "their password is wrong" from "they never tried".
   lastSignedInAt DateTime?
 
+  // --------------------------------------------------------------- profile
+  //
+  // Everything here is the person's own to set. None of it is required, and
+  // none of it gates anything: a colleague with a blank profile is a
+  // colleague, not a warning.
+
+  title       String?
+  phone       String?
+  linkedinUrl String?
+  startDate   DateTime?
+
+  /// An IANA zone - "America/Los_Angeles". Used to show what time it is
+  /// where somebody is, which on a team spread across three of them is the
+  /// difference between a quick question and a 6am Slack message.
+  timeZone String?
+
+  /// The working day, as minutes from midnight in their own zone. 540 is
+  /// 9am. Two integers rather than two strings because "is it 17:00 yet"
+  /// should be arithmetic, not string comparison.
+  workStartMinute Int?
+  workEndMinute   Int?
+
+  /// The days they work, 0 for Sunday through 6 for Saturday. Empty means
+  /// nobody has said, which is different from "they work no days".
+  workDays Int[] @default([])
+
+  /// When the photo last changed, and — being null or not — whether there is
+  /// one. The bytes themselves live in UserAvatar; see the note there.
+  avatarUpdatedAt DateTime?
+
+  // --------------------------------------------------------- notifications
+
+  /// The Slack morning digest. Opt-out, not opt-in: it is useful, and the
+  /// people who don't want it are the ones who will find this setting.
+  dailyDigest Boolean @default(true)
+
+  /// A Slack nudge when a meeting is waiting to be confirmed.
+  meetingNudges Boolean @default(true)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  avatarImage   UserAvatar?
   sessions      Session[]
   assignedTasks Task[]         @relation("TaskAssignee")
   timeEntries   TimeEntry[]
@@ -196,6 +236,34 @@ model User {
   secondConsultantOn Deal[]    @relation("DealSecondaryConsultant")
 
   @@index([isActive])
+}
+
+/**
+ * A profile photo, in Postgres rather than in a bucket.
+ *
+ * Its own table for one reason: every page in the app calls requireUser(),
+ * and Prisma has no way to leave a column out of a findUnique. With the
+ * bytes on User, opening any page in OneSpace would pull a photo out of the
+ * database, hand it to the React server renderer, and — the first time it
+ * reached a client component — fail to serialise it at all. Which is exactly
+ * what happened.
+ *
+ * In a table of its own the bytes are only read by the one route that serves
+ * them. User keeps avatarUpdatedAt, which is the cache key and the "is there
+ * a photo" flag, and costs nothing to carry.
+ *
+ * Not Supabase Storage: a few people at eighty kilobytes each is not a
+ * storage problem, and this is one fewer credential to hold, back up, and
+ * explain in two years.
+ */
+model UserAvatar {
+  userId   String @id
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Always small — the browser crops and resizes to 512px before upload.
+  data     Bytes
+  mimeType String
+
+  updatedAt DateTime @updatedAt
 }
 
 model Session {
