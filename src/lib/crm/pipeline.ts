@@ -177,24 +177,44 @@ function byStage(deals: PipelineDeal[]): DealGroup[] {
   return out;
 }
 
+/**
+ * Closed deals by the month they closed, newest month first.
+ *
+ * Deals with no close date get their own group at the end rather than being
+ * filed under the month they were created. Those are two different facts,
+ * and folding them together produced a heading that read "September 2026 —
+ * no close date" above a mix of deals that closed in September and deals
+ * that closed on no date at all. A record with a missing field belongs in a
+ * group that says so, not in whichever month it was typed.
+ */
 function byMonthDesc(deals: PipelineDeal[]): DealGroup[] {
   const groups = new Map<string, DealGroup>();
+  const undated: PipelineDeal[] = [];
 
   for (const d of [...deals].sort(byNewest)) {
-    const when = d.closeDate ?? d.createdAt;
-    const { key, label } = monthOf(when);
-    const group = groups.get(key) ?? {
-      key,
-      label: d.closeDate ? label : `${label} — no close date`,
-      deals: [],
-      total: 0,
-    };
+    if (!d.closeDate) {
+      undated.push(d);
+      continue;
+    }
+    const { key, label } = monthOf(d.closeDate);
+    const group = groups.get(key) ?? { key, label, deals: [], total: 0 };
     group.deals.push(d);
     group.total += value(d);
     groups.set(key, group);
   }
 
-  return [...groups.values()].sort((a, b) => (a.key < b.key ? 1 : -1));
+  const out = [...groups.values()].sort((a, b) => (a.key < b.key ? 1 : -1));
+
+  if (undated.length > 0) {
+    out.push({
+      key: "__undated",
+      label: "No close date",
+      note: "Closed, but nobody recorded when. They are outside every month total.",
+      deals: undated,
+      total: sum(undated),
+    });
+  }
+  return out;
 }
 
 export interface Summary {

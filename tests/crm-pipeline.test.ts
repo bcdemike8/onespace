@@ -104,12 +104,19 @@ test("closed months run newest first, and so do the deals inside them", () => {
   assert.deepEqual(won.groups[0].deals.map((d) => d.id), ["mar-late", "mar-early"]);
 });
 
-test("a closed deal with no close date says so rather than hiding", () => {
+test("a closed deal with no close date gets its own group, at the end", () => {
+  // Not filed under the month it was created in. Those are different facts,
+  // and folding them together once produced a heading reading "September
+  // 2026 — no close date" over a mix of both.
   const [, won] = sections([
-    deal({ id: "x", isClosed: true, isWon: true, closeDate: null }),
+    deal({ id: "dated", isClosed: true, isWon: true, closeDate: new Date(Date.UTC(2026, 8, 9)) }),
+    deal({ id: "undated", isClosed: true, isWon: true, closeDate: null,
+           createdAt: new Date(Date.UTC(2026, 8, 16)) }),
   ]);
-  assert.equal(won.count, 1);
-  assert.match(won.groups[0].label, /no close date/);
+  assert.equal(won.count, 2);
+  assert.deepEqual(won.groups.map((g) => g.label), ["September 2026", "No close date"]);
+  assert.deepEqual(won.groups[0].deals.map((d) => d.id), ["dated"]);
+  assert.deepEqual(won.groups[1].deals.map((d) => d.id), ["undated"]);
 });
 
 test("section totals are the sum of their groups", () => {

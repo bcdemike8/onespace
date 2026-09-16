@@ -132,6 +132,26 @@ export default async function DealsPage({
 
   const filtered = Boolean(q || params.owner || params.type || params.year);
 
+  /**
+   * A link into the report, carrying whatever the page is already filtered
+   * to. Clicking a figure has to open the deals that made that figure - not
+   * a similar set that happens to be lying around.
+   */
+  const reportHref = (extra: Record<string, string>) => {
+    const next = new URLSearchParams();
+    for (const [k, v] of Object.entries({
+      q: params.q,
+      owner: params.owner,
+      type: params.type,
+      year: params.year,
+      ...extra,
+    })) {
+      if (v) next.set(k, v);
+    }
+    const qs = next.toString();
+    return qs ? `/crm/deals/report?${qs}` : "/crm/deals/report";
+  };
+
   return (
     <div className="mx-auto max-w-6xl">
       <PageHeader
@@ -153,6 +173,7 @@ export default async function DealsPage({
         {/* The overdue part is the warning, not the whole pipeline. Colouring
             the headline would say every one of these deals is late. */}
         <Tile
+          href={reportHref({ band: "pipeline" })}
           label="In pipeline"
           value={money(stats.openValue)}
           note={`${stats.openCount} open`}
@@ -165,17 +186,20 @@ export default async function DealsPage({
           }
         />
         <Tile
+          href={reportHref({ band: "won", within: "90" })}
           label="Won in the last 90 days"
           value={money(stats.recentWonValue)}
           note={`${stats.recentWonCount} deal${stats.recentWonCount === 1 ? "" : "s"}`}
           tone="good"
         />
         <Tile
+          href={reportHref({ band: "won" })}
           label="Won, all shown"
           value={money(stats.wonValue)}
           note={`${stats.wonCount} deals · ${money(stats.averageWon)} average`}
         />
         <Tile
+          href={reportHref({ band: "all" })}
           label="Win rate"
           value={stats.winRate === null ? "—" : `${Math.round(stats.winRate * 100)}%`}
           note={
@@ -254,13 +278,24 @@ export default async function DealsPage({
       ) : (
         report
           .filter((s) => s.count > 0)
-          .map((s) => <Band key={s.band} section={s} />)
+          .map((s) => (
+            <Band key={s.band} section={s} reportHref={reportHref} />
+          ))
       )}
     </div>
   );
 }
 
-function Band({ section }: { section: Section }) {
+function Band({
+  section,
+  reportHref,
+}: {
+  section: Section;
+  reportHref: (extra: Record<string, string>) => string;
+}) {
+  const band =
+    section.band === "PIPELINE" ? "pipeline" : section.band === "WON" ? "won" : "lost";
+
   return (
     <section className="card mb-4 overflow-hidden p-0">
       <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-ink-200 px-4 py-3">
@@ -287,7 +322,19 @@ function Band({ section }: { section: Section }) {
                   colSpan={5}
                   className="px-4 py-1.5 text-left text-xs font-medium text-ink-700"
                 >
-                  {group.label}{" "}
+                  {/* A stage heading opens that stage; a month heading has no
+                      filter of its own, so it opens the section sorted by
+                      close date, which lands the month at the top. */}
+                  {section.band === "PIPELINE" ? (
+                    <Link
+                      href={reportHref({ band, stage: group.key })}
+                      className="underline"
+                    >
+                      {group.label}
+                    </Link>
+                  ) : (
+                    group.label
+                  )}{" "}
                   <span className="font-normal text-ink-500">
                     · {group.deals.length}{" "}
                     {group.deals.length === 1 ? "deal" : "deals"} ·{" "}
@@ -338,17 +385,27 @@ function Band({ section }: { section: Section }) {
           ))}
         </tbody>
       </table>
+
+      <footer className="border-t border-ink-100 px-4 py-2.5 text-xs">
+        <Link href={reportHref({ band })} className="text-brand-600 underline">
+          View report ({section.label})
+        </Link>
+        <span className="text-ink-400"> — every row, sortable, with a CSV.</span>
+      </footer>
     </section>
   );
 }
 
 function Tile({
+  href,
   label,
   value,
   note,
   alert,
   tone,
 }: {
+  /** Where the rows behind this figure live. */
+  href: string;
   label: string;
   value: string;
   note: string;
@@ -357,7 +414,7 @@ function Tile({
   tone?: "good";
 }) {
   return (
-    <div className="card p-4">
+    <Link href={href} className="card block p-4 transition-colors hover:border-brand-300">
       <p className="text-xs text-ink-500">{label}</p>
       <p
         className={`mt-0.5 text-2xl font-semibold tabular-nums ${
@@ -368,7 +425,8 @@ function Tile({
       </p>
       <p className="text-xs text-ink-500">{note}</p>
       {alert ? <p className="text-xs font-medium text-warn-700">{alert}</p> : null}
-    </div>
+      <p className="mt-2 text-xs text-brand-600 underline">View report</p>
+    </Link>
   );
 }
 
