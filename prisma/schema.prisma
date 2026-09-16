@@ -178,6 +178,16 @@ model User {
   linkedinUrl String?
   startDate   DateTime?
 
+  /// A birthday, as a day and a month, with no year.
+  ///
+  /// Not a DateTime: a date column would need a year, nobody asked for one,
+  /// and inventing 1900 means every query that touches this has to know to
+  /// ignore part of it. What the team wants is "it's Ricky's birthday on
+  /// Thursday", and that is a month and a day. February 29 is allowed - it
+  /// is a real birthday - and reads as itself in non-leap years.
+  birthdayMonth Int?
+  birthdayDay   Int?
+
   /// An IANA zone - "America/Los_Angeles". Used to show what time it is
   /// where somebody is, which on a team spread across three of them is the
   /// difference between a quick question and a 6am Slack message.

@@ -2,7 +2,9 @@ import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { formatMedium } from "@/lib/dates";
 import {
+  birthdayLabel,
   clockIn,
+  daysUntilBirthday,
   linkedInHandle,
   workDaysLabel,
   workHoursLabel,
@@ -42,6 +44,8 @@ export default async function TeamPage() {
       phone: true,
       linkedinUrl: true,
       startDate: true,
+      birthdayMonth: true,
+      birthdayDay: true,
       timeZone: true,
       workStartMinute: true,
       workEndMinute: true,
@@ -64,6 +68,13 @@ export default async function TeamPage() {
           const at = workingNow(person, now);
           const hours = workHoursLabel(person.workStartMinute, person.workEndMinute);
           const days = workDaysLabel(person.workDays);
+          const birthday = birthdayLabel(
+            person.birthdayMonth,
+            person.birthdayDay,
+            now,
+          );
+          const birthdayToday =
+            daysUntilBirthday(person.birthdayMonth, person.birthdayDay, now) === 0;
 
           return (
             <section key={person.id} className="card p-4">
@@ -125,6 +136,14 @@ export default async function TeamPage() {
                     >
                       {linkedInHandle(person.linkedinUrl)}
                     </a>
+                  </Row>
+                ) : null}
+                {birthday ? (
+                  <Row label="Birthday">
+                    <span className={birthdayToday ? "font-medium text-brand-700" : undefined}>
+                      {birthdayToday ? "🎂 " : ""}
+                      {birthday}
+                    </span>
                   </Row>
                 ) : null}
                 {person.startDate ? (

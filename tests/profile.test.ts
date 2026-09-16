@@ -3,15 +3,21 @@ import assert from "node:assert/strict";
 import {
   WORK_DAYS,
   avatarProblem,
+  birthdayLabel,
   cleanPhone,
   cleanWorkDays,
+  daysInMonth,
+  daysUntilBirthday,
   clockIn,
   formatClock,
+  formatBirthday,
   formatClockLabel,
   initialsOf,
+  isValidBirthday,
   isValidTimeZone,
   linkedInHandle,
   minutesIn,
+  nextBirthday,
   normalizeLinkedIn,
   parseClock,
   timeZoneLabel,
@@ -259,4 +265,71 @@ test("a photo has to be an image, non-empty, and small", () => {
   assert.match(avatarProblem("application/pdf", 50_000) ?? "", /PNG, JPEG or WebP/);
   assert.match(avatarProblem("image/png", 0) ?? "", /empty/);
   assert.match(avatarProblem("image/png", 5_000_000) ?? "", /too big/);
+});
+
+// -------------------------------------------------------------- birthdays
+
+test("a month is as long as its longest possible self", () => {
+  assert.equal(daysInMonth(1), 31);
+  assert.equal(daysInMonth(4), 30);
+  // No year, so no leap year to check against — and somebody born on the
+  // 29th was born on the 29th.
+  assert.equal(daysInMonth(2), 29);
+  assert.equal(daysInMonth(0), 0);
+  assert.equal(daysInMonth(13), 0);
+});
+
+test("a birthday is a real day in a real month, or it isn't one", () => {
+  assert.equal(isValidBirthday(3, 14), true);
+  assert.equal(isValidBirthday(2, 29), true);
+  assert.equal(isValidBirthday(2, 30), false);
+  assert.equal(isValidBirthday(4, 31), false);
+  assert.equal(isValidBirthday(13, 1), false);
+  assert.equal(isValidBirthday(3, 0), false);
+  // Half a birthday is neither.
+  assert.equal(isValidBirthday(3, null), false);
+  assert.equal(isValidBirthday(null, 14), false);
+  assert.equal(isValidBirthday(null, null), false);
+});
+
+test("a birthday reads as a date with no year on it", () => {
+  assert.equal(formatBirthday(3, 14), "March 14");
+  assert.equal(formatBirthday(12, 1), "December 1");
+  assert.equal(formatBirthday(null, null), "");
+  assert.equal(formatBirthday(2, 30), "");
+});
+
+test("the next birthday is this year's if it hasn't gone, next year's if it has", () => {
+  const sep16 = new Date("2026-09-16T12:00:00Z");
+  assert.equal(nextBirthday(12, 1, sep16)?.toISOString().slice(0, 10), "2026-12-01");
+  assert.equal(nextBirthday(3, 14, sep16)?.toISOString().slice(0, 10), "2027-03-14");
+  // Today is today, not a year away — the point is to say something on the day.
+  assert.equal(nextBirthday(9, 16, sep16)?.toISOString().slice(0, 10), "2026-09-16");
+});
+
+test("a 29 February birthday lands on 1 March rather than being skipped", () => {
+  // 2027 is not a leap year. Skipping it would mean three years of silence.
+  const jan = new Date("2027-01-10T12:00:00Z");
+  assert.equal(nextBirthday(2, 29, jan)?.toISOString().slice(0, 10), "2027-03-01");
+  // 2028 is, so it falls where it belongs.
+  const jan28 = new Date("2028-01-10T12:00:00Z");
+  assert.equal(nextBirthday(2, 29, jan28)?.toISOString().slice(0, 10), "2028-02-29");
+});
+
+test("days until counts whole days, and zero means today", () => {
+  const sep16 = new Date("2026-09-16T23:59:00Z");
+  assert.equal(daysUntilBirthday(9, 16, sep16), 0);
+  assert.equal(daysUntilBirthday(9, 17, sep16), 1);
+  assert.equal(daysUntilBirthday(9, 21, sep16), 5);
+  assert.equal(daysUntilBirthday(null, null, sep16), null);
+});
+
+test("a birthday within a fortnight says how close it is", () => {
+  const sep16 = new Date("2026-09-16T12:00:00Z");
+  assert.equal(birthdayLabel(9, 16, sep16), "September 16 — today");
+  assert.equal(birthdayLabel(9, 17, sep16), "September 17 — tomorrow");
+  assert.equal(birthdayLabel(9, 21, sep16), "September 21 — in 5 days");
+  // Far enough away that a countdown is noise.
+  assert.equal(birthdayLabel(3, 14, sep16), "March 14");
+  assert.equal(birthdayLabel(null, null, sep16), "");
 });

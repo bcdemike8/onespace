@@ -145,6 +145,116 @@ export function workHoursLabel(
   return `${formatClockLabel(start)} – ${formatClockLabel(end)}`;
 }
 
+// -------------------------------------------------------------- birthdays
+
+export const MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+
+/**
+ * How many days a month can have, at most.
+ *
+ * February gets 29. A birthday has no year, so there is no leap year to
+ * check against - and somebody born on the 29th has a birthday on the 29th,
+ * whatever a given calendar does with it.
+ */
+export function daysInMonth(month: number): number {
+  if (!Number.isInteger(month) || month < 1 || month > 12) return 0;
+  return [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+}
+
+/** Both set and inside the month, or both unset. Half a birthday is neither. */
+export function isValidBirthday(
+  month: number | null | undefined,
+  day: number | null | undefined,
+): boolean {
+  if (month === null || month === undefined) return false;
+  if (day === null || day === undefined) return false;
+  if (!Number.isInteger(month) || !Number.isInteger(day)) return false;
+  return day >= 1 && day <= daysInMonth(month);
+}
+
+/** "March 14", or "" when there isn't one. */
+export function formatBirthday(
+  month: number | null | undefined,
+  day: number | null | undefined,
+): string {
+  if (!isValidBirthday(month, day)) return "";
+  return `${MONTHS[(month as number) - 1]} ${day}`;
+}
+
+/**
+ * The next time this birthday comes round, as a UTC calendar day.
+ *
+ * Today counts as today rather than as a year away - the whole point of
+ * knowing is to say something on the day. February 29 in a non-leap year
+ * lands on March 1: better than skipping three years of somebody's birthday.
+ */
+export function nextBirthday(
+  month: number,
+  day: number,
+  from: Date = new Date(),
+): Date | null {
+  if (!isValidBirthday(month, day)) return null;
+
+  const todayUtc = new Date(
+    Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()),
+  );
+
+  const on = (year: number): Date => {
+    const d = new Date(Date.UTC(year, month - 1, day));
+    // Date.UTC rolls Feb 29 into March 1 on a non-leap year, which is the
+    // behaviour we want and worth saying out loud rather than relying on.
+    return d;
+  };
+
+  const thisYear = on(todayUtc.getUTCFullYear());
+  return thisYear >= todayUtc ? thisYear : on(todayUtc.getUTCFullYear() + 1);
+}
+
+/** Whole days until the next one. 0 means today. */
+export function daysUntilBirthday(
+  month: number | null | undefined,
+  day: number | null | undefined,
+  from: Date = new Date(),
+): number | null {
+  if (!isValidBirthday(month, day)) return null;
+  const next = nextBirthday(month as number, day as number, from);
+  if (!next) return null;
+  const todayUtc = Date.UTC(
+    from.getUTCFullYear(),
+    from.getUTCMonth(),
+    from.getUTCDate(),
+  );
+  return Math.round((next.getTime() - todayUtc) / 86_400_000);
+}
+
+/** "Today", "Tomorrow", "in 5 days", "March 14" — for a line in a card. */
+export function birthdayLabel(
+  month: number | null | undefined,
+  day: number | null | undefined,
+  from: Date = new Date(),
+): string {
+  const on = formatBirthday(month, day);
+  if (on === "") return "";
+  const away = daysUntilBirthday(month, day, from);
+  if (away === 0) return `${on} — today`;
+  if (away === 1) return `${on} — tomorrow`;
+  if (away !== null && away <= 14) return `${on} — in ${away} days`;
+  return on;
+}
+
 // -------------------------------------------------------------- time zones
 
 /**

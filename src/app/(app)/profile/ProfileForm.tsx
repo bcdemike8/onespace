@@ -1,7 +1,7 @@
 "use client";
 
-import { useActionState } from "react";
-import { WORK_DAYS } from "@/lib/profile";
+import { useActionState, useState } from "react";
+import { MONTHS, WORK_DAYS, daysInMonth } from "@/lib/profile";
 import { updateProfileAction } from "@/app/actions/profile";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ErrorNote } from "@/components/ui";
@@ -16,6 +16,8 @@ export interface ProfileValues {
   workStart: string;
   workEnd: string;
   workDays: number[];
+  birthdayMonth: string;
+  birthdayDay: string;
 }
 
 /**
@@ -33,6 +35,11 @@ export function ProfileForm({
   zones: { value: string; label: string }[];
 }) {
   const [state, action] = useActionState(updateProfileAction, {});
+
+  // The day list follows the month, so February never offers a 30th. The
+  // server checks the pair anyway — this is so nobody has to be told.
+  const [month, setMonth] = useState(values.birthdayMonth);
+  const days = daysInMonth(Number(month)) || 31;
 
   return (
     <form action={action} className="space-y-4">
@@ -98,6 +105,42 @@ export function ProfileForm({
             className="input"
           />
         </div>
+        <div>
+          <label className="label" htmlFor="birthdayMonth">
+            Birthday
+          </label>
+          <div className="flex gap-2">
+            <select
+              id="birthdayMonth"
+              name="birthdayMonth"
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+              className="input"
+            >
+              <option value="">Month</option>
+              {MONTHS.map((name, i) => (
+                <option key={name} value={i + 1}>
+                  {name}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="Day of the month you were born"
+              name="birthdayDay"
+              defaultValue={values.birthdayDay}
+              className="input w-28"
+            >
+              <option value="">Day</option>
+              {Array.from({ length: days }, (_, i) => i + 1).map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="mt-1 text-xs text-ink-500">No year — just the day.</p>
+        </div>
+
         <div>
           <label className="label" htmlFor="timeZone">
             Time zone

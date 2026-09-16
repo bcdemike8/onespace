@@ -11,6 +11,7 @@ import {
   avatarProblem,
   cleanPhone,
   cleanWorkDays,
+  isValidBirthday,
   isValidTimeZone,
   normalizeLinkedIn,
   parseClock,
@@ -39,6 +40,8 @@ const profileSchema = z.object({
   linkedin: z.string().trim().max(300).optional(),
   timeZone: z.string().trim().optional(),
   startDate: z.string().trim().optional(),
+  birthdayMonth: z.string().trim().optional(),
+  birthdayDay: z.string().trim().optional(),
   workStart: z.string().trim().optional(),
   workEnd: z.string().trim().optional(),
 });
@@ -56,13 +59,25 @@ export async function updateProfileAction(
     linkedin: formData.get("linkedin"),
     timeZone: formData.get("timeZone"),
     startDate: formData.get("startDate"),
+    birthdayMonth: formData.get("birthdayMonth"),
+    birthdayDay: formData.get("birthdayDay"),
     workStart: formData.get("workStart"),
     workEnd: formData.get("workEnd"),
   });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-  const { name, title, phone, linkedin, timeZone, startDate, workStart, workEnd } =
-    parsed.data;
+  const {
+    name,
+    title,
+    phone,
+    linkedin,
+    timeZone,
+    startDate,
+    workStart,
+    workEnd,
+    birthdayMonth,
+    birthdayDay,
+  } = parsed.data;
 
   // An emptied field clears the value. Same rule as every other edit form in
   // here: you take a thing out of a box and it is gone, not still there.
@@ -93,6 +108,19 @@ export async function updateProfileAction(
     return { error: "An end time needs to look like 17:30 or 5:30pm." };
   }
 
+  // A birthday is a month and a day together. One without the other is a
+  // half-filled form, not a value worth keeping, so it clears rather than
+  // storing something that would show up as "undefined 14".
+  const bMonth = Number((birthdayMonth ?? "").trim());
+  const bDay = Number((birthdayDay ?? "").trim());
+  const hasBirthday = isValidBirthday(bMonth, bDay);
+  if (
+    !hasBirthday &&
+    ((birthdayMonth ?? "").trim() !== "" || (birthdayDay ?? "").trim() !== "")
+  ) {
+    return { error: "Pick both a month and a day for your birthday, or neither." };
+  }
+
   // getAll, so unticked boxes mean unticked rather than unchanged.
   const days = cleanWorkDays(
     formData.getAll("workDays").map((d) => Number(String(d))),
@@ -110,6 +138,8 @@ export async function updateProfileAction(
       workStartMinute: start,
       workEndMinute: end,
       workDays: days,
+      birthdayMonth: hasBirthday ? bMonth : null,
+      birthdayDay: hasBirthday ? bDay : null,
     },
   });
 

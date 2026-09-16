@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { addDays, formatMedium, formatMonth, monthEnd, monthStart, today } from "@/lib/dates";
 import { centsToInput, formatHours } from "@/lib/format";
 import {
+  birthdayLabel,
   clockIn,
   formatClock,
   isValidTimeZone,
@@ -82,6 +83,7 @@ export default async function ProfilePage() {
   const localNow =
     user.timeZone && isValidTimeZone(user.timeZone) ? clockIn(user.timeZone) : null;
   const hours = workHoursLabel(user.workStartMinute, user.workEndMinute);
+  const birthday = birthdayLabel(user.birthdayMonth, user.birthdayDay);
   const days = workDaysLabel(user.workDays);
 
   return (
@@ -100,6 +102,7 @@ export default async function ProfilePage() {
               localNow ? `${localNow} where you are` : null,
               days && hours ? `${days}, ${hours}` : days || hours || null,
               user.startDate ? `Started ${formatMedium(user.startDate)}` : null,
+              birthday ? `Birthday ${birthday}` : null,
             ]
               .filter(Boolean)
               .join(" · ") || "Nothing filled in yet — the form below is all optional."}
@@ -149,6 +152,8 @@ export default async function ProfilePage() {
               workStart: formatClock(user.workStartMinute),
               workEnd: formatClock(user.workEndMinute),
               workDays: user.workDays,
+              birthdayMonth: user.birthdayMonth ? String(user.birthdayMonth) : "",
+              birthdayDay: user.birthdayDay ? String(user.birthdayDay) : "",
             }}
           />
         </Card>
