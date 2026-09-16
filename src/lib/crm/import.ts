@@ -246,7 +246,19 @@ export async function importAccounts(
       xdrSize: a.xdrSize,
       salesRoles: a.salesRoles,
       technologyUsed: a.technologyUsed,
+      funders: a.funders,
+      billingStreet: a.billingStreet,
+      billingCity: a.billingCity,
+      billingState: a.billingState,
+      billingPostalCode: a.billingPostalCode,
+      billingCountry: a.billingCountry,
+      escalation: a.escalation,
+      apolloStage: a.apolloStage,
+      implementationOwner: a.implementationOwner,
+      stageLastUpdatedAt: a.stageLastUpdatedAt,
+      lastModifiedAt: a.lastModifiedAt,
       ownerId: a.ownerKey ? (users.get(a.ownerKey) ?? null) : null,
+      createdById: a.createdByKey ? (users.get(a.createdByKey) ?? null) : null,
       partnerId: a.platform ? (partners.get(a.platform) ?? null) : null,
       firstSeenAt: a.firstSeenAt,
     }),
@@ -272,6 +284,20 @@ export async function importAccounts(
     await db.client.update({ where: { id: u.id }, data: u.data });
   });
 
+  // Parents and primary contacts point at rows that may not exist until the
+  // inserts above have run - and, for contacts, not until a later step. So
+  // they are linked afterwards, from what is actually in the database.
+  const linked = await linkAccounts(rows, types);
+  if (linked.parents) notes.push(`${linked.parents} accounts linked to a parent company.`);
+  if (linked.contacts) {
+    notes.push(`${linked.contacts} primary contacts linked.`);
+  }
+  if (linked.contactsPending) {
+    notes.push(
+      `${linked.contactsPending} accounts name a primary contact that isn't imported yet — run Contacts, then run Accounts once more to link them.`,
+    );
+  }
+
   return {
     step: "accounts",
     rows: rows.length,
@@ -280,6 +306,76 @@ export async function importAccounts(
     skipped,
     notes,
   };
+}
+
+/**
+ * Join accounts to their parents and their primary contacts.
+ *
+ * Separate from the main pass because both point at rows that might not be
+ * there yet: a parent is another account from the same file, and a primary
+ * contact belongs to a step that runs later. Re-running accounts after
+ * contacts fills in the rest, which is why the report says so rather than
+ * failing quietly.
+ */
+async function linkAccounts(
+  rows: Record<string, string>[],
+  types: RecordTypes,
+): Promise<{ parents: number; contacts: number; contactsPending: number }> {
+  const [clients, contacts] = await Promise.all([
+    db.client.findMany({
+      where: { sfdcId: { not: null } },
+      select: { id: true, sfdcId: true },
+    }),
+    db.contact.findMany({
+      where: { sfdcId: { not: null } },
+      select: { id: true, sfdcId: true },
+    }),
+  ]);
+  const clientBySfdc = new Map(clients.map((c) => [c.sfdcId!, c.id]));
+  const contactBySfdc = new Map(contacts.map((c) => [c.sfdcId!, c.id]));
+
+  const work: { id: string; data: Prisma.ClientUpdateInput }[] = [];
+  let parents = 0;
+  let linkedContacts = 0;
+  let pending = 0;
+  // One contact can only be the primary for one account - the column is
+  // unique - so a contact already claimed is not claimed twice.
+  const claimed = new Set<string>();
+
+  for (const raw of rows) {
+    const a = mapAccount(raw, types);
+    if (!a) continue;
+    const id = clientBySfdc.get(a.sfdcId);
+    if (!id) continue;
+
+    const data: Prisma.ClientUpdateInput = {};
+
+    if (a.parentKey) {
+      const parentId = clientBySfdc.get(a.parentKey);
+      if (parentId && parentId !== id) {
+        data.parent = { connect: { id: parentId } };
+        parents++;
+      }
+    }
+
+    if (a.primaryContactKey) {
+      const contactId = contactBySfdc.get(a.primaryContactKey);
+      if (!contactId) pending++;
+      else if (!claimed.has(contactId)) {
+        claimed.add(contactId);
+        data.primaryContact = { connect: { id: contactId } };
+        linkedContacts++;
+      }
+    }
+
+    if (Object.keys(data).length > 0) work.push({ id, data });
+  }
+
+  await inBatches(work, 20, async (u) => {
+    await db.client.update({ where: { id: u.id }, data: u.data });
+  });
+
+  return { parents, contacts: linkedContacts, contactsPending: pending };
 }
 
 /** Outreach, Salesloft, Apollo — as Partner rows, which already exist here. */

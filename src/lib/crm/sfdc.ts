@@ -232,8 +232,22 @@ export interface MappedAccount {
   xdrSize: number | null;
   salesRoles: string[];
   technologyUsed: string[];
+  funders: string[];
   ownerKey: string | null;
   platform: string | null;
+  billingStreet: string | null;
+  billingCity: string | null;
+  billingState: string | null;
+  billingPostalCode: string | null;
+  billingCountry: string | null;
+  escalation: boolean;
+  apolloStage: string | null;
+  implementationOwner: string | null;
+  stageLastUpdatedAt: Date | null;
+  primaryContactKey: string | null;
+  parentKey: string | null;
+  createdByKey: string | null;
+  lastModifiedAt: Date | null;
   firstSeenAt: Date | null;
 }
 
@@ -257,19 +271,35 @@ export function mapAccount(
     industry: text(row.Industry),
     employees: int(row.NumberOfEmployees),
     annualRevenue: decimal(row.AnnualRevenue),
-    // Shipping, not Billing. Shipping is filled on 46% of accounts against
-    // Billing's 24%, whatever the mapping document says.
+    // Shipping and billing kept apart, because Salesforce holds both and
+    // they are not always the same place. Shipping leads because it is
+    // filled on 43% of accounts against billing's 19%.
     street: text(row.ShippingStreet) ?? text(row.BillingStreet),
     city: text(row.ShippingCity) ?? text(row.BillingCity),
     state: text(row.ShippingState) ?? text(row.BillingState),
     postalCode: text(row.ShippingPostalCode) ?? text(row.BillingPostalCode),
     country: text(row.ShippingCountry) ?? text(row.BillingCountry),
+    billingStreet: text(row.BillingStreet),
+    billingCity: text(row.BillingCity),
+    billingState: text(row.BillingState),
+    billingPostalCode: text(row.BillingPostalCode),
+    billingCountry: text(row.BillingCountry),
     teamSize: int(row.Team_Size__c),
     xdrSize: int(row.XDR_Size__c),
     salesRoles: multi(row.Sales_Roles_Present__c),
     technologyUsed: multi(row.Technology_Used__c),
+    funders: multi(row.Funders__c),
     ownerKey: refKey(row.OwnerId),
     platform: splitType(row.Type).platform,
+    escalation: bool(row.Escalation_Bad_Client_Experience__c),
+    apolloStage: text(row.Apollo_Implementation_Stage__c),
+    // A plain text field in Salesforce, not a lookup - it holds a name.
+    implementationOwner: text(row.Implementation_Owner__c),
+    stageLastUpdatedAt: date(row.Stage_Last_Updated__c),
+    primaryContactKey: refKey(row.Primary_Contact__c),
+    parentKey: refKey(row.ParentId),
+    createdByKey: refKey(row.CreatedById),
+    lastModifiedAt: date(row.LastModifiedDate),
     firstSeenAt: date(row.CreatedDate),
   };
 }

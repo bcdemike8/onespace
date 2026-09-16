@@ -183,6 +183,7 @@ model User {
   // The CRM. Salesforce spread ownership across five different fields and
   // all five pointed at the same eight people.
   ownedClients       Client[]  @relation("ClientOwner")
+  createdClients     Client[]  @relation("ClientCreatedBy")
   ownedContacts      Contact[] @relation("ContactOwner")
   ownedDeals         Deal[]    @relation("DealOwner")
   createdDeals       Deal[]    @relation("DealCreatedBy")
@@ -251,14 +252,51 @@ model Client {
   employees     Int?
   annualRevenue Decimal? @db.Decimal(14, 2)
 
-  /// From Salesforce's Shipping address, not Billing. Shipping is filled on
-  /// 46% of accounts and Billing on 24% - following the field names in the
-  /// mapping document would have left half the addresses behind.
+  /// The shipping address. Filled on 43% of accounts against billing's 19%,
+  /// which is why it is the one the lists and headers use.
   street     String?
   city       String?
   state      String?
   postalCode String?
   country    String?
+
+  /// The billing address, kept apart rather than merged. Salesforce holds
+  /// both and they are not always the same place - a customer invoiced at
+  /// head office and delivered to a regional site is the ordinary case, and
+  /// collapsing them loses the distinction for good.
+  billingStreet     String?
+  billingCity       String?
+  billingState      String?
+  billingPostalCode String?
+  billingCountry    String?
+
+  /// Their investors. Filled on three accounts out of 1,037 - kept because
+  /// the field is asked for by name, not because it carries much.
+  funders String[] @default([])
+
+  /// A client who has had a bad experience, flagged so nobody walks into a
+  /// renewal conversation unaware.
+  escalation Boolean @default(false)
+
+  /// Where an Apollo implementation has reached, and who is running it.
+  apolloStage         String?
+  implementationOwner String?
+  stageLastUpdatedAt  DateTime?
+
+  /// The person to talk to first.
+  primaryContactId String?  @unique
+  primaryContact   Contact? @relation("ClientPrimaryContact", fields: [primaryContactId], references: [id], onDelete: SetNull)
+
+  /// A parent company, where one of these accounts owns another.
+  parentId String?
+  parent   Client?  @relation("ClientParent", fields: [parentId], references: [id], onDelete: SetNull)
+  children Client[] @relation("ClientParent")
+
+  /// Who created it in Salesforce, and when it last changed there. Distinct
+  /// from OneSpace's own timestamps, which only know when the import ran.
+  createdById    String?
+  createdBy      User?     @relation("ClientCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  lastModifiedAt DateTime?
 
   /// How they sell, and how big that team is.
   teamSize   Int?
@@ -337,10 +375,11 @@ model Contact {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  primaryFor   Deal[]            @relation("DealPrimaryContact")
-  billingFor   Deal[]            @relation("DealBillingContact")
-  partnerAeFor Deal[]            @relation("DealPartnerAe")
-  dealRoles    DealContactRole[]
+  primaryFor       Deal[]            @relation("DealPrimaryContact")
+  billingFor       Deal[]            @relation("DealBillingContact")
+  partnerAeFor     Deal[]            @relation("DealPartnerAe")
+  primaryForClient Client?           @relation("ClientPrimaryContact")
+  dealRoles        DealContactRole[]
 
   @@index([clientId, lastName])
   @@index([email])
