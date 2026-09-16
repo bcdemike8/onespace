@@ -27,7 +27,12 @@ URL the app uses in Railway:
 
     DATABASE_URL="postgresql://…?schema=onespace"
 
-Copy it from Railway → app service → Variables → `DATABASE_URL`.
+Copy it from Railway → app service → Variables → `DATABASE_URL`. Keep the
+quotes. The scripts read this file themselves, so nothing else is needed.
+
+If you'd rather not keep it on disk, pass it for a single run instead:
+
+    DATABASE_URL='postgresql://…' npm run crm:status
 
 ## Every time
 

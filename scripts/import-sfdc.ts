@@ -21,6 +21,8 @@
  *                           create (default) | none | their@email.address
  */
 
+import "./load-env";
+import { requireDatabaseUrl } from "./load-env";
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { STEP_FILES, STEP_ORDER, type Step, type StepReport } from "@/lib/crm/import";
@@ -53,14 +55,7 @@ if (!folder) {
 if (!existsSync(folder) || !statSync(folder).isDirectory()) {
   die(`There's no folder at ${folder}.`);
 }
-if (!process.env.DATABASE_URL) {
-  die(
-    "DATABASE_URL isn't set, so there's no database to write to.\n\n" +
-      "Make a file called .env in this folder containing:\n" +
-      '  DATABASE_URL="…your Supabase connection string…"\n\n' +
-      "It's the same value the app uses in Railway.",
-  );
-}
+requireDatabaseUrl();
 
 /**
  * Find the file for a step.

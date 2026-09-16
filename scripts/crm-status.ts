@@ -8,6 +8,8 @@
  * Reads nothing but totals and writes nothing at all.
  */
 
+import "./load-env";
+import { requireDatabaseUrl } from "./load-env";
 import { db } from "@/lib/db";
 
 /** What the export contains, so the report can say more than a number. */
@@ -23,6 +25,8 @@ const mark = (actual: number, expected: number) =>
   actual === expected ? "✓" : actual === 0 ? "✗ nothing" : "~ differs";
 
 async function main() {
+  requireDatabaseUrl();
+
   const [clients, contacts, deals, products, lines, roles, won, partners] =
     await Promise.all([
       db.client.count(),
