@@ -198,3 +198,107 @@ export function headline(deals: ReportDeal[]): Headline {
     winRate: decided ? wonDeals.length / decided : null,
   };
 }
+
+// ------------------------------------------------------ Salesforce's own shapes
+
+/**
+ * Salesforce's Type field, put back together.
+ *
+ * The import split it in two on purpose: Outreach and Salesloft say which
+ * platform, New Business and Existing Business say what kind of deal, and one
+ * picklist could only ever answer one of those. That split is right for the
+ * database and wrong for this page - the dashboard RevOptics reads has a
+ * single Type axis with Outreach, New Business and Salesloft side by side,
+ * because that is how the business talks.
+ *
+ * Reversible because the split was lossless: a deal carried a platform or a
+ * business type, never both.
+ */
+export const dealType = (d: ReportDeal): string =>
+  d.platform ?? d.businessType ?? "Not recorded";
+
+/**
+ * The fiscal quarter a deal closed in - "Q1-2026".
+ *
+ * RevOptics' fiscal year is the calendar year, which the export confirms:
+ * "Current FY (1/1/2026 to 12/31/2026)". Written as a function anyway, so the
+ * day that stops being true there is one place to change.
+ */
+export const FISCAL_YEAR_STARTS_IN_MONTH = 0;
+
+export function fiscalPeriodOf(d: ReportDeal): string | null {
+  if (!d.closeDate) return null;
+  const quarter = Math.floor(d.closeDate.getUTCMonth() / 3) + 1;
+  return `Q${quarter}-${d.closeDate.getUTCFullYear()}`;
+}
+
+export const fiscalYearOf = (d: ReportDeal): number | null => yearOf(d);
+
+/** The first and last instant of a fiscal year, as UTC. */
+export function fiscalYearRange(year: number): { from: Date; to: Date } {
+  return {
+    from: new Date(Date.UTC(year, FISCAL_YEAR_STARTS_IN_MONTH, 1)),
+    to: new Date(Date.UTC(year + 1, FISCAL_YEAR_STARTS_IN_MONTH, 1) - 1),
+  };
+}
+
+export interface Group {
+  key: string;
+  label: string;
+  total: number;
+  count: number;
+  /** One entry per series, in the order given - always, even at zero. */
+  parts: { series: string; amount: number; count: number }[];
+}
+
+/**
+ * Months across, one dimension grouped within each - side by side, not
+ * stacked.
+ *
+ * Every month between the bounds appears whether or not anything closed in
+ * it, and every series appears in every month. Both are the same rule: a
+ * chart that omits the empty ones makes the spacing lie, and a series that
+ * appears only where it is non-zero changes colour position between bands.
+ */
+export function groupByMonth(
+  deals: ReportDeal[],
+  from: Date,
+  to: Date,
+  pick: (d: ReportDeal) => string,
+  series: string[],
+): Group[] {
+  const inRange = won(deals).filter(
+    (d) => d.closeDate && d.closeDate >= from && d.closeDate <= to,
+  );
+
+  const out: Group[] = [];
+  const cursor = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), 1));
+  const last = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), 1));
+
+  while (cursor <= last) {
+    const year = cursor.getUTCFullYear();
+    const month = cursor.getUTCMonth();
+    const rows = inRange.filter(
+      (d) =>
+        d.closeDate!.getUTCFullYear() === year && d.closeDate!.getUTCMonth() === month,
+    );
+
+    out.push({
+      key: `${year}-${String(month + 1).padStart(2, "0")}`,
+      label: `${MONTHS[month]} ${String(year).slice(2)}`,
+      total: rows.reduce((s, d) => s + value(d), 0),
+      count: rows.length,
+      parts: series.map((s) => {
+        const mine = rows.filter((d) => pick(d) === s);
+        return {
+          series: s,
+          amount: mine.reduce((sum, d) => sum + value(d), 0),
+          count: mine.length,
+        };
+      }),
+    });
+
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return out;
+}

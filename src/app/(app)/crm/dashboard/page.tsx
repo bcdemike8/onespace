@@ -1,333 +1,267 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { db } from "@/lib/db";
 import {
   byDimension,
-  byMonth,
-  byYear,
+  dealType,
+  groupByMonth,
   headline,
   seriesFor,
-  stackByYear,
-  yearOf,
-  type ReportDeal,
 } from "@/lib/crm/report";
-import { crmHref } from "@/lib/crm/view";
-import { Columns, Figures, StackedColumns, compact } from "@/components/crm/Chart";
-import { PageHeader } from "@/components/ui";
+import { loadReportDeals } from "@/lib/crm/report-data";
+import {
+  dashboardTitle,
+  ranges,
+  rangeFromParams,
+  typesFromParams,
+} from "@/lib/crm/dashboard-filters";
+import { CLOSED_WON_BY_MONTH, REVENUE_BY_TYPE } from "@/lib/crm/report-defs";
+import { Donut, Figures, GroupedColumns, compact } from "@/components/crm/Chart";
 
 export const dynamic = "force-dynamic";
 
 /**
- * What was closed, and what it was made of.
+ * The dashboard RevOptics already reads, rebuilt.
  *
- * Built around the shape of the data rather than around a Salesforce report
- * page: 98% of these deals are closed, so this is a record of what happened,
- * not a forecast. The headline is revenue won; everything under it answers
- * "made of what" - which year, which month, which platform, which client,
- * whose deal.
+ * Two panels, the two filters above them, and under each panel a link to the
+ * report it was drawn from - because "where does that number come from" is
+ * the first question anybody asks of a dashboard, and the honest answer is a
+ * list of the deals.
  *
- * Every chart is followed by its numbers written out. That is not a
- * fallback: three of the four series colours sit under 3:1 against this
- * page, so the figures are how the values are actually read, with the chart
- * carrying the shape.
+ * The filters travel with those links. A dashboard filtered to Outreach opens
+ * a report filtered to Outreach: both read the same loader, so they cannot
+ * disagree about which deals they mean.
+ *
+ * Type here is Salesforce's single Type field, put back together from the two
+ * OneSpace splits it into. The split is right for the database - a deal can
+ * be Outreach *and* new business, which one picklist could never say - and
+ * wrong for this page, which is read by people who have said "Type" to mean
+ * this one thing for years.
  */
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{
-    year?: string;
-    platform?: string;
-    business?: string;
-    owner?: string;
-  }>;
+  searchParams: Promise<{ type?: string; range?: string }>;
 }) {
   await requireUser();
   const params = await searchParams;
-  const current = {
-    year: params.year,
-    platform: params.platform,
-    business: params.business,
-    owner: params.owner,
-  };
 
-  const rows = await db.deal.findMany({
-    select: {
-      id: true,
-      amount: true,
-      closeDate: true,
-      isWon: true,
-      isClosed: true,
-      businessType: true,
-      partner: { select: { name: true } },
-      client: { select: { name: true } },
-      owner: { select: { name: true } },
-    },
+  const range = rangeFromParams(params);
+  const types = typesFromParams(params);
+  const all = ranges();
+
+  const { deals, rows, allTypes } = await loadReportDeals({
+    from: range.from,
+    to: range.to,
+    types,
   });
 
-  const all: ReportDeal[] = rows.map((d) => ({
-    id: d.id,
-    amount: d.amount === null ? null : Number(d.amount),
-    closeDate: d.closeDate,
-    isWon: d.isWon,
-    isClosed: d.isClosed,
-    platform: d.partner?.name ?? null,
-    businessType: d.businessType,
-    clientName: d.client.name,
-    ownerName: d.owner?.name ?? null,
-  }));
-
-  // Filters narrow what every figure below is computed from, so the headline
-  // and the breakdowns can never disagree about which deals they mean.
-  const deals = all.filter(
-    (d) =>
-      (!params.year || String(yearOf(d)) === params.year) &&
-      (!params.platform || (d.platform ?? "Direct") === params.platform) &&
-      (!params.business || (d.businessType ?? "Not recorded") === params.business) &&
-      (!params.owner || (d.ownerName ?? "Nobody") === params.owner),
-  );
-
   const stats = headline(deals);
-  const years = byYear(deals);
-  const platforms = seriesFor(all, (d) => d.platform, { noneLabel: "Direct" });
-  const stacked = stackByYear(deals, (d) => d.platform, platforms, "Direct");
+  const byType = byDimension(deals, dealType);
+  const series = seriesFor(deals, dealType);
 
-  // The month view needs a year. Default to the most recent one with revenue.
-  const focusYear = params.year
-    ? Number(params.year)
-    : (years.at(-1)?.key ? Number(years.at(-1)!.key) : new Date().getUTCFullYear());
-  const months = byMonth(deals, focusYear);
-
-  const allYears = byYear(all).map((b) => b.label).reverse();
-  const businesses = seriesFor(all, (d) => d.businessType);
-  const owners = seriesFor(all, (d) => d.ownerName, { noneLabel: "Nobody" });
-
-  const filtered = Boolean(
-    params.year || params.platform || params.business || params.owner,
+  // The month axis stops at the last month with revenue rather than running
+  // to December of a year that hasn't happened: eight empty columns make the
+  // filled ones narrower and say nothing.
+  const lastClosed = deals.reduce<Date | null>(
+    (latest, d) => (d.closeDate && (!latest || d.closeDate > latest) ? d.closeDate : latest),
+    null,
   );
+  const to = lastClosed && lastClosed < range.to ? lastClosed : range.to;
+  const months = groupByMonth(deals, range.from, to, dealType, series);
+
+  const query = new URLSearchParams();
+  if (params.range) query.set("range", params.range);
+  if (params.type) query.set("type", params.type);
+  const suffix = query.toString() ? `?${query}` : "";
+
+  const link = (base: string, changes: Record<string, string | null>) => {
+    const next = new URLSearchParams(query);
+    for (const [k, v] of Object.entries(changes)) {
+      if (v === null) next.delete(k);
+      else next.set(k, v);
+    }
+    const q = next.toString();
+    return q ? `${base}?${q}` : base;
+  };
 
   return (
-    <div className="mx-auto max-w-4xl">
-      <PageHeader
-        title="Closed business"
-        subtitle={
-          filtered
-            ? "Filtered — every figure below counts the same deals."
-            : "Everything RevOptics has won, and what it was made of."
-        }
-      />
-
-      {/* ------------------------------------------------------------ filters */}
-      <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-        <Picker
-          label="Year"
-          base="/crm/dashboard"
-          current={current}
-          name="year"
-          options={allYears}
-          value={params.year}
-        />
-        <Picker
-          label="Platform"
-          base="/crm/dashboard"
-          current={current}
-          name="platform"
-          options={platforms}
-          value={params.platform}
-        />
-        <Picker
-          label="Type"
-          base="/crm/dashboard"
-          current={current}
-          name="business"
-          options={businesses}
-          value={params.business}
-        />
-        <Picker
-          label="Owner"
-          base="/crm/dashboard"
-          current={current}
-          name="owner"
-          options={owners}
-          value={params.owner}
-        />
-        {filtered ? (
-          <Link
-            href="/crm/dashboard"
-            className="text-xs text-ink-500 underline decoration-ink-300 hover:text-ink-800"
-          >
-            Clear
-          </Link>
-        ) : null}
-        <Link href="/crm/deals" className="btn-ghost btn-sm ml-auto">
-          All deals
-        </Link>
+    <div className="mx-auto max-w-6xl">
+      <div className="mb-4">
+        <p className="text-xs tracking-wide text-ink-500 uppercase">Dashboard</p>
+        <h1 className="text-2xl font-semibold tracking-tight text-ink-900">
+          {dashboardTitle(range, types)}
+        </h1>
+        <p className="mt-1 text-sm text-ink-500">
+          Closed-won only · {stats.wonCount.toLocaleString()} deal
+          {stats.wonCount === 1 ? "" : "s"} ·{" "}
+          {range.from.toISOString().slice(0, 10)} to {to.toISOString().slice(0, 10)}
+        </p>
       </div>
 
-      {/* ----------------------------------------------------------- headline */}
-      <div className="card mb-4 p-5">
-        <p className="text-sm text-ink-600">Revenue won</p>
-        <p className="mt-0.5 text-5xl font-semibold tracking-tight tabular-nums text-ink-900">
-          ${Math.round(stats.revenue).toLocaleString()}
-        </p>
-        <div className="mt-4 flex flex-wrap gap-x-8 gap-y-3 text-sm">
-          <Stat label="Deals won" value={stats.wonCount.toLocaleString()} />
-          <Stat label="Average deal" value={compact(stats.averageWon)} />
-          <Stat
-            label="Win rate"
-            value={stats.winRate === null ? "—" : `${Math.round(stats.winRate * 100)}%`}
-            note={`${stats.wonCount} of ${stats.wonCount + stats.lostCount} decided`}
-          />
-          <Stat
-            label="Still open"
-            value={stats.openCount.toLocaleString()}
-            note={stats.openValue > 0 ? compact(stats.openValue) : undefined}
-          />
-        </div>
+      {/* --------------------------------------------------------- filters */}
+      <div className="mb-4 grid gap-4 sm:grid-cols-2">
+        <Filter label="Type">
+          <Chip href={link("/crm/dashboard", { type: null })} on={types.length === 0}>
+            All
+          </Chip>
+          {allTypes.map((t) => (
+            <Chip
+              key={t}
+              href={link("/crm/dashboard", { type: t })}
+              on={types.length === 1 && types[0] === t}
+            >
+              {t}
+            </Chip>
+          ))}
+        </Filter>
+
+        <Filter label="Close date">
+          {all.map((r) => (
+            <Chip
+              key={r.key}
+              href={link("/crm/dashboard", { range: r.key === "fy" ? null : r.key })}
+              on={range.key === r.key}
+            >
+              {r.label}
+            </Chip>
+          ))}
+        </Filter>
       </div>
 
-      {/* --------------------------------------------------------- by year */}
-      <section className="card mb-4 p-5">
-        <h2 className="mb-1 text-sm font-medium text-ink-900">Year by year</h2>
-        <p className="mb-4 text-xs text-ink-500">
-          Closed-won revenue by the year the deal closed.
-        </p>
-        <Columns data={years} />
-        <Figures rows={years} total={stats.revenue} />
-      </section>
+      {/* ---------------------------------------------------------- panels */}
+      <div className="grid gap-4 lg:grid-cols-[22rem_1fr]">
+        <Panel
+          title="Revenue by Type"
+          report={REVENUE_BY_TYPE.name}
+          href={`/crm/dashboard/reports/${REVENUE_BY_TYPE.slug}${suffix}`}
+        >
+          <Donut data={byType} total={stats.revenue} />
+          <Figures rows={byType} total={stats.revenue} />
+        </Panel>
 
-      {/* -------------------------------------------------------- by month */}
-      <section className="card mb-4 p-5">
-        <h2 className="mb-1 text-sm font-medium text-ink-900">
-          Month by month · {focusYear}
-        </h2>
-        <p className="mb-4 text-xs text-ink-500">
-          {params.year
-            ? "The year you picked above."
-            : "The most recent year with revenue. Pick a year above to change it."}
-        </p>
-        <Columns data={months} />
-        <Figures rows={months.filter((m) => m.count > 0)} />
-      </section>
+        <Panel
+          title="Revenue Won by Month"
+          report={CLOSED_WON_BY_MONTH.name}
+          href={`/crm/dashboard/reports/${CLOSED_WON_BY_MONTH.slug}${suffix}`}
+        >
+          <GroupedColumns data={months} series={series} />
+          <table className="mt-3 w-full text-sm">
+            <tbody className="divide-y divide-ink-100">
+              {months
+                .filter((m) => m.total > 0)
+                .map((m) => (
+                  <tr key={m.key}>
+                    <td className="py-1.5 pr-2 text-ink-700">{m.label}</td>
+                    <td className="py-1.5 pr-2 text-right tabular-nums text-ink-500">
+                      {m.count} {m.count === 1 ? "deal" : "deals"}
+                    </td>
+                    <td className="py-1.5 text-right font-medium tabular-nums text-ink-900">
+                      ${Math.round(m.total).toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </Panel>
+      </div>
 
-      {/* ----------------------------------------------------- by platform */}
-      {platforms.length > 1 ? (
-        <section className="card mb-4 p-5">
-          <h2 className="mb-1 text-sm font-medium text-ink-900">
-            Platform, year by year
-          </h2>
-          <p className="mb-4 text-xs text-ink-500">
-            Outreach, Salesloft and the rest, stacked within each year.
-          </p>
-          <StackedColumns data={stacked} series={platforms} />
+      {/* ------------------------------------------------------ the rest */}
+      <div className="mt-4 grid gap-4 md:grid-cols-3">
+        <Stat label="Revenue won" value={`$${Math.round(stats.revenue).toLocaleString()}`} />
+        <Stat label="Average deal" value={compact(stats.averageWon)} />
+        <Stat
+          label="Records"
+          value={rows.length.toLocaleString()}
+          note="what both reports list"
+        />
+      </div>
+
+      <div className="mt-4 grid gap-4 md:grid-cols-2">
+        <section className="card p-5">
+          <h2 className="mb-2 text-sm font-medium text-ink-900">Biggest clients</h2>
           <Figures
-            rows={byDimension(deals, (d) => d.platform, { noneLabel: "Direct" })}
+            rows={byDimension(deals, (d) => d.clientName, { top: 12 })}
             total={stats.revenue}
           />
         </section>
-      ) : null}
-
-      {/* ------------------------------------------------- the other splits */}
-      <div className="grid gap-4 md:grid-cols-2">
-        <Panel title="New against existing business">
-          <Figures
-            rows={byDimension(deals, (d) => d.businessType)}
-            total={stats.revenue}
-          />
-        </Panel>
-        <Panel title="By owner">
+        <section className="card p-5">
+          <h2 className="mb-2 text-sm font-medium text-ink-900">By owner</h2>
           <Figures
             rows={byDimension(deals, (d) => d.ownerName, { noneLabel: "Nobody" })}
             total={stats.revenue}
           />
-        </Panel>
+        </section>
       </div>
 
-      <section className="card mt-4 p-5">
-        <h2 className="mb-1 text-sm font-medium text-ink-900">Biggest clients</h2>
-        <p className="mb-2 text-xs text-ink-500">
-          By revenue won. Everything past the top fifteen is folded into Other, so
-          the rows still add up to the headline.
-        </p>
-        <Figures
-          rows={byDimension(deals, (d) => d.clientName, { top: 15 })}
-          total={stats.revenue}
-        />
-      </section>
-
       <p className="mt-4 text-xs leading-relaxed text-ink-500">
-        Revenue means closed-won only. Lost deals are counted in the win rate and
-        nowhere else. Deals with no close date can&apos;t be placed in a year, so
-        they sit outside the year and month charts while still counting towards
-        the headline.
+        Revenue means closed-won only, by close date. A deal with no close date
+        can&apos;t be placed in a month and is outside every figure here — which is
+        the same rule Salesforce applied, and the reason these totals match the
+        exports rather than approximately matching them.{" "}
+        <Link href="/crm/deals" className="underline">
+          All deals
+        </Link>
       </p>
     </div>
   );
 }
 
-function Stat({
-  label,
-  value,
-  note,
+function Panel({
+  title,
+  report,
+  href,
+  children,
 }: {
-  label: string;
-  value: string;
-  note?: string;
+  title: string;
+  report: string;
+  href: string;
+  children: React.ReactNode;
 }) {
   return (
-    <div>
-      <p className="text-xs text-ink-500">{label}</p>
-      <p className="text-lg font-medium tabular-nums text-ink-900">{value}</p>
-      {note ? <p className="text-xs text-ink-400">{note}</p> : null}
-    </div>
-  );
-}
-
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="card p-5">
-      <h2 className="mb-1 text-sm font-medium text-ink-900">{title}</h2>
-      {children}
+    <section className="card flex flex-col p-5">
+      <h2 className="mb-4 text-sm font-medium text-ink-900">{title}</h2>
+      <div className="flex-1">{children}</div>
+      <p className="mt-4 border-t border-ink-100 pt-3 text-xs">
+        <Link href={href} className="text-brand-600 underline">
+          View report ({report})
+        </Link>
+      </p>
     </section>
   );
 }
 
-/** A filter as links, so a view can be sent to somebody. */
-function Picker({
-  label,
-  base,
-  current,
-  name,
-  options,
-  value,
-}: {
-  label: string;
-  base: string;
-  current: Record<string, string | undefined>;
-  name: string;
-  options: string[];
-  value: string | undefined;
-}) {
-  if (options.length < 2) return null;
+function Filter({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className="text-xs text-ink-500">{label}</span>
-      <span className="flex flex-wrap gap-1">
-        <Link
-          href={crmHref(base, current, { [name]: null })}
-          className={value ? "btn-ghost btn-sm" : "btn-secondary btn-sm"}
-        >
-          All
-        </Link>
-        {options.slice(0, 6).map((o) => (
-          <Link
-            key={o}
-            href={crmHref(base, current, { [name]: o })}
-            className={value === o ? "btn-secondary btn-sm" : "btn-ghost btn-sm"}
-          >
-            {o}
-          </Link>
-        ))}
-      </span>
-    </span>
+    <div className="card p-3">
+      <p className="mb-1.5 text-xs font-medium text-ink-600">{label}</p>
+      <div className="flex flex-wrap gap-1">{children}</div>
+    </div>
+  );
+}
+
+/** A filter as links, so a view can be sent to somebody. */
+function Chip({
+  href,
+  on,
+  children,
+}: {
+  href: string;
+  on: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link href={href} className={on ? "btn-secondary btn-sm" : "btn-ghost btn-sm"}>
+      {children}
+    </Link>
+  );
+}
+
+function Stat({ label, value, note }: { label: string; value: string; note?: string }) {
+  return (
+    <div className="card p-4">
+      <p className="text-xs text-ink-500">{label}</p>
+      <p className="mt-0.5 text-2xl font-semibold tabular-nums text-ink-900">{value}</p>
+      {note ? <p className="text-xs text-ink-400">{note}</p> : null}
+    </div>
   );
 }
