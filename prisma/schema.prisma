@@ -185,6 +185,8 @@ model User {
   ownedClients       Client[]  @relation("ClientOwner")
   createdClients     Client[]  @relation("ClientCreatedBy")
   ownedContacts      Contact[] @relation("ContactOwner")
+  createdContacts    Contact[] @relation("ContactCreatedBy")
+  modifiedContacts   Contact[] @relation("ContactLastModifiedBy")
   ownedDeals         Deal[]    @relation("DealOwner")
   createdDeals       Deal[]    @relation("DealCreatedBy")
   modifiedDeals      Deal[]    @relation("DealLastModifiedBy")
@@ -352,11 +354,26 @@ model Contact {
 
   phone       String?
   mobile      String?
+  fax         String?
   linkedinUrl String?
 
-  city    String?
-  state   String?
-  country String?
+  /// What they do, and which part of the company they do it in. Department
+  /// is thin in the export and worth keeping anyway: on a 400-person account
+  /// it is the difference between "a contact" and "the RevOps contact".
+  department String?
+
+  /// Who they report to, where Salesforce recorded it - another contact on
+  /// the same account. Sparse, but on the accounts where it is filled it is
+  /// the org chart, and nothing else here holds one.
+  reportsToId String?
+  reportsTo   Contact?  @relation("ContactReportsTo", fields: [reportsToId], references: [id], onDelete: SetNull)
+  reports     Contact[] @relation("ContactReportsTo")
+
+  street     String?
+  city       String?
+  state      String?
+  postalCode String?
+  country    String?
 
   /// 165 of them. The single most useful flag in the whole export: it stops
   /// anyone emailing someone who left two years ago.
@@ -366,11 +383,30 @@ model Contact {
   /// system it was recorded in.
   optedOutOfEmail Boolean @default(false)
 
-  notes      String?
+  /// Two different fields that both read as "notes". Person Notes is the one
+  /// RevOptics fills in - a line about who this is; Description is
+  /// Salesforce's own long text, used rarely and at length. Merging them
+  /// would lose which was which, so they stay apart.
+  notes       String?
+  description String?
+
   leadSource String?
+
+  /// Who sent them. Distinct from Lead Source, which is the campaign or list
+  /// they arrived through - this is the person, and on referral business
+  /// that is the only part anybody remembers.
+  referralLeadSource String?
 
   ownerId String?
   owner   User?   @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  createdById String?
+  createdBy   User?   @relation("ContactCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  lastModifiedById String?
+  lastModifiedBy   User?   @relation("ContactLastModifiedBy", fields: [lastModifiedById], references: [id], onDelete: SetNull)
+
+  lastModifiedAt DateTime?
 
   firstSeenAt DateTime?
   createdAt   DateTime  @default(now())

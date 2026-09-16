@@ -48,6 +48,22 @@ export const ACCOUNT_LABEL: Record<AccountType, string> = {
   COMPETITOR: "Competitor",
 };
 
+/**
+ * The same five, under the names Salesforce's record types actually carry.
+ *
+ * ACCOUNT_LABEL is shortened for chips and filter tabs, where "Customer" is
+ * plenty and "Current Customer" is two words too many in a 90px pill. But a
+ * field labelled "Account record type" is quoting Salesforce, and quoting it
+ * loosely is how a page stops being trusted.
+ */
+export const ACCOUNT_RECORD_TYPE: Record<AccountType, string> = {
+  PROSPECT: "Prospect",
+  CURRENT_CUSTOMER: "Current Customer",
+  PREVIOUS_CUSTOMER: "Previous Customer",
+  PARTNER: "Partner",
+  COMPETITOR: "Competitor",
+};
+
 export type DealFilter = "open" | "won" | "lost" | "all";
 
 export const asDealFilter = (value: string | undefined): DealFilter =>

@@ -525,15 +525,26 @@ export async function importContacts(csv: string): Promise<StepReport> {
       title: c.title,
       phone: c.phone,
       mobile: c.mobile,
+      fax: c.fax,
       linkedinUrl: c.linkedinUrl,
+      department: c.department,
+      street: c.street,
       city: c.city,
       state: c.state,
+      postalCode: c.postalCode,
       country: c.country,
       noLongerHere: c.noLongerHere,
       optedOutOfEmail: c.optedOutOfEmail,
       notes: c.notes,
+      description: c.description,
       leadSource: c.leadSource,
+      referralLeadSource: c.referralLeadSource,
       ownerId: c.ownerKey ? (users.get(c.ownerKey) ?? null) : null,
+      createdById: c.createdByKey ? (users.get(c.createdByKey) ?? null) : null,
+      lastModifiedById: c.lastModifiedByKey
+        ? (users.get(c.lastModifiedByKey) ?? null)
+        : null,
+      lastModifiedAt: c.lastModifiedAt,
       firstSeenAt: c.firstSeenAt,
     };
 
@@ -554,7 +565,46 @@ export async function importContacts(csv: string): Promise<StepReport> {
   });
   updated = toUpdate.length;
 
+  // Reports To points at another contact, which may not have existed when
+  // the row above was written - Salesforce exports in id order, not in
+  // hierarchy order. So it is resolved here, once everyone is in.
+  const reportsTo = new Map<string, string>();
+  for (const raw of rows) {
+    const c = mapContact(raw);
+    if (c?.reportsToKey) reportsTo.set(c.sfdcId, c.reportsToKey);
+  }
+
+  let linked = 0;
+  if (reportsTo.size > 0) {
+    const all = await db.contact.findMany({
+      where: { sfdcId: { not: null } },
+      select: { id: true, sfdcId: true, reportsToId: true },
+    });
+    const bySfdc = new Map(all.map((c) => [c.sfdcId!, c]));
+
+    const links: { id: string; reportsToId: string }[] = [];
+    for (const [sfdcId, managerKey] of reportsTo) {
+      const person = bySfdc.get(sfdcId);
+      const manager = bySfdc.get(managerKey);
+      // Only write a change: 7,485 no-op updates is a minute of nothing.
+      if (person && manager && person.reportsToId !== manager.id) {
+        links.push({ id: person.id, reportsToId: manager.id });
+      }
+    }
+
+    await inBatches(links, 20, async (l) => {
+      await db.contact.update({
+        where: { id: l.id },
+        data: { reportsToId: l.reportsToId },
+      });
+    });
+    linked = links.length;
+  }
+
   const notes: string[] = [];
+  if (linked) {
+    notes.push(`${linked.toLocaleString()} contacts linked to the person they report to.`);
+  }
   if (orphaned) {
     notes.push(
       `${orphaned} contacts point at an account that isn't here — import Accounts first, then run this again.`,

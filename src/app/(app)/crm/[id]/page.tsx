@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { formatMedium } from "@/lib/dates";
-import { ACCOUNT_LABEL, STAGE_LABEL, money } from "@/lib/crm/view";
+import { ACCOUNT_LABEL, ACCOUNT_RECORD_TYPE, STAGE_LABEL, money } from "@/lib/crm/view";
 import { addressLines, employeeRange, revenueRange } from "@/lib/crm/account";
 import { PageHeader } from "@/components/ui";
 
@@ -167,7 +167,7 @@ export default async function AccountPage({
             />
             <Field label="Type" value={client.partner?.name} />
             <Field label="Industry" value={client.industry} />
-            <Field label="Account record type" value={ACCOUNT_LABEL[client.accountType]} />
+            <Field label="Account record type" value={ACCOUNT_RECORD_TYPE[client.accountType]} />
             <Field label="Number of won opportunities" value={String(won.length)} />
           </Section>
 

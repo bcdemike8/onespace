@@ -122,13 +122,14 @@ export default async function ContactsPage({
           <ul className="card divide-y divide-ink-100">
             {rows.map((p) => (
               <li key={p.id} className="flex flex-wrap items-baseline gap-2 px-4 py-2.5">
-                <span
-                  className={`text-sm ${
+                <Link
+                  href={`/crm/contacts/${p.id}`}
+                  className={`text-sm underline ${
                     p.noLongerHere ? "text-ink-400 line-through" : "text-ink-900"
                   }`}
                 >
                   {[p.firstName, p.lastName].filter(Boolean).join(" ")}
-                </span>
+                </Link>
                 {p.title ? <span className="text-xs text-ink-500">{p.title}</span> : null}
                 {p.noLongerHere ? (
                   <span className="chip bg-ink-100 text-ink-500">Left</span>

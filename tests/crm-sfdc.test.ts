@@ -345,3 +345,68 @@ test("none of the new fields invent a value when the column isn't exported", () 
   assert.equal(d.campaignSourceRef, null);
   assert.equal(d.lastModifiedByKey, null);
 });
+
+// ----------------------------------------------------- the rest of the Contact
+
+const CONTACT = { Id: "003ao00000000001", LastName: "Eyring", FirstName: "Brandon" };
+
+test("the contact fields the old mapping had nowhere to put", () => {
+  const c = mapContact({
+    ...CONTACT,
+    Fax: "+14434675896",
+    Department: "Revenue Operations",
+    ReportsToId: "003ao00000000009",
+    MailingStreet: "1 Market St\nSuite 300",
+    MailingCity: "Baltimore",
+    MailingState: "MD",
+    MailingPostalCode: "21201",
+    MailingCountry: "USA",
+    Description: "Met at Unleash.",
+    Referral_Lead_Source__c: "Henry Krass",
+    CreatedById: "005ao00000000001",
+    LastModifiedById: "005ao00000000002",
+    LastModifiedDate: "2026-08-03 09:13:00",
+  })!;
+  assert.equal(c.fax, "+14434675896");
+  assert.equal(c.department, "Revenue Operations");
+  assert.equal(c.reportsToKey, "003ao0000000000");
+  assert.equal(c.street, "1 Market St\nSuite 300");
+  assert.equal(c.postalCode, "21201");
+  assert.equal(c.description, "Met at Unleash.");
+  assert.equal(c.referralLeadSource, "Henry Krass");
+  assert.equal(c.createdByKey, "005ao0000000000");
+  assert.equal(c.lastModifiedAt?.toISOString(), "2026-08-03T09:13:00.000Z");
+});
+
+test("Person Notes and Description stay apart", () => {
+  // Two fields that both read as "notes" and mean different things. Merging
+  // them would lose which was which, and one of them is 4,000 characters.
+  const c = mapContact({
+    ...CONTACT,
+    Person_Notes__c: "Andrew Henningsen",
+    Description: "Long-form history of the account.",
+  })!;
+  assert.equal(c.notes, "Andrew Henningsen");
+  assert.equal(c.description, "Long-form history of the account.");
+});
+
+test("a contact who reports to nobody reports to nobody", () => {
+  // Salesforce writes its null id rather than a blank, which would otherwise
+  // read as a real manager that no lookup can find.
+  const c = mapContact({ ...CONTACT, ReportsToId: "000000000000000AAA" })!;
+  assert.equal(c.reportsToKey, null);
+});
+
+test("none of the new contact fields invent a value", () => {
+  const c = mapContact(CONTACT)!;
+  assert.equal(c.fax, null);
+  assert.equal(c.department, null);
+  assert.equal(c.reportsToKey, null);
+  assert.equal(c.street, null);
+  assert.equal(c.postalCode, null);
+  assert.equal(c.description, null);
+  assert.equal(c.referralLeadSource, null);
+  assert.equal(c.createdByKey, null);
+  assert.equal(c.lastModifiedByKey, null);
+  assert.equal(c.lastModifiedAt, null);
+});

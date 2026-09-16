@@ -347,15 +347,25 @@ export interface MappedContact {
   title: string | null;
   phone: string | null;
   mobile: string | null;
+  fax: string | null;
   linkedinUrl: string | null;
+  department: string | null;
+  reportsToKey: string | null;
+  street: string | null;
   city: string | null;
   state: string | null;
+  postalCode: string | null;
   country: string | null;
   noLongerHere: boolean;
   optedOutOfEmail: boolean;
   notes: string | null;
+  description: string | null;
   leadSource: string | null;
+  referralLeadSource: string | null;
   ownerKey: string | null;
+  createdByKey: string | null;
+  lastModifiedByKey: string | null;
+  lastModifiedAt: Date | null;
   firstSeenAt: Date | null;
 }
 
@@ -375,15 +385,27 @@ export function mapContact(row: Record<string, string>): MappedContact | null {
     title: text(row.Title),
     phone: text(row.Phone),
     mobile: text(row.MobilePhone),
-    linkedinUrl: text(row.LinkedIn_URL__c),
+    fax: text(row.Fax),
+    linkedinUrl: text(pick(row, "LinkedIn_URL__c", "LinkedIn__c")),
+    department: text(row.Department),
+    reportsToKey: refKey(row.ReportsToId),
+    street: text(row.MailingStreet),
     city: text(row.MailingCity),
     state: text(row.MailingState),
+    postalCode: text(row.MailingPostalCode),
     country: text(row.MailingCountry),
-    noLongerHere: bool(row.No_Longer_With_Company__c),
+    noLongerHere: bool(pick(row, "No_Longer_With_Company__c", "No_Longer_At_Company__c")),
     optedOutOfEmail: bool(row.HasOptedOutOfEmail),
-    notes: text(row.Person_Notes__c),
+    notes: text(pick(row, "Person_Notes__c", "Notes__c")),
+    description: text(row.Description),
     leadSource: text(row.LeadSource),
+    referralLeadSource: text(
+      pick(row, "Referral_Lead_Source__c", "Referral_Source__c", "Referred_By__c"),
+    ),
     ownerKey: refKey(row.OwnerId),
+    createdByKey: refKey(row.CreatedById),
+    lastModifiedByKey: refKey(row.LastModifiedById),
+    lastModifiedAt: date(row.LastModifiedDate),
     firstSeenAt: date(row.CreatedDate),
   };
 }
