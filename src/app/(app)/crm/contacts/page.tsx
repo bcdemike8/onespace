@@ -63,6 +63,11 @@ export default async function ContactsPage({
             ? `${total.toLocaleString()} ${total === 1 ? "person" : "people"}`
             : `${total.toLocaleString()} people. Search to find someone.`
         }
+        actions={
+          <Link href="/crm/contacts/new" className="btn-primary btn-sm">
+            New contact
+          </Link>
+        }
       />
 
       <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">

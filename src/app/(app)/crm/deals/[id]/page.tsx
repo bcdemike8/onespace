@@ -109,6 +109,19 @@ export default async function DealPage({
               : ""}
           </>
         }
+        actions={
+          <>
+            <Link href={`/crm/deals/${deal.id}/edit`} className="btn-primary btn-sm">
+              Edit
+            </Link>
+            <Link
+              href={`/crm/lines/new?deal=${deal.id}`}
+              className="btn-secondary btn-sm"
+            >
+              Add product
+            </Link>
+          </>
+        }
       />
 
       <div className="card mb-4 p-5">
@@ -262,7 +275,7 @@ export default async function DealPage({
             <Field
               label="Created by"
               value={deal.createdBy?.name}
-              note={when(deal.firstSeenAt)}
+              note={formatMedium(deal.firstSeenAt ?? deal.createdAt)}
             />
             <Field
               label="Last modified by"

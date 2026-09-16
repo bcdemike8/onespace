@@ -171,6 +171,11 @@ export default async function ContactPage({
             )}
           </>
         }
+        actions={
+          <Link href={`/crm/contacts/${contact.id}/edit`} className="btn-primary btn-sm">
+            Edit
+          </Link>
+        }
       />
 
       {contact.noLongerHere || contact.optedOutOfEmail ? (
@@ -277,7 +282,7 @@ export default async function ContactPage({
               <Field
                 label="Created by"
                 value={contact.createdBy?.name}
-                note={when(contact.firstSeenAt)}
+                note={formatMedium(contact.firstSeenAt ?? contact.createdAt)}
               />
             }
             right={

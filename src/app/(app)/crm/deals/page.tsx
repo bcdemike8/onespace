@@ -62,6 +62,11 @@ export default async function DealsPage({
       <PageHeader
         title="Deals"
         subtitle={`${total.toLocaleString()} ${total === 1 ? "deal" : "deals"} · ${money(value)}`}
+        actions={
+          <Link href="/crm/deals/new" className="btn-primary btn-sm">
+            New deal
+          </Link>
+        }
       />
 
       <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">

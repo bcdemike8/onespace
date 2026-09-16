@@ -61,6 +61,11 @@ export default async function CrmPage({
         subtitle={`${total.toLocaleString()} ${
           total === 1 ? "company" : "companies"
         }${filter === "working" ? " you work with" : ""}.`}
+        actions={
+          <Link href="/crm/new" className="btn-primary btn-sm">
+            New account
+          </Link>
+        }
       />
 
       <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">

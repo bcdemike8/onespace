@@ -108,6 +108,25 @@ export default async function AccountPage({
         subtitle={`${ACCOUNT_LABEL[client.accountType]}${
           client.partner ? ` · via ${client.partner.name}` : ""
         }`}
+        actions={
+          <>
+            <Link href={`/crm/${client.id}/edit`} className="btn-primary btn-sm">
+              Edit
+            </Link>
+            <Link
+              href={`/crm/contacts/new?account=${client.id}`}
+              className="btn-secondary btn-sm"
+            >
+              New contact
+            </Link>
+            <Link
+              href={`/crm/deals/new?account=${client.id}`}
+              className="btn-secondary btn-sm"
+            >
+              New deal
+            </Link>
+          </>
+        }
       />
 
       {client.escalation ? (
@@ -204,13 +223,20 @@ export default async function AccountPage({
           </Section>
 
           <Section title="System information">
+            {/* firstSeenAt is when Salesforce made the record; createdAt is
+                when this row appeared here. For an imported account the
+                first is the true answer and the second is only when the
+                import ran - for one typed in here there is no first. */}
             <Field
               label="Created"
-              value={client.firstSeenAt ? formatMedium(client.firstSeenAt) : null}
+              value={formatMedium(client.firstSeenAt ?? client.createdAt)}
               note={client.createdBy?.name ? `by ${client.createdBy.name}` : undefined}
             />
+            {/* Not "in Salesforce" any more. OneSpace writes this field too
+                now, and a label that names the wrong system is worse than
+                no label. */}
             <Field
-              label="Last modified in Salesforce"
+              label="Last modified"
               value={client.lastModifiedAt ? formatMedium(client.lastModifiedAt) : null}
             />
             <Field label="Salesforce id" value={client.sfdcId} />

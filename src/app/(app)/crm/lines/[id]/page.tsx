@@ -88,6 +88,11 @@ export default async function LinePage({
             {` · ${STAGE_LABEL[line.deal.stage]}`}
           </>
         }
+        actions={
+          <Link href={`/crm/lines/${line.id}/edit`} className="btn-primary btn-sm">
+            Edit
+          </Link>
+        }
       />
 
       <div className="card mb-4 flex flex-wrap items-baseline gap-x-8 gap-y-3 p-5">
@@ -146,7 +151,7 @@ export default async function LinePage({
             <Field
               label="Created by"
               value={line.createdBy?.name}
-              note={when(line.firstSeenAt)}
+              note={formatMedium(line.firstSeenAt ?? line.createdAt)}
             />
             <Field label="Line description" value={line.description} />
           </>
