@@ -8,7 +8,8 @@ import {
   parseWindow,
   sinceOf,
 } from "@/lib/window";
-import { listMeetings } from "@/lib/google/calendar";
+import { asMeeting, listRawEvents, notAMeeting } from "@/lib/google/calendar";
+import { externalDomainsIn, internalDomains } from "@/lib/google/rules";
 import { GoogleApiError, GoogleAuthError, googleConfigured } from "@/lib/google/auth";
 import {
   buildWeights,
@@ -123,11 +124,9 @@ export async function matchContext() {
   // configure their own company's domain anywhere. Every user, not just the
   // ones being synced right now: whose calendar is being read must not change
   // who counts as a colleague.
-  const ourDomains = new Set<string>();
-  for (const u of await db.user.findMany({ select: { email: true } })) {
-    const d = u.email.split("@")[1]?.toLowerCase();
-    if (d) ourDomains.add(d);
-  }
+  const userEmails = (await db.user.findMany({ select: { email: true } })).map(
+    (u) => u.email,
+  );
 
   const candidates = await loadCandidates();
   const weights = buildWeights(candidates);
@@ -193,6 +192,27 @@ export async function matchContext() {
    * was on separates "a client the team works with" from "somebody's
    * recruiter".
    */
+  /**
+   * A client's own domain can never be one of ours.
+   *
+   * ourDomains is built from every User row, and the Salesforce import
+   * creates a User for anybody it finds owning a record. The moment one of
+   * those carries a client's email address, that whole domain counts as
+   * internal — so a call with only that client in the room has no external
+   * guests at all, is skipped, and is filed under no domain because there is
+   * no external domain to file it under. It disappears without trace, which
+   * is exactly what happened to Marcus's Epiq and Sikich calls.
+   *
+   * The client mapping is the deliberate statement and wins.
+   */
+  const mappedToAClient = [...clientByDomain.keys(), ...archivedByDomain.keys()];
+  const ourDomains = internalDomains(userEmails, mappedToAClient);
+
+  /** Both a colleague's domain and a client's — a stray row, worth naming. */
+  const alsoAClient = mappedToAClient.filter((d) =>
+    userEmails.some((e) => e.split("@")[1]?.toLowerCase() === d),
+  );
+
   return {
     ourDomains,
     candidates,
@@ -201,24 +221,14 @@ export async function matchContext() {
     clientByDomain,
     archivedByDomain,
     quiet,
+    /** Domains that were both — worth saying, because it means a stray user row. */
+    alsoAClient,
   };
 }
 
 export type MatchContext = Awaited<ReturnType<typeof matchContext>>;
 
-/** The outside domains in an invite - everyone not on one of our own. */
-export function externalDomainsOf(
-  attendees: { email: string }[],
-  ourDomains: Set<string>,
-): string[] {
-  return [
-    ...new Set(
-      attendees
-        .map((a) => a.email.split("@")[1]?.toLowerCase())
-        .filter((d): d is string => Boolean(d) && !ourDomains.has(d)),
-    ),
-  ];
-}
+export { externalDomainsIn } from "@/lib/google/rules";
 
 /**
  * Pull everyone's calendar and turn client meetings into pending suggestions.
@@ -286,10 +296,21 @@ export async function syncCalendars(options?: {
   // happen, and they can't be accepted into a timesheet until they have.
   const to = options?.to ?? new Date(Date.now() + 14 * 86_400_000);
 
+  const skipped: {
+    userId: string;
+    googleId: string;
+    title: string;
+    startsAt: Date;
+    code: string;
+    reason: string;
+    guests: string[];
+    externalDomains: string[];
+  }[] = [];
+
   for (const person of people) {
-    let meetings;
+    let raw;
     try {
-      meetings = await listMeetings(person.email, from, to);
+      raw = await listRawEvents(person.email, from, to);
     } catch (e) {
       outcome.failed.push({ name: person.name, error: describe(e) });
       continue;
@@ -297,10 +318,34 @@ export async function syncCalendars(options?: {
 
     outcome.people += 1;
 
-    for (const m of meetings) {
+    // This person's record describes the run that just happened.
+    await db.skippedMeeting.deleteMany({ where: { userId: person.id } });
+
+    for (const event of raw) {
+      // Entries that are not meetings at all - declined, all-day, out of
+      // office. Recorded too: "you declined it" is a complete answer, and
+      // until now it was one nothing could give.
+      const why = notAMeeting(event);
+      if (why !== null) {
+        if (event.id && event.start?.dateTime) {
+          skipped.push({
+            userId: person.id,
+            googleId: event.id,
+            title: event.summary?.trim() || "(no title)",
+            startsAt: new Date(event.start.dateTime),
+            code: "not-a-meeting",
+            reason: why,
+            guests: (event.attendees ?? []).map((a) => a.email ?? "").filter(Boolean),
+            externalDomains: [],
+          });
+        }
+        continue;
+      }
+
+      const m = asMeeting(event)!;
       outcome.seen += 1;
 
-      const externalDomains = externalDomainsOf(m.attendees, ourDomains);
+      const externalDomains = externalDomainsIn(m.attendees, ourDomains);
 
       // The rule: no client in the room, no suggestion. Anything already
       // stored for it is cleared out, so mapping a domain later and
@@ -311,6 +356,24 @@ export async function syncCalendars(options?: {
           where: { userId: person.id, googleId: m.googleId, status: "PENDING" },
         });
         outcome.skipped += 1;
+
+        // By name, always. The loop below files it under a domain, and a
+        // meeting with no external guests has no domain to be filed under —
+        // which is how one used to vanish leaving nothing behind at all.
+        skipped.push({
+          userId: person.id,
+          googleId: m.googleId,
+          title: m.title,
+          startsAt: m.startsAt,
+          code: externalDomains.length === 0 ? "all-internal" : "no-client",
+          reason:
+            externalDomains.length === 0
+              ? "Nobody outside RevOptics was in the invite, so there is no client to bill it to."
+              : `No client has ${externalDomains.join(" or ")} as an email domain.`,
+          guests: m.attendees.map((a) => a.email),
+          externalDomains,
+        });
+
         for (const d of externalDomains) {
           if (quiet.has(d) && !archivedByDomain.has(d)) continue;
           const seen = unrecognised.get(d) ?? {
@@ -417,6 +480,10 @@ export async function syncCalendars(options?: {
       archivedClientName: seen.archived?.name ?? null,
     }))
     .sort((a, b) => b.meetings - a.meetings || a.domain.localeCompare(b.domain));
+
+  if (skipped.length > 0) {
+    await db.skippedMeeting.createMany({ data: skipped, skipDuplicates: true });
+  }
 
   await recordUnmapped(tally, {
     // A one-person sync only looked at one calendar, so it can add to the

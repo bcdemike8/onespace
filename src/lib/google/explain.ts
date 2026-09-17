@@ -2,7 +2,7 @@ import "server-only";
 import { db } from "@/lib/db";
 import { googleConfigured } from "@/lib/google/auth";
 import { asMeeting, listRawEvents, notAMeeting } from "@/lib/google/calendar";
-import { matchContext, externalDomainsOf } from "@/lib/google/sync";
+import { matchContext, externalDomainsIn } from "@/lib/google/sync";
 import { matchMeeting } from "@/lib/google/match";
 
 /**
@@ -116,7 +116,7 @@ export async function explainDay(
     }
 
     const m = asMeeting(event)!;
-    const externalDomains = externalDomainsOf(m.attendees, ctx.ourDomains);
+    const externalDomains = externalDomainsIn(m.attendees, ctx.ourDomains);
     const guests = m.attendees.map((a) => a.email);
     const existing = storedByGoogleId.get(m.googleId);
 

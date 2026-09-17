@@ -220,6 +220,7 @@ model User {
   updatedAt DateTime @updatedAt
 
   avatarImage   UserAvatar?
+  skippedMeetings SkippedMeeting[]
   sessions      Session[]
   assignedTasks Task[]         @relation("TaskAssignee")
   timeEntries   TimeEntry[]
@@ -875,6 +876,43 @@ model UnmappedDomain {
   lastSeenAt  DateTime @default(now())
 
   @@index([meetings])
+}
+
+/**
+ * A calendar entry the sync passed over, by name.
+ *
+ * UnmappedDomain answers "which company is unrecognised". It could not
+ * answer "where is my Thursday 3pm", because a meeting with nobody external
+ * in it at all has no domain to file under — the loop that recorded domains
+ * simply did not run, and the meeting vanished with no trace anywhere. Three
+ * rounds of debugging went past that hole.
+ *
+ * So: one row per meeting the sync declined to keep, with its title, its
+ * guests and the reason. Replaced on each sync of that person, because it
+ * describes the last run rather than accumulating history.
+ */
+model SkippedMeeting {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  googleId String
+  title    String
+  startsAt DateTime
+
+  /// A short machine tag: no-client, all-internal, not-a-meeting.
+  code String
+  /// The sentence shown to a person.
+  reason String
+
+  /// Who was in the invite, and which of their domains counted as outside.
+  guests          String[] @default([])
+  externalDomains String[] @default([])
+
+  seenAt DateTime @default(now())
+
+  @@unique([userId, googleId])
+  @@index([userId, startsAt])
 }
 
 model IgnoredDomain {

@@ -150,3 +150,47 @@ export function asMeeting(raw: RawEvent): GoogleMeeting | null {
     attendees,
   };
 }
+
+/**
+ * Which email domains count as "us".
+ *
+ * Every domain any OneSpace user signs in with — minus any that a client is
+ * mapped to. That subtraction is the whole point.
+ *
+ * The Salesforce import creates a user row for anybody it finds owning a
+ * record, so one row carrying a client's email address is enough to make
+ * that entire domain read as internal. A call with only that client in the
+ * room then has no external guests at all: it is skipped, and it is filed
+ * under no domain, because there is no external domain to file it under. It
+ * disappears leaving nothing behind — no meeting, no entry in the "not
+ * shown" panel, nothing to search for.
+ *
+ * Attaching a domain to a client is a deliberate statement about who they
+ * are. A user row is an accident of an import. The deliberate one wins.
+ */
+export function internalDomains(
+  userEmails: Iterable<string>,
+  clientDomains: Iterable<string>,
+): Set<string> {
+  const ours = new Set<string>();
+  for (const email of userEmails) {
+    const d = email.split("@")[1]?.toLowerCase();
+    if (d) ours.add(d);
+  }
+  for (const d of clientDomains) ours.delete(d.toLowerCase());
+  return ours;
+}
+
+/** The outside domains in an invite — everyone not on one of ours. */
+export function externalDomainsIn(
+  attendees: { email: string }[],
+  ours: Set<string>,
+): string[] {
+  return [
+    ...new Set(
+      attendees
+        .map((a) => a.email.split("@")[1]?.toLowerCase())
+        .filter((d): d is string => Boolean(d) && !ours.has(d)),
+    ),
+  ];
+}

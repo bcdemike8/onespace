@@ -56,6 +56,8 @@ export default async function MeetingsPage({
     projects,
     unmapped,
     clientOptions,
+    skippedMeetings,
+    skippedTotal,
   ] = await Promise.all([
     db.meeting.findMany({
       where: { status: "PENDING", ...(everyone ? {} : { userId: user.id }) },
@@ -155,6 +157,20 @@ export default async function MeetingsPage({
       orderBy: { name: "asc" },
       select: { id: true, name: true },
     }),
+    // The passed-over meetings by name. A company-level list cannot name a
+    // meeting that had no company in it, and that is the one people hunt for.
+    db.skippedMeeting.findMany({
+      orderBy: { startsAt: "desc" },
+      take: 40,
+      select: {
+        title: true,
+        startsAt: true,
+        reason: true,
+        code: true,
+        user: { select: { name: true } },
+      },
+    }),
+    db.skippedMeeting.count(),
   ]);
 
   const options: ProjectOption[] = projects.map((p) => ({
@@ -256,8 +272,16 @@ export default async function MeetingsPage({
 
       {/* Admin only, because the fix is an admin's to make — attaching a
           domain to a client changes what everybody sees. */}
-      {admin && unmapped.length > 0 ? (
+      {admin && (unmapped.length > 0 || skippedMeetings.length > 0) ? (
         <UnmappedDomains
+          skippedTotal={skippedTotal}
+          skipped={skippedMeetings.map((m) => ({
+            title: m.title,
+            startsAt: m.startsAt,
+            reason: m.reason,
+            code: m.code,
+            personName: m.user.name,
+          }))}
           rows={unmapped.map((u) => ({
             domain: u.domain,
             meetings: u.meetings,

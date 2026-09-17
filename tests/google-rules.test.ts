@@ -141,3 +141,71 @@ test("notAMeeting and asMeeting never disagree", () => {
     );
   }
 });
+
+// ------------------------------------------------- who counts as internal
+
+import { externalDomainsIn, internalDomains } from "@/lib/google/rules";
+
+test("our domains come from the people who sign in", () => {
+  const ours = internalDomains(
+    ["marcus@revoptics.co", "brianna@revoptics.co", "someone@revoptics.com"],
+    [],
+  );
+  assert.deepEqual([...ours].sort(), ["revoptics.co", "revoptics.com"]);
+});
+
+test("a client's domain is never one of ours, whatever the user table says", () => {
+  // The bug that hid Marcus's Epiq and Sikich calls. The Salesforce import
+  // creates a user row for anybody owning a record; one row carrying a
+  // client address made that whole domain internal.
+  const ours = internalDomains(
+    ["marcus@revoptics.co", "someone@sikich.com"],
+    ["sikich.com", "epiqglobal.com"],
+  );
+  assert.deepEqual([...ours], ["revoptics.co"]);
+  assert.equal(ours.has("sikich.com"), false);
+});
+
+test("with the client domain reclaimed, the call has a client in the room again", () => {
+  const guests = [
+    { email: "marcus@revoptics.co" },
+    { email: "tamerah.bade@sikich.com" },
+    { email: "todd.last@sikich.com" },
+  ];
+
+  // What used to happen: no external guests at all, so the meeting was
+  // skipped AND filed under no domain — it left no trace anywhere.
+  const broken = internalDomains(
+    ["marcus@revoptics.co", "stray@sikich.com"],
+    [],
+  );
+  assert.deepEqual(externalDomainsIn(guests, broken), []);
+
+  // What happens now.
+  const fixed = internalDomains(
+    ["marcus@revoptics.co", "stray@sikich.com"],
+    ["sikich.com"],
+  );
+  assert.deepEqual(externalDomainsIn(guests, fixed), ["sikich.com"]);
+});
+
+test("external domains are lowercased, de-duplicated and free of our own", () => {
+  const ours = internalDomains(["marcus@revoptics.co"], []);
+  assert.deepEqual(
+    externalDomainsIn(
+      [
+        { email: "Marcus@RevOptics.co" },
+        { email: "A@Sikich.com" },
+        { email: "b@sikich.com" },
+        { email: "c@epiqglobal.com" },
+      ],
+      ours,
+    ),
+    ["sikich.com", "epiqglobal.com"],
+  );
+});
+
+test("case in the client mapping doesn't matter", () => {
+  const ours = internalDomains(["x@Sikich.com"], ["SIKICH.COM"]);
+  assert.equal(ours.has("sikich.com"), false);
+});

@@ -25,6 +25,14 @@ export interface ClientOption {
   name: string;
 }
 
+export interface SkippedRow {
+  title: string;
+  startsAt: Date;
+  reason: string;
+  code: string;
+  personName: string;
+}
+
 /**
  * The meetings the sync passed over, and the one thing to do about each.
  *
@@ -41,11 +49,16 @@ export interface ClientOption {
 export function UnmappedDomains({
   rows,
   clients,
+  skipped,
+  skippedTotal,
 }: {
   rows: UnmappedRow[];
   clients: ClientOption[];
+  /** The passed-over meetings themselves, newest first. */
+  skipped: SkippedRow[];
+  skippedTotal: number;
 }) {
-  const total = rows.reduce((sum, r) => sum + r.meetings, 0);
+  const total = skippedTotal || rows.reduce((sum, r) => sum + r.meetings, 0);
 
   return (
     // No overflow-hidden: it clipped the client type-ahead's dropdown out of
@@ -63,8 +76,9 @@ export function UnmappedDomains({
           {total.toLocaleString()} meeting{total === 1 ? "" : "s"} not shown
         </h2>
         <span className="text-xs text-ink-600">
-          {rows.length} {rows.length === 1 ? "company" : "companies"} in those
-          invites {rows.length === 1 ? "isn't" : "aren't"} being matched
+          {rows.length === 0
+            ? "open for what they were, and why"
+            : `${rows.length} ${rows.length === 1 ? "company" : "companies"} in those invites ${rows.length === 1 ? "isn't" : "aren't"} being matched`}
         </span>
       </summary>
 
@@ -72,15 +86,55 @@ export function UnmappedDomains({
         <p className="px-4 py-2 text-xs text-ink-600">
           A meeting is only kept when somebody in the invite is on a client&rsquo;s
           email domain — otherwise every internal call and recruiter chat would
-          be in your list. These came up anyway. Attach one to a client and
-          press Sync, and its meetings appear.
+          be in your list. Attach a company to a client and press Sync, and its
+          meetings appear.
         </p>
 
-        <ul className="divide-y divide-ink-100 border-t border-ink-100">
-          {rows.map((row) => (
-            <Row key={row.domain} row={row} clients={clients} />
-          ))}
-        </ul>
+        {rows.length > 0 ? (
+          <ul className="divide-y divide-ink-100 border-t border-ink-100">
+            {rows.map((row) => (
+              <Row key={row.domain} row={row} clients={clients} />
+            ))}
+          </ul>
+        ) : null}
+
+        {/* The meetings themselves, by name.
+            The list above is by company, which cannot describe a meeting
+            that had nobody external in the invite — there is no company to
+            file it under. That is the case that stayed invisible through
+            three rounds of looking for it. */}
+        {skipped.length > 0 ? (
+          <div className="rounded-b-xl border-t border-ink-100">
+            <p className="px-4 pt-3 pb-1 text-xs font-medium text-ink-700">
+              What was passed over, and why
+            </p>
+            <ul className="divide-y divide-ink-100">
+              {skipped.map((m, i) => (
+                <li key={i} className="px-4 py-2 text-sm">
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <span className="text-ink-900">{m.title}</span>
+                    <span className="text-xs text-ink-500">
+                      {m.startsAt.toLocaleDateString("en-US", {
+                        timeZone: "UTC",
+                        month: "short",
+                        day: "numeric",
+                      })}
+                      {" · "}
+                      {m.personName}
+                    </span>
+                  </div>
+                  <p className="text-xs text-ink-500">{m.reason}</p>
+                </li>
+              ))}
+            </ul>
+            {skippedTotal > skipped.length ? (
+              <p className="px-4 py-2 text-xs text-ink-400">
+                The {skipped.length} most recent of{" "}
+                {skippedTotal.toLocaleString()}.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </details>
   );
