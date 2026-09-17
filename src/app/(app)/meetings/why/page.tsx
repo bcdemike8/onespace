@@ -6,6 +6,16 @@ import { orgTimezone, calendarWindowLabel } from "@/lib/google/sync";
 import { explainDay, type ExplainedEvent } from "@/lib/google/explain";
 import { PageHeader } from "@/components/ui";
 
+/**
+ * Which build this app is, shown where somebody is already debugging.
+ *
+ * A cron service pointed at a stale app for days and every symptom of it
+ * looked like a bug in the code. /api/version carries this now, but nobody
+ * opens an API by hand — so it is on the screen you land on when something
+ * is wrong, next to the answer it changes the meaning of.
+ */
+const BUILD = (process.env.RAILWAY_GIT_COMMIT_SHA ?? "").trim().slice(0, 7);
+
 export const dynamic = "force-dynamic";
 
 /**
@@ -90,6 +100,14 @@ export default async function WhyPage({
         <p className="w-full text-xs text-ink-500">
           Calendars are read {window}. A day outside that is read here anyway —
           this asks Google directly — but the sync would not have stored it.
+          {BUILD ? (
+            <>
+              {" "}
+              This app is build <span className="font-medium">{BUILD}</span> — if
+              the cron log names a different one, they are different
+              deployments.
+            </>
+          ) : null}
         </p>
       </form>
 
