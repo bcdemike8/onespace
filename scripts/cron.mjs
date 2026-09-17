@@ -11,14 +11,42 @@
 //   zoom      real call lengths, off-calendar calls, and commitments
 //   digest    send the 5am Slack brief
 //
-// ONESPACE_JOB picks which. Unset means all three, so the existing single cron
-// service keeps working and gains the two syncs without being touched. Set it
-// to "calendar" or "mail" on a second, more frequent service if you want
-// those to land during the day rather than overnight.
+// ONESPACE_JOB picks which, as one name or several separated by commas:
+//
+//   unset                  all four (the original single nightly service)
+//   calendar               just the calendar, for an hourly service
+//   mail,zoom,digest       everything the hourly one isn't already doing
+//
+// The list exists because splitting them is the point. Reading a calendar
+// takes seconds and is worth doing every hour; reading Zoom transcripts costs
+// money and belongs overnight. Without a list the nightly service could only
+// be "everything" or "one thing", so it would redo the calendar every night
+// for no reason.
 //
 // Needs APP_URL (or RAILWAY_PUBLIC_DOMAIN) and CRON_SECRET.
 
-const job = (process.env.ONESPACE_JOB ?? "both").trim().toLowerCase();
+const KNOWN = ["calendar", "mail", "zoom", "digest"];
+
+/** Every job asked for, with "both"/"all"/unset meaning the lot. */
+const asked = (process.env.ONESPACE_JOB ?? "both")
+  .toLowerCase()
+  .split(",")
+  .map((name) => name.trim())
+  .filter(Boolean);
+
+const everything = asked.length === 0 || asked.some((n) => n === "both" || n === "all");
+const chosen = everything ? KNOWN : asked.filter((n) => KNOWN.includes(n));
+
+// A name that is not a job is a typo in a Railway variable, and quietly doing
+// nothing about it is how a service sits there for a fortnight looking fine.
+const unknown = everything ? [] : asked.filter((n) => !KNOWN.includes(n));
+if (unknown.length > 0) {
+  console.error(
+    `Unknown ONESPACE_JOB ${unknown.map((n) => `"${n}"`).join(", ")}. ` +
+      `Use ${KNOWN.join(", ")}, several separated by commas, or leave it unset for all of them.`,
+  );
+  process.exit(2);
+}
 
 const base =
   (process.env.APP_URL && process.env.APP_URL.replace(/\/+$/, "")) ||
@@ -161,7 +189,7 @@ await identify();
 
 const jobs = [];
 
-const wants = (name) => job === name || job === "both" || job === "all";
+const wants = (name) => chosen.includes(name);
 
 if (wants("calendar")) {
   jobs.push(() =>
@@ -244,9 +272,11 @@ if (wants("digest")) {
 }
 
 if (jobs.length === 0) {
-  console.error(`Unknown ONESPACE_JOB "${job}". Use calendar, mail, zoom, digest, or leave it unset.`);
+  console.error("ONESPACE_JOB asked for no jobs at all. Leave it unset for all of them.");
   process.exit(2);
 }
+
+console.log(`running: ${chosen.join(", ")}`);
 
 let allReached = true;
 for (const run of jobs) {
