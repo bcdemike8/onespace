@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { formatMedium } from "@/lib/dates";
 import { STAGE_LABEL, money, stagePath } from "@/lib/crm/view";
 import { Field, Figure, Related, Section } from "@/components/crm/Record";
+import { DealFiles } from "@/components/crm/DealFiles";
 import { StagePath } from "@/components/crm/StagePath";
 import { PageHeader } from "@/components/ui";
 
@@ -66,6 +67,19 @@ export default async function DealPage({
         },
       },
       project: { select: { id: true, name: true, status: true } },
+      // Never the bytes. They live in DealFileBody precisely so that opening
+      // a deal doesn't read every attachment on it.
+      files: {
+        orderBy: { uploadedAt: "desc" },
+        select: {
+          id: true,
+          name: true,
+          mimeType: true,
+          size: true,
+          uploadedAt: true,
+          uploadedBy: { select: { name: true } },
+        },
+      },
       lines: {
         orderBy: { createdAt: "asc" },
         select: {
@@ -363,6 +377,18 @@ export default async function DealPage({
               </li>
             ) : null}
           </Related>
+
+          <DealFiles
+            dealId={deal.id}
+            files={deal.files.map((f) => ({
+              id: f.id,
+              name: f.name,
+              mimeType: f.mimeType,
+              size: f.size,
+              uploadedBy: f.uploadedBy?.name ?? null,
+              uploadedAt: formatMedium(f.uploadedAt),
+            }))}
+          />
         </div>
       </div>
     </div>

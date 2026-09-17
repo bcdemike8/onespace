@@ -221,6 +221,7 @@ model User {
 
   avatarImage   UserAvatar?
   skippedMeetings SkippedMeeting[]
+  uploadedDealFiles DealFile[] @relation("DealFileUploader")
   sessions      Session[]
   assignedTasks Task[]         @relation("TaskAssignee")
   timeEntries   TimeEntry[]
@@ -267,6 +268,46 @@ model User {
  * storage problem, and this is one fewer credential to hold, back up, and
  * explain in two years.
  */
+/**
+ * A file attached to a deal — the signed SOW, the order form, the quote.
+ *
+ * Kept in Postgres rather than a storage bucket, the same choice as a
+ * profile photo and for the same reasons: one fewer service to hold a
+ * credential for, keep in backups, and explain in two years. A few hundred
+ * order forms at a megabyte each is not a storage problem. Revisit if
+ * somebody starts attaching recordings.
+ *
+ * The bytes are in DealFileBody, never here. Listing a deal's files must
+ * never read them — that mistake, made once with profile photos, put a
+ * whole image through the server renderer on every page load and took the
+ * app down when it reached a client component.
+ */
+model DealFile {
+  id     String @id @default(cuid())
+  dealId String
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  /// As the person's computer had it: "Order Form (LuxGive).pdf".
+  name     String
+  mimeType String
+  /// Bytes, kept alongside so a listing can show a size without the file.
+  size     Int
+
+  uploadedById String?
+  uploadedBy   User?   @relation("DealFileUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  uploadedAt   DateTime @default(now())
+
+  body DealFileBody?
+
+  @@index([dealId, uploadedAt])
+}
+
+model DealFileBody {
+  fileId String   @id
+  file   DealFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  data   Bytes
+}
+
 model UserAvatar {
   userId   String @id
   user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -667,6 +708,7 @@ model Deal {
 
   lines        DealProduct[]
   contactRoles DealContactRole[]
+  files        DealFile[]
 
   @@index([clientId, closeDate])
   @@index([stage, closeDate])
