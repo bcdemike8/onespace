@@ -62,6 +62,17 @@ async function call(name, path, describe) {
           "(no body — a 502 with no body is usually the gateway giving up on a " +
             "request that ran too long, not the app refusing it)",
       );
+
+      // A refusal that says only "Not authorised" comes from a build of this
+      // app older than 16 September 2026. Every refusal since then explains
+      // itself. So a bare one is not a wrong secret — it is the wrong app.
+      if (res.status === 401 && /^not authoris/i.test(body?.error ?? "")) {
+        console.error(
+          `  ↳ that wording was replaced in this codebase on 16 September. ` +
+            `The app at ${base} is running an older build than this cron, so ` +
+            `it is a different deployment — not a secret that doesn't match.`,
+        );
+      }
       return false;
     }
 
@@ -107,6 +118,46 @@ async function eachPerson(name, path, describe) {
 
   return ok;
 }
+
+/**
+ * Which app is this actually calling, and is it the one being deployed?
+ *
+ * A cron service can point at a URL nobody is looking at any more — a
+ * previous service, an old domain, a second environment — and every symptom
+ * of that looks like a bug in the app. So the log opens by naming the URL
+ * and the build that answered it, and says plainly when that build is not
+ * this one.
+ */
+async function identify() {
+  console.log(`cron → ${base}`);
+
+  const mine = (process.env.RAILWAY_GIT_COMMIT_SHA ?? "").trim().slice(0, 7);
+  if (mine) console.log(`this cron is build ${mine}`);
+
+  try {
+    const res = await fetch(`${base}/api/version`, {
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) {
+      console.error(`the app at ${base} answered ${res.status} to /api/version.`);
+      return;
+    }
+    const body = await res.json();
+    console.log(`the app there is build ${body.commit ?? "unknown"}`);
+
+    if (mine && body.commit && body.commit !== mine) {
+      console.error(
+        `MISMATCH: this cron is ${mine}, the app it calls is ${body.commit}. ` +
+          "They are different deployments. Check APP_URL on this service " +
+          "points at the app you actually use.",
+      );
+    }
+  } catch (err) {
+    console.error(`couldn't reach ${base}/api/version: ${err.message}`);
+  }
+}
+
+await identify();
 
 const jobs = [];
 
