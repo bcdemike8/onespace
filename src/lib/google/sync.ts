@@ -111,52 +111,20 @@ async function loadCandidates(): Promise<MatchCandidate[]> {
 }
 
 /**
- * Pull everyone's calendar and turn client meetings into pending suggestions.
+ * Everything the "is this a client meeting" decision needs.
  *
- * Deliberately never writes a time entry. A suggestion becomes time when the
- * person whose calendar it came from says so, which is both what Brianna
- * asked for and the only version that survives a mis-match: a wrong guess
- * costs a click, not a corrected invoice.
+ * Lifted out of the sync so the screen that explains a decision runs the
+ * same code that made it. An explanation assembled from a second copy of
+ * these rules is worse than none: it is confidently wrong, and it stays
+ * wrong until somebody spends an afternoon proving it.
  */
-export async function syncCalendars(options?: {
-  /** Limit to one person, for the "sync me" button. */
-  userId?: string;
-  from?: Date;
-  to?: Date;
-}): Promise<SyncOutcome> {
-  const outcome: SyncOutcome = {
-    seen: 0,
-    created: 0,
-    updated: 0,
-    settled: 0,
-    matched: 0,
-    skipped: 0,
-    mappedDomains: 0,
-    unrecognised: [],
-    people: 0,
-    failed: [],
-  };
-
-  if (!googleConfigured()) {
-    throw new Error("Google isn't connected yet - add the service account credentials in Railway.");
-  }
-
-  const people = await db.user.findMany({
-    where: { isActive: true, ...(options?.userId ? { id: options.userId } : {}) },
-    select: { id: true, name: true, email: true },
-    orderBy: { name: "asc" },
-  });
-  if (people.length === 0) return outcome;
-
+export async function matchContext() {
   // "External" means outside every domain we sign in with, so nobody has to
-  // configure their own company's domain anywhere.
-  const ourDomains = new Set(
-    people
-      .map((p) => p.email.split("@")[1]?.toLowerCase())
-      .filter((d): d is string => Boolean(d)),
-  );
-  const allUsers = await db.user.findMany({ select: { email: true } });
-  for (const u of allUsers) {
+  // configure their own company's domain anywhere. Every user, not just the
+  // ones being synced right now: whose calendar is being read must not change
+  // who counts as a colleague.
+  const ourDomains = new Set<string>();
+  for (const u of await db.user.findMany({ select: { email: true } })) {
     const d = u.email.split("@")[1]?.toLowerCase();
     if (d) ourDomains.add(d);
   }
@@ -195,8 +163,6 @@ export async function syncCalendars(options?: {
     ).map((d) => [d.domain, d.client.name]),
   );
 
-  outcome.mappedDomains = clientByDomain.size;
-
   // Domains that ARE attached to a client, but an archived one. Archiving
   // deliberately stops a client's meetings being suggested — and looks
   // exactly like never having mapped them, right up until you try to map
@@ -227,6 +193,84 @@ export async function syncCalendars(options?: {
    * was on separates "a client the team works with" from "somebody's
    * recruiter".
    */
+  return {
+    ourDomains,
+    candidates,
+    weights,
+    partnerDomains,
+    clientByDomain,
+    archivedByDomain,
+    quiet,
+  };
+}
+
+export type MatchContext = Awaited<ReturnType<typeof matchContext>>;
+
+/** The outside domains in an invite - everyone not on one of our own. */
+export function externalDomainsOf(
+  attendees: { email: string }[],
+  ourDomains: Set<string>,
+): string[] {
+  return [
+    ...new Set(
+      attendees
+        .map((a) => a.email.split("@")[1]?.toLowerCase())
+        .filter((d): d is string => Boolean(d) && !ourDomains.has(d)),
+    ),
+  ];
+}
+
+/**
+ * Pull everyone's calendar and turn client meetings into pending suggestions.
+ *
+ * Deliberately never writes a time entry. A suggestion becomes time when the
+ * person whose calendar it came from says so, which is both what Brianna
+ * asked for and the only version that survives a mis-match: a wrong guess
+ * costs a click, not a corrected invoice.
+ */
+export async function syncCalendars(options?: {
+  /** Limit to one person, for the "sync me" button. */
+  userId?: string;
+  from?: Date;
+  to?: Date;
+}): Promise<SyncOutcome> {
+  const outcome: SyncOutcome = {
+    seen: 0,
+    created: 0,
+    updated: 0,
+    settled: 0,
+    matched: 0,
+    skipped: 0,
+    mappedDomains: 0,
+    unrecognised: [],
+    people: 0,
+    failed: [],
+  };
+
+  if (!googleConfigured()) {
+    throw new Error("Google isn't connected yet - add the service account credentials in Railway.");
+  }
+
+  const people = await db.user.findMany({
+    where: { isActive: true, ...(options?.userId ? { id: options.userId } : {}) },
+    select: { id: true, name: true, email: true },
+    orderBy: { name: "asc" },
+  });
+  if (people.length === 0) return outcome;
+
+  const ctx = await matchContext();
+  const {
+    ourDomains,
+    candidates,
+    weights,
+    partnerDomains,
+    clientByDomain,
+    archivedByDomain,
+    quiet,
+  } = ctx;
+
+  outcome.mappedDomains = clientByDomain.size;
+
   const unrecognised = new Map<
     string,
     {
@@ -256,13 +300,7 @@ export async function syncCalendars(options?: {
     for (const m of meetings) {
       outcome.seen += 1;
 
-      const externalDomains = [
-        ...new Set(
-          m.attendees
-            .map((a) => a.email.split("@")[1]?.toLowerCase())
-            .filter((d): d is string => Boolean(d) && !ourDomains.has(d)),
-        ),
-      ];
+      const externalDomains = externalDomainsOf(m.attendees, ourDomains);
 
       // The rule: no client in the room, no suggestion. Anything already
       // stored for it is cleared out, so mapping a domain later and

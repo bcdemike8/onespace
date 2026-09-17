@@ -244,6 +244,14 @@ export default async function MeetingsPage({
       <p className="mb-4 text-xs text-ink-500">
         Calendars are read {calendarWindow}; write-ups cover calls{" "}
         {writeUpWindow}.
+        {admin ? (
+          <>
+            {" "}
+            <Link href="/meetings/why" className="underline">
+              A meeting missing?
+            </Link>
+          </>
+        ) : null}
       </p>
 
       {/* Admin only, because the fix is an admin's to make — attaching a

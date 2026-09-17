@@ -1,61 +1,15 @@
 import "server-only";
 import { googleRequest, SCOPES } from "@/lib/google/auth";
+import { asMeeting, type GoogleMeeting, type RawEvent } from "@/lib/google/rules";
+
+export type { GoogleAttendee, GoogleMeeting, RawEvent } from "@/lib/google/rules";
+export { asMeeting, notAMeeting } from "@/lib/google/rules";
 
 // Reading meetings off a Google Calendar.
 //
 // Only the primary calendar. Secondary calendars people subscribe to are other
 // people's diaries and holiday feeds, and booking time against someone else's
 // meeting is exactly the sort of thing that quietly corrupts a timesheet.
-
-export interface GoogleAttendee {
-  email: string;
-  name: string | null;
-  responseStatus: string | null;
-  self: boolean;
-}
-
-export interface GoogleMeeting {
-  googleId: string;
-  /** Zoom's numeric meeting id, lifted out of the join link if there is one. */
-  zoomMeetingId: string | null;
-  title: string;
-  description: string | null;
-  startsAt: Date;
-  endsAt: Date;
-  minutes: number;
-  organizerEmail: string | null;
-  isOrganizer: boolean;
-  attendees: GoogleAttendee[];
-}
-
-interface RawEvent {
-  id?: string;
-  status?: string;
-  summary?: string;
-  description?: string;
-  location?: string;
-  conferenceData?: { entryPoints?: { uri?: string }[] };
-  eventType?: string;
-  start?: { dateTime?: string; date?: string };
-  end?: { dateTime?: string; date?: string };
-  organizer?: { email?: string; self?: boolean; displayName?: string };
-  attendees?: {
-    email?: string;
-    displayName?: string;
-    responseStatus?: string;
-    self?: boolean;
-    resource?: boolean;
-    organizer?: boolean;
-  }[];
-}
-
-/** Longer than this and it isn't a meeting - it's an all-day block or leave. */
-const MAX_MINUTES = 12 * 60;
-
-/** Rooms and equipment, which Google models as attendees. */
-const isResource = (email: string) =>
-  email.endsWith("resource.calendar.google.com") ||
-  email.endsWith("group.calendar.google.com");
 
 /**
  * Meetings on one person's calendar between two instants.
@@ -69,7 +23,24 @@ export async function listMeetings(
   from: Date,
   to: Date,
 ): Promise<GoogleMeeting[]> {
-  const out: GoogleMeeting[] = [];
+  const raw = await listRawEvents(userEmail, from, to);
+  return raw.map(asMeeting).filter((m): m is GoogleMeeting => m !== null);
+}
+
+/**
+ * Everything on the calendar, before any of our rules run.
+ *
+ * The sync only ever sees what survives asMeeting, which is right for a sync
+ * and useless for answering "where is my Thursday call" - the answer there is
+ * usually the entry that was thrown away, and a list of survivors cannot name
+ * something that is not in it.
+ */
+export async function listRawEvents(
+  userEmail: string,
+  from: Date,
+  to: Date,
+): Promise<RawEvent[]> {
+  const out: RawEvent[] = [];
   let pageToken: string | undefined;
 
   // Bounded, like the Slack channel list: 20 pages of 250 is five thousand
@@ -95,84 +66,11 @@ export async function listMeetings(
       },
     });
 
-    for (const raw of data.items ?? []) {
-      const meeting = toMeeting(raw);
-      if (meeting) out.push(meeting);
-    }
+    out.push(...(data.items ?? []));
 
     pageToken = data.nextPageToken;
     if (!pageToken) break;
   }
 
   return out;
-}
-
-/**
- * The Zoom meeting id in an invite, if there is one.
- *
- * Zoom puts the join link in a different place depending on how the meeting
- * was created - the location field, the description, or a conference entry
- * point - so all three are checked. This is what later lets a Zoom recording
- * find the meeting it belongs to without guessing from timestamps.
- */
-function zoomIdFrom(raw: RawEvent): string | null {
-  const haystack = [
-    raw.location ?? "",
-    raw.description ?? "",
-    ...(raw.conferenceData?.entryPoints ?? []).map((e) => e.uri ?? ""),
-  ].join(" ");
-
-  const m = haystack.match(/zoom\.us\/(?:j|w|s)\/(\d{9,12})/i);
-  return m ? m[1] : null;
-}
-
-/** One raw event, or null if it isn't work worth booking. */
-function toMeeting(raw: RawEvent): GoogleMeeting | null {
-  if (!raw.id) return null;
-  if (raw.status === "cancelled") return null;
-
-  // Out of office and working-location entries are the opposite of billable.
-  if (raw.eventType === "outOfOffice" || raw.eventType === "workingLocation") {
-    return null;
-  }
-
-  // All-day events have `date` and no `dateTime`. They're holidays, launches
-  // and reminders, not two hours of anyone's time.
-  const startISO = raw.start?.dateTime;
-  const endISO = raw.end?.dateTime;
-  if (!startISO || !endISO) return null;
-
-  const startsAt = new Date(startISO);
-  const endsAt = new Date(endISO);
-  if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) return null;
-
-  const minutes = Math.round((endsAt.getTime() - startsAt.getTime()) / 60_000);
-  if (minutes <= 0 || minutes > MAX_MINUTES) return null;
-
-  const attendees: GoogleAttendee[] = (raw.attendees ?? [])
-    .filter((a) => a.email && !a.resource && !isResource(a.email))
-    .map((a) => ({
-      email: a.email!.toLowerCase(),
-      name: a.displayName ?? null,
-      responseStatus: a.responseStatus ?? null,
-      self: Boolean(a.self),
-    }));
-
-  // Declining a meeting and then being asked to book time for it is the
-  // fastest way to make people stop trusting the suggestions.
-  const me = attendees.find((a) => a.self);
-  if (me?.responseStatus === "declined") return null;
-
-  return {
-    googleId: raw.id,
-    title: raw.summary?.trim() || "(no title)",
-    description: raw.description?.trim() || null,
-    startsAt,
-    endsAt,
-    minutes,
-    zoomMeetingId: zoomIdFrom(raw),
-    organizerEmail: raw.organizer?.email?.toLowerCase() ?? null,
-    isOrganizer: Boolean(raw.organizer?.self),
-    attendees,
-  };
 }
