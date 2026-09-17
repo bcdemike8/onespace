@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useActionState, useState } from "react";
 import { acceptMeetingAction, dismissMeetingAction } from "@/app/actions/google";
+import { ComboBox } from "@/components/ComboBox";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ErrorNote } from "@/components/ui";
 import { Commitments, type CommitmentRow } from "./Commitments";
@@ -154,25 +155,18 @@ export function MeetingCard({
 
           <div className="grid gap-3 sm:grid-cols-[2fr_1.5fr_auto]">
             <div>
-              <label className="label" htmlFor={`p-${meeting.id}`}>
-                Project
-              </label>
-              <select
-                id={`p-${meeting.id}`}
+              <ComboBox
                 name="projectId"
-                className="input"
-                value={projectId}
-                onChange={(e) => chooseProject(e.target.value)}
+                label="Project"
                 required
-              >
-                <option value="">Pick a project…</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.clientName ? `${p.clientName} — ` : ""}
-                    {p.name}
-                  </option>
-                ))}
-              </select>
+                value={projectId || null}
+                placeholder="Type a client or project…"
+                onChange={chooseProject}
+                options={projects.map((p) => ({
+                  value: p.id,
+                  label: p.clientName ? `${p.clientName} — ${p.name}` : p.name,
+                }))}
+              />
             </div>
 
             <div>

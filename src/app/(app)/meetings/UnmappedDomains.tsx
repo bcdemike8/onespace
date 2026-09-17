@@ -6,6 +6,7 @@ import {
   addIgnoredDomainsAction,
 } from "@/app/actions/google";
 import { toggleClientArchivedAction } from "@/app/actions/projects";
+import { ComboBox } from "@/components/ComboBox";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ErrorNote } from "@/components/ui";
 
@@ -47,7 +48,10 @@ export function UnmappedDomains({
   const total = rows.reduce((sum, r) => sum + r.meetings, 0);
 
   return (
-    <details className="card group mb-4 overflow-hidden border-warn-500/30 bg-warn-50/40 p-0">
+    // No overflow-hidden: it clipped the client type-ahead's dropdown out of
+    // existence — present in the DOM, invisible on the screen. The rounded
+    // bottom is done on the inner panel instead.
+    <details className="card group mb-4 border-warn-500/30 bg-warn-50/40 p-0">
       <summary className="flex cursor-pointer list-none items-baseline gap-2 px-4 py-3 hover:bg-warn-50 [&::-webkit-details-marker]:hidden">
         <span
           aria-hidden
@@ -64,7 +68,7 @@ export function UnmappedDomains({
         </span>
       </summary>
 
-      <div className="border-t border-warn-500/20 bg-white">
+      <div className="rounded-b-xl border-t border-warn-500/20 bg-white">
         <p className="px-4 py-2 text-xs text-ink-600">
           A meeting is only kept when somebody in the invite is on a client&rsquo;s
           email domain — otherwise every internal call and recruiter chat would
@@ -157,25 +161,13 @@ function Row({ row, clients }: { row: UnmappedRow; clients: ClientOption[] }) {
       {open && !archived ? (
         <form action={attach} className="mt-2 flex flex-wrap items-center gap-2">
           <input type="hidden" name="domains" value={row.domain} />
-          <label className="sr-only" htmlFor={`client-${row.domain}`}>
-            Which client is {row.domain}?
-          </label>
-          <select
-            id={`client-${row.domain}`}
+          <ComboBox
             name="clientId"
             required
-            defaultValue=""
-            className="input w-auto max-w-xs"
-          >
-            <option value="" disabled>
-              Which client?
-            </option>
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+            className="w-64"
+            placeholder={`Which client is ${row.domain}?`}
+            options={clients.map((c) => ({ value: c.id, label: c.name }))}
+          />
           <SubmitButton pendingLabel="Attaching…" className="btn-primary btn-sm">
             Attach
           </SubmitButton>
