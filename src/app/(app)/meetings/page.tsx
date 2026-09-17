@@ -47,7 +47,7 @@ export default async function MeetingsPage({
     recentLabel(),
   ]);
 
-  const [pending, recent, projects] = await Promise.all([
+  const [pending, recent, dismissed, dismissedTotal, projects] = await Promise.all([
     db.meeting.findMany({
       where: { status: "PENDING", ...(everyone ? {} : { userId: user.id }) },
       orderBy: [{ startsAt: "desc" }],
@@ -98,6 +98,26 @@ export default async function MeetingsPage({
         project: { select: { id: true, name: true } },
         user: { select: { name: true } },
       },
+    }),
+    // Dismissed meetings, which used to go nowhere at all. Pressing "Not
+    // billable work" made a call vanish with no way back, and whether
+    // something is billable is a decision that changes - a project starts
+    // being charged for, an internal call turns out to be client work. It
+    // is not a delete, so it does not behave like one.
+    db.meeting.findMany({
+      where: { status: "DISMISSED", ...(everyone ? {} : { userId: user.id }) },
+      orderBy: [{ startsAt: "desc" }],
+      take: 50,
+      select: {
+        id: true,
+        title: true,
+        startsAt: true,
+        minutes: true,
+        user: { select: { name: true } },
+      },
+    }),
+    db.meeting.count({
+      where: { status: "DISMISSED", ...(everyone ? {} : { userId: user.id }) },
     }),
     db.project.findMany({
       where: { status: { in: ["ACTIVE", "ON_HOLD"] } },
@@ -303,6 +323,61 @@ export default async function MeetingsPage({
           </ul>
         </section>
       ) : null}
+
+      {/* Where "Not billable work" puts things.
+          Rolled up, because on a normal day nobody wants to read it — but
+          present, with a count, because the alternative was a call
+          disappearing off the screen with no way to change your mind. */}
+      {dismissed.length > 0 ? (
+        <details className="card group mt-8 overflow-hidden p-0">
+          <summary className="flex cursor-pointer list-none items-baseline gap-2 px-4 py-3 hover:bg-ink-50 [&::-webkit-details-marker]:hidden">
+            <span
+              aria-hidden
+              className="inline-block w-3 shrink-0 text-ink-400 transition-transform group-open:rotate-90"
+            >
+              ▸
+            </span>
+            <h2 className="text-sm font-semibold text-ink-900">Not billable</h2>
+            <span className="text-xs text-ink-500">
+              {dismissedTotal.toLocaleString()}{" "}
+              {dismissedTotal === 1 ? "meeting" : "meetings"} you set aside
+            </span>
+          </summary>
+
+          <ul className="divide-y divide-ink-100 border-t border-ink-100">
+            {dismissed.map((m) => (
+              <li
+                key={m.id}
+                className="flex flex-wrap items-center gap-2 px-4 py-2 text-sm"
+              >
+                <Link
+                  href={`/meetings/${m.id}`}
+                  className="text-ink-800 hover:text-brand-700 hover:underline"
+                >
+                  {m.title}
+                </Link>
+                <span className="text-xs text-ink-500">
+                  {formatMedium(dayInZone(m.startsAt, zone))} · {m.minutes}m
+                  {everyone ? ` · ${m.user.name}` : ""}
+                </span>
+                <span className="ml-auto">
+                  <ReopenButton id={m.id} dismissed />
+                </span>
+              </li>
+            ))}
+          </ul>
+
+          <p className="border-t border-ink-100 px-4 py-2 text-xs text-ink-500">
+            {dismissedTotal > dismissed.length
+              ? `The ${dismissed.length} most recent of ${dismissedTotal.toLocaleString()}. `
+              : ""}
+            Nothing here is logged against a project or a client.
+            &ldquo;Billable after all&rdquo; puts one back at the top of this
+            page to be dealt with.
+          </p>
+        </details>
+      ) : null}
+
     </>
   );
 }
