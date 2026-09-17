@@ -9,7 +9,7 @@ import { assertUnlocked } from "@/lib/lock";
 import { dayInZone } from "@/lib/dates";
 import { parseDuration } from "@/lib/format";
 import { googleConfigured } from "@/lib/google/auth";
-import { orgTimezone, syncCalendars } from "@/lib/google/sync";
+import { forgetUnmapped, orgTimezone, syncCalendars } from "@/lib/google/sync";
 
 export type ActionState = { error?: string; ok?: boolean; message?: string };
 
@@ -272,7 +272,13 @@ export async function addClientDomainsAction(
     skipDuplicates: true,
   });
 
+  // It is now a client's domain, so it is no longer unmapped. Without this
+  // the "meetings we skipped" panel keeps naming it until the next nightly
+  // sync, which reads as the fix not having worked.
+  await forgetUnmapped(wanted);
+
   revalidatePath("/clients", "layout");
+  revalidatePath("/meetings", "layout");
   return { ok: true };
 }
 
@@ -375,7 +381,10 @@ export async function addIgnoredDomainsAction(
     skipDuplicates: true,
   });
 
+  await forgetUnmapped(wanted);
+
   revalidatePath("/clients", "layout");
+  revalidatePath("/meetings", "layout");
   return { ok: true };
 }
 

@@ -14,6 +14,7 @@ import { asSummaryDoc } from "@/lib/summary";
 import { MeetingCard, type MeetingRow, type ProjectOption } from "./MeetingCard";
 import { SyncButton } from "./SyncButton";
 import { ReopenButton } from "./ReopenButton";
+import { UnmappedDomains } from "./UnmappedDomains";
 
 export const dynamic = "force-dynamic";
 
@@ -47,7 +48,15 @@ export default async function MeetingsPage({
     recentLabel(),
   ]);
 
-  const [pending, recent, dismissed, dismissedTotal, projects] = await Promise.all([
+  const [
+    pending,
+    recent,
+    dismissed,
+    dismissedTotal,
+    projects,
+    unmapped,
+    clientOptions,
+  ] = await Promise.all([
     db.meeting.findMany({
       where: { status: "PENDING", ...(everyone ? {} : { userId: user.id }) },
       orderBy: [{ startsAt: "desc" }],
@@ -133,6 +142,18 @@ export default async function MeetingsPage({
           select: { id: true, name: true },
         },
       },
+    }),
+    // What the last sync passed over. This is the answer to "my call from
+    // the 2nd isn't here" — the sync only keeps a meeting when somebody in
+    // the invite is on a client's domain, and until now it never said so.
+    db.unmappedDomain.findMany({
+      orderBy: [{ meetings: "desc" }, { domain: "asc" }],
+      take: 25,
+    }),
+    db.client.findMany({
+      where: { archivedAt: null },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
     }),
   ]);
 
@@ -224,6 +245,20 @@ export default async function MeetingsPage({
         Calendars are read {calendarWindow}; write-ups cover calls{" "}
         {writeUpWindow}.
       </p>
+
+      {/* Admin only, because the fix is an admin's to make — attaching a
+          domain to a client changes what everybody sees. */}
+      {admin && unmapped.length > 0 ? (
+        <UnmappedDomains
+          rows={unmapped.map((u) => ({
+            domain: u.domain,
+            meetings: u.meetings,
+            example: u.example,
+            people: u.people,
+          }))}
+          clients={clientOptions}
+        />
+      ) : null}
 
       {/* The one fact nothing else on any screen tells you, and the whole
           difference between a write-up and a list of scraped sentences.

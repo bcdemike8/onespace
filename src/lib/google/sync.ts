@@ -65,7 +65,12 @@ export interface SyncOutcome {
    * first. This is the discovery path now that unrecognised meetings aren't
    * kept - it says what you'd gain by mapping one more domain.
    */
-  unrecognised: { domain: string; meetings: number }[];
+  unrecognised: {
+    domain: string;
+    meetings: number;
+    example: string | null;
+    people: string[];
+  }[];
   people: number;
   failed: { name: string; error: string }[];
 }
@@ -198,7 +203,18 @@ export async function syncCalendars(options?: {
     "icloud.com", "me.com", "aol.com", "calendly.com", "zoom.us",
     "chorus.ai", "gong.io", "fathom.video", "apollo.io",
   ]);
-  const unrecognised = new Map<string, number>();
+  /**
+   * What we passed over, by domain.
+   *
+   * More than a count, because a count is not enough to act on: a real
+   * meeting title makes a domain recognisable, and knowing whose calendar it
+   * was on separates "a client the team works with" from "somebody's
+   * recruiter".
+   */
+  const unrecognised = new Map<
+    string,
+    { meetings: number; example: string | null; people: Set<string> }
+  >();
 
   const from = options?.from ?? (await calendarSyncFrom());
   // A fortnight ahead: scheduled client calls are worth seeing before they
@@ -237,7 +253,19 @@ export async function syncCalendars(options?: {
         });
         outcome.skipped += 1;
         for (const d of externalDomains) {
-          if (!quiet.has(d)) unrecognised.set(d, (unrecognised.get(d) ?? 0) + 1);
+          if (quiet.has(d)) continue;
+          const seen = unrecognised.get(d) ?? {
+            meetings: 0,
+            example: null,
+            people: new Set<string>(),
+          };
+          seen.meetings += 1;
+          // The first real title wins. "(no title)" is not a clue.
+          if (!seen.example && m.title && m.title !== "(no title)") {
+            seen.example = m.title;
+          }
+          seen.people.add(person.name);
+          unrecognised.set(d, seen);
         }
         continue;
       }
@@ -319,12 +347,81 @@ export async function syncCalendars(options?: {
     }
   }
 
-  outcome.unrecognised = [...unrecognised]
-    .map(([domain, meetings]) => ({ domain, meetings }))
-    .sort((a, b) => b.meetings - a.meetings || a.domain.localeCompare(b.domain))
-    .slice(0, 12);
+  const tally = [...unrecognised]
+    .map(([domain, seen]) => ({
+      domain,
+      meetings: seen.meetings,
+      example: seen.example,
+      people: [...seen.people].sort(),
+    }))
+    .sort((a, b) => b.meetings - a.meetings || a.domain.localeCompare(b.domain));
+
+  await recordUnmapped(tally, {
+    // A one-person sync only looked at one calendar, so it can add to the
+    // list but must not decide that anything has gone away. Only a run over
+    // everybody has seen enough to clear a row.
+    replace: !options?.userId,
+    from,
+  });
+
+  outcome.unrecognised = tally.slice(0, 12);
 
   return outcome;
+}
+
+/**
+ * Write down what the sync passed over.
+ *
+ * Counts are the last full sync's view rather than a running total. The sync
+ * re-reads the same window every night, so adding up would say a domain
+ * appeared in four hundred meetings by Christmas - and the number people
+ * actually want is "how many meetings would I get back if I mapped this".
+ */
+async function recordUnmapped(
+  tally: { domain: string; meetings: number; example: string | null; people: string[] }[],
+  options: { replace: boolean; from: Date },
+) {
+  const now = new Date();
+
+  for (const row of tally) {
+    await db.unmappedDomain.upsert({
+      where: { domain: row.domain },
+      create: {
+        domain: row.domain,
+        meetings: row.meetings,
+        example: row.example,
+        people: row.people,
+        lastSeenAt: now,
+      },
+      update: {
+        meetings: row.meetings,
+        example: row.example,
+        people: row.people,
+        lastSeenAt: now,
+      },
+    });
+  }
+
+  if (!options.replace) return;
+
+  // Gone from a run that read every calendar: the domain was mapped, or
+  // ignored, or those meetings fell out of the window. Either way it is no
+  // longer something to act on, and a list that only grows is a list nobody
+  // reads.
+  await db.unmappedDomain.deleteMany({
+    where: { domain: { notIn: tally.map((t) => t.domain) } },
+  });
+}
+
+/**
+ * Stop listing a domain the moment it is dealt with.
+ *
+ * Called when a domain is attached to a client or ignored, so the panel
+ * stops naming it straight away rather than until the next nightly run.
+ */
+export async function forgetUnmapped(domains: string[]): Promise<void> {
+  if (domains.length === 0) return;
+  await db.unmappedDomain.deleteMany({ where: { domain: { in: domains } } });
 }
 
 function describe(e: unknown): string {

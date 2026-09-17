@@ -832,6 +832,43 @@ model Partner {
  * so removing a domain from here and re-syncing brings its meetings straight
  * back, rather than leaving a pile of dismissed rows nobody can find.
  */
+/**
+ * An outside email domain that turns up in meetings and belongs to no client.
+ *
+ * The calendar sync stores a meeting only when somebody in the invite is on a
+ * domain mapped to a client — which is right, because a calendar carries far
+ * more internal and prospect meetings than client ones. But it made the
+ * failure invisible: a real client call with an unmapped domain was passed
+ * over in silence, and the only clue was one sentence that appeared after
+ * pressing Sync and then disappeared.
+ *
+ * So the sync writes down what it passed over, and the Meetings page shows
+ * it. "Why isn't my 2 September call here" now has an answer on the screen
+ * where it is asked, and a button to fix it.
+ *
+ * Rows are the last sync's view, not a running total — see the sync for why.
+ */
+model UnmappedDomain {
+  id     String @id @default(cuid())
+  domain String @unique
+
+  /// Meetings the last full sync passed over because of this domain.
+  meetings Int @default(0)
+
+  /// One real meeting title. "mosset.io (3)" means nothing on its own;
+  /// "mosset.io (3) — Impetus kickoff" is somebody you recognise.
+  example String?
+
+  /// Whose calendars it turned up on, for a domain that is one person's
+  /// contact rather than a client the whole team works with.
+  people String[] @default([])
+
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@index([meetings])
+}
+
 model IgnoredDomain {
   id        String   @id @default(cuid())
   domain    String   @unique
