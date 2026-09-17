@@ -16,6 +16,27 @@ import { PageHeader } from "@/components/ui";
  */
 const BUILD = (process.env.RAILWAY_GIT_COMMIT_SHA ?? "").trim().slice(0, 7);
 
+/**
+ * Whether the app has a CRON_SECRET, and how long it is.
+ *
+ * Not the value — the length. Comparing two lengths is enough to find the
+ * stray newline that a paste leaves on the end, which is the usual reason a
+ * scheduled job is refused, and it tells somebody nothing they could use.
+ * The unauthenticated 401 body already says this much; an admin page saying
+ * it is strictly less exposure and enormously more useful.
+ */
+const CRON_SECRET_LENGTH = (process.env.CRON_SECRET ?? "").trim().length;
+
+function ago(when: Date | null): string {
+  if (!when) return "never";
+  const mins = Math.round((Date.now() - when.getTime()) / 60_000);
+  if (mins < 2) return "just now";
+  if (mins < 90) return `${mins} minutes ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 36) return `${hours} hours ago`;
+  return `${Math.round(hours / 24)} days ago`;
+}
+
 export const dynamic = "force-dynamic";
 
 /**
@@ -37,7 +58,7 @@ export default async function WhyPage({
   const admin = await requireAdmin();
   const params = await searchParams;
 
-  const [people, zone, window] = await Promise.all([
+  const [people, zone, window, lastRead] = await Promise.all([
     db.user.findMany({
       where: { isActive: true },
       select: { id: true, name: true, email: true },
@@ -45,6 +66,10 @@ export default async function WhyPage({
     }),
     orgTimezone(),
     calendarWindowLabel(),
+    // When a calendar was last actually read. The single most useful fact
+    // about whether the scheduled job is running, and until now it lived
+    // only in a cron log nobody keeps.
+    db.meeting.aggregate({ _max: { syncedAt: true } }),
   ]);
 
   const who = params.who && people.some((p) => p.id === params.who)
@@ -68,6 +93,36 @@ export default async function WhyPage({
           </Link>
         }
       />
+
+      {/* Is the scheduled job even running? Three facts, none of which was
+          anywhere in the app — they lived in a cron log that scrolls away. */}
+      <dl className="card mb-4 grid gap-x-8 gap-y-2 p-4 text-sm sm:grid-cols-3">
+        <div>
+          <dt className="text-xs text-ink-500">A calendar was last read</dt>
+          <dd
+            className={
+              lastRead._max.syncedAt &&
+              Date.now() - lastRead._max.syncedAt.getTime() < 36 * 3_600_000
+                ? "text-good-700"
+                : "text-bad-700"
+            }
+          >
+            {ago(lastRead._max.syncedAt)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs text-ink-500">Scheduled jobs can sign in</dt>
+          <dd className={CRON_SECRET_LENGTH ? "text-ink-900" : "text-bad-700"}>
+            {CRON_SECRET_LENGTH
+              ? `Yes — this app's CRON_SECRET is ${CRON_SECRET_LENGTH} characters`
+              : "No — this app has no CRON_SECRET, so every job is refused"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs text-ink-500">This app is build</dt>
+          <dd className="text-ink-900">{BUILD || "unknown"}</dd>
+        </div>
+      </dl>
 
       <form className="card mb-4 flex flex-wrap items-end gap-3 p-4" action="/meetings/why">
         <div>
@@ -100,14 +155,6 @@ export default async function WhyPage({
         <p className="w-full text-xs text-ink-500">
           Calendars are read {window}. A day outside that is read here anyway —
           this asks Google directly — but the sync would not have stored it.
-          {BUILD ? (
-            <>
-              {" "}
-              This app is build <span className="font-medium">{BUILD}</span> — if
-              the cron log names a different one, they are different
-              deployments.
-            </>
-          ) : null}
         </p>
       </form>
 
