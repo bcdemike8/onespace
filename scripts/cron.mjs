@@ -35,29 +35,77 @@ if (!process.env.CRON_SECRET) {
 }
 
 /**
- * Call one endpoint. Returns true if the run itself worked, whatever happened
- * to individual people inside it.
+ * How long one request may take before we call it hung.
+ *
+ * Shorter than the platform's own gateway timeout on purpose, so a slow job
+ * fails here with a sentence that says which job and how long, rather than
+ * arriving as "502: (no body)" from a proxy that knows nothing about us.
  */
+// Comfortably longer than the longest budget any endpoint gives itself
+// (90s, in the Zoom sync), and shorter than the gateway's own patience.
+const REQUEST_TIMEOUT_MS = 150_000;
+
 async function call(name, path, describe) {
   const url = `${base}${path}`;
   try {
     const res = await fetch(url, {
       method: "POST",
       headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     const body = await res.json().catch(() => null);
 
     if (!res.ok) {
-      console.error(`${name} failed (${res.status}):`, body ?? "(no body)");
+      console.error(
+        `${name} failed (${res.status}):`,
+        body ??
+          "(no body — a 502 with no body is usually the gateway giving up on a " +
+            "request that ran too long, not the app refusing it)",
+      );
       return false;
     }
 
     console.log(`${name}: ${describe(body)}`);
-    return true;
+    return body;
   } catch (err) {
-    console.error(`${name} couldn't reach ${url}:`, err.message);
+    const why =
+      err.name === "TimeoutError"
+        ? `gave up after ${REQUEST_TIMEOUT_MS / 1000}s`
+        : err.message;
+    console.error(`${name} couldn't reach ${url}: ${why}`);
     return false;
   }
+}
+
+/**
+ * Walk everybody, one request per person.
+ *
+ * The endpoint does one calendar or one mailbox and says whether anybody is
+ * left. Doing them all in a single request took minutes, and the gateway
+ * answered 502 with no body long before it finished — every night, for
+ * calendar, mail and zoom alike. Nothing ever synced on a schedule.
+ */
+async function eachPerson(name, path, describe) {
+  let after = null;
+  let ok = true;
+
+  for (let turn = 1; turn <= 200; turn++) {
+    const sep = path.includes("?") ? "&" : "?";
+    const body = await call(
+      name,
+      after ? `${path}${sep}after=${encodeURIComponent(after)}` : path,
+      describe,
+    );
+
+    if (!body) {
+      ok = false;
+      break;
+    }
+    if (!body.person || !body.more) break;
+    after = body.person.id;
+  }
+
+  return ok;
 }
 
 const jobs = [];
@@ -66,8 +114,8 @@ const wants = (name) => job === name || job === "both" || job === "all";
 
 if (wants("calendar")) {
   jobs.push(() =>
-    call("calendar", "/api/cron/calendar-sync", (b) =>
-      `${b.seen} meetings across ${b.people} calendars, ${b.created} new, ${b.matched} matched` +
+    eachPerson("calendar", "/api/cron/calendar-sync", (b) =>
+      `${b.person?.name ?? "nobody"}: ${b.seen ?? 0} meetings, ${b.created ?? 0} new, ${b.matched ?? 0} matched, ${b.skipped ?? 0} passed over` +
       (b.failed?.length
         ? `, couldn't read ${b.failed.map((f) => `${f.name} (${f.error})`).join(", ")}`
         : ""),
@@ -77,8 +125,8 @@ if (wants("calendar")) {
 
 if (wants("mail")) {
   jobs.push(() =>
-    call("mail", "/api/cron/mail-sync", (b) =>
-      `${b.threads} client threads across ${b.people} mailboxes, ${b.created} new, ${b.awaiting} waiting on a reply` +
+    eachPerson("mail", "/api/cron/mail-sync", (b) =>
+      `${b.person?.name ?? "nobody"}: ${b.threads ?? 0} client threads, ${b.created ?? 0} new, ${b.awaiting ?? 0} waiting on a reply` +
       (b.failed?.length
         ? `, couldn't read ${b.failed.map((f) => `${f.name} (${f.error})`).join(", ")}`
         : ""),

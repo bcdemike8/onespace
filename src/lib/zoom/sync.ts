@@ -155,9 +155,13 @@ const BUDGET = {
   // comes back whatever else is in the way. The heavy calls are the nightly
   // job's work, and it has seven times as long.
   interactive: { totalMs: 55_000, callMs: 45_000 },
-  // Nobody is watching, but every hop still has an opinion about how long it
-  // will wait, and the cron loops anyway.
-  background: { totalMs: 420_000, callMs: 200_000 },
+  // Nobody is watching — but the gateway in front of this app is, and it
+  // gave up long before seven minutes were up. The cron log read
+  // "zoom failed (502): (no body)" every single night, which is a proxy
+  // hanging up rather than anything here refusing. The cron already loops
+  // until the backlog is empty, so a short budget costs nothing but an extra
+  // round trip and is the difference between running and not running at all.
+  background: { totalMs: 90_000, callMs: 60_000 },
 } as const;
 
 /**

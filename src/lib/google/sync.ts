@@ -554,6 +554,20 @@ async function recordUnmapped(
 }
 
 /**
+ * Drop domains nothing has seen lately.
+ *
+ * The replace-everything pass only happens on a run that reads every
+ * calendar, and the cron now reads one person per request — so nothing would
+ * ever clear a row again. Instead, after the last person of a sweep, forget
+ * anything the sweep did not touch.
+ */
+export async function pruneUnmapped(sinceHours = 24): Promise<void> {
+  await db.unmappedDomain.deleteMany({
+    where: { lastSeenAt: { lt: new Date(Date.now() - sinceHours * 3_600_000) } },
+  });
+}
+
+/**
  * Stop listing a domain the moment it is dealt with.
  *
  * Called when a domain is attached to a client or ignored, so the panel

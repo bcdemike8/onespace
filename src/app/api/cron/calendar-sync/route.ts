@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { checkCronSecret } from "@/lib/cron-auth";
 import { googleConfigured } from "@/lib/google/auth";
 import { syncCalendars } from "@/lib/google/sync";
+import { nextTurn } from "@/lib/cron-people";
+import { pruneUnmapped } from "@/lib/google/sync";
 
 export const dynamic = "force-dynamic";
 
@@ -25,12 +27,30 @@ async function run(request: Request) {
   }
 
   try {
-    const result = await syncCalendars();
+    // One person per request. Everybody in one call took minutes and
+    // Railway's gateway answered 502 with no body long before it finished,
+    // so the nightly run had never once completed. The caller loops.
+    const after = new URL(request.url).searchParams.get("after");
+    const turn = await nextTurn(after);
+    if (!turn.person) {
+      return NextResponse.json({ done: true, people: 0, seen: 0 });
+    }
+
+    const result = await syncCalendars({ userId: turn.person.id });
+
+    // The end of the sweep. A per-person run can add to the unmapped list
+    // but must never decide something has gone away — it only looked at one
+    // calendar — so the tidy-up happens once, here, after the last one.
+    if (!turn.more) await pruneUnmapped();
 
     // 200 even when one person's calendar failed: the run worked, and the
     // body names who it couldn't read. A 500 would make Railway retry the
     // whole thing.
-    return NextResponse.json(result);
+    return NextResponse.json({
+      ...result,
+      person: turn.person,
+      more: turn.more,
+    });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     console.error("Calendar sync failed:", e);
