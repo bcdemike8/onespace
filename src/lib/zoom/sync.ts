@@ -31,14 +31,16 @@ import {
 import { backfillDueDates } from "@/lib/commitments/backfill";
 import { buildWeights, matchMeeting, type MatchCandidate } from "@/lib/google/match";
 import { orgTimezone } from "@/lib/google/sync";
-import { recentDays } from "@/lib/recency";
+import { recentLabel, recentSince } from "@/lib/recency";
+import { DEFAULT_SYNC_FROM, WINDOW_KEYS, parseWindow, sinceOf } from "@/lib/window";
 
-export const ZOOM_FROM_KEY = "zoom.from";
-export const DEFAULT_ZOOM_FROM = "2026-08-01";
+export const ZOOM_FROM_KEY = WINDOW_KEYS.zoom;
+export const DEFAULT_ZOOM_FROM = DEFAULT_SYNC_FROM;
 
+/** How far back Zoom is read. A date, or a number of days - see lib/window. */
 export async function zoomSyncFrom(): Promise<Date> {
   const row = await db.appSetting.findUnique({ where: { key: ZOOM_FROM_KEY } });
-  return dayStart(row?.value || DEFAULT_ZOOM_FROM);
+  return sinceOf(parseWindow(row?.value, DEFAULT_ZOOM_FROM));
 }
 
 /**
@@ -54,7 +56,8 @@ export async function zoomSyncFrom(): Promise<Date> {
  * same number governs how long a suggestion stays on My work - see
  * src/lib/recency.ts.
  */
-export const transcriptWindowDays = recentDays;
+export const transcriptWindowSince = recentSince;
+export const transcriptWindowLabel = recentLabel;
 
 export interface ZoomOutcome {
   people: number;
@@ -176,8 +179,10 @@ export async function syncZoom(options?: {
   const budget = options?.background ? BUDGET.background : BUDGET.interactive;
   const deadline = Date.now() + budget.totalMs;
 
-  const windowDays = await transcriptWindowDays();
-  const tooOldBefore = new Date(Date.now() - windowDays * 86_400_000);
+  const [tooOldBefore, windowLabel] = await Promise.all([
+    transcriptWindowSince(),
+    transcriptWindowLabel(),
+  ]);
   const outcome: ZoomOutcome = {
     people: 0,
     seen: 0,
@@ -412,7 +417,7 @@ export async function syncZoom(options?: {
           where: { id: row.id },
           data: {
             transcriptReadAt: new Date(),
-            transcriptNote: `This call is older than the ${windowDays}-day window for write-ups, so it wasn't read. Use "Read this call now" if you want it after all.`,
+            transcriptNote: `Write-ups only cover calls ${windowLabel}, so this one wasn't read. Use "Read this call now" if you want it after all.`,
           },
         });
         outcome.tooOld += 1;

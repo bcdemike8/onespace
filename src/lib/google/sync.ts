@@ -1,7 +1,13 @@
 import "server-only";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import { dayStart } from "@/lib/dates";
+import {
+  DEFAULT_SYNC_FROM,
+  WINDOW_KEYS,
+  labelOf,
+  parseWindow,
+  sinceOf,
+} from "@/lib/window";
 import { listMeetings } from "@/lib/google/calendar";
 import { GoogleApiError, GoogleAuthError, googleConfigured } from "@/lib/google/auth";
 import {
@@ -14,18 +20,28 @@ import {
 export const ORG_TIMEZONE_KEY = "org.timezone";
 export const DEFAULT_TIMEZONE = "America/Chicago";
 
-/** How far back the first sync reaches. Brianna chose 1 August. */
-export const SYNC_FROM_KEY = "google.calendarFrom";
-export const DEFAULT_SYNC_FROM = "2026-08-01";
+/** How far back the calendar is read. Brianna chose 31 August 2026. */
+export const SYNC_FROM_KEY = WINDOW_KEYS.calendar;
+export const DEFAULT_CALENDAR_FROM = DEFAULT_SYNC_FROM;
 
 export async function orgTimezone(): Promise<string> {
   const row = await db.appSetting.findUnique({ where: { key: ORG_TIMEZONE_KEY } });
   return row?.value || DEFAULT_TIMEZONE;
 }
 
-export async function calendarSyncFrom(): Promise<Date> {
+async function calendarWindow() {
   const row = await db.appSetting.findUnique({ where: { key: SYNC_FROM_KEY } });
-  return dayStart(row?.value || DEFAULT_SYNC_FROM);
+  return parseWindow(row?.value, DEFAULT_CALENDAR_FROM);
+}
+
+/** A date, or a number of days. See lib/window. */
+export async function calendarSyncFrom(): Promise<Date> {
+  return sinceOf(await calendarWindow());
+}
+
+/** The same window in words, for saying so on a screen. */
+export async function calendarWindowLabel(): Promise<string> {
+  return labelOf(await calendarWindow());
 }
 
 export interface SyncOutcome {

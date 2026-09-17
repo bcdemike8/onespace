@@ -1,6 +1,6 @@
 import "server-only";
 import { db } from "@/lib/db";
-import { recentDays, recentSince } from "@/lib/recency";
+import { recentLabel, recentSince } from "@/lib/recency";
 import { pickTranscript } from "@/lib/zoom/files";
 import {
   ZoomError,
@@ -57,7 +57,8 @@ export type PersonDiag = {
 };
 
 export type ZoomDiagnosis = {
-  days: number;
+  /** The window in words - "since 31 August 2026", or "in the last 7 days". */
+  window: string;
   people: PersonDiag[];
   truncated: boolean;
   note?: string;
@@ -93,8 +94,7 @@ const when = (iso: string) => iso.slice(0, 16).replace("T", " ");
 
 export async function diagnoseZoom(): Promise<ZoomDiagnosis> {
   const deadline = Date.now() + BUDGET_MS;
-  const since = await recentSince();
-  const days = await recentDays();
+  const [since, window] = await Promise.all([recentSince(), recentLabel()]);
   const now = new Date();
 
   const users = await listZoomUsers();
@@ -151,7 +151,7 @@ export async function diagnoseZoom(): Promise<ZoomDiagnosis> {
   }
 
   return {
-    days,
+    window,
     people,
     truncated,
     note: users.length === 0 ? "Zoom returned no active users." : undefined,

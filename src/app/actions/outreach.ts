@@ -124,13 +124,13 @@ export async function reconcileKaiaAction(): Promise<OutreachState> {
   }
 
   try {
-    const { recentSince, recentDays } = await import("@/lib/recency");
+    const { recentSince, recentLabel } = await import("@/lib/recency");
     const { recentRecordings } = await import("@/lib/outreach/kaia");
     const { reconcile, tally } = await import("@/lib/outreach/reconcile");
     const { db } = await import("@/lib/db");
 
     const since = await recentSince();
-    const days = await recentDays();
+    const window = await recentLabel();
 
     const [recordings, meetings] = await Promise.all([
       recentRecordings(since),
@@ -160,7 +160,7 @@ export async function reconcileKaiaAction(): Promise<OutreachState> {
     out.push(
       `Kaia recorded ${recordings.length} call${
         recordings.length === 1 ? "" : "s"
-      } in the last ${days} days.`,
+      } ${window}.`,
     );
     out.push("");
     out.push(`  ${counts["written-up"]} have a write-up`);

@@ -240,9 +240,13 @@ export async function rereadTranscriptsAction(
   // sync will only pass over as too old is churn: two hundred rows rewritten
   // to say "too old" and nothing read. This asks for exactly what will be
   // read.
-  const { transcriptWindowDays } = await import("@/lib/zoom/sync");
-  const days = await transcriptWindowDays();
-  const since = new Date(Date.now() - days * 86_400_000);
+  const { transcriptWindowSince, transcriptWindowLabel } = await import(
+    "@/lib/zoom/sync"
+  );
+  const [since, window] = await Promise.all([
+    transcriptWindowSince(),
+    transcriptWindowLabel(),
+  ]);
 
   const scope = {
     ...(everyone ? {} : { userId: user.id }),
@@ -272,8 +276,8 @@ export async function rereadTranscriptsAction(
     ok: true,
     message:
       cleared.queued === 0
-        ? `Nothing from the last ${days} days to read again${everyone ? "" : " on your calls"}.`
-        : `${cleared.queued} call${cleared.queued === 1 ? "" : "s"} from the last ${days} days${
+        ? `Nothing ${window} to read again${everyone ? "" : " on your calls"}.`
+        : `${cleared.queued} call${cleared.queued === 1 ? "" : "s"} ${window}${
             everyone ? "" : " of yours"
           } queued to be read again${
             cleared.removed > 0
@@ -391,7 +395,7 @@ export async function sweepZoomAction(): Promise<{
     const found = await diagnoseZoom();
 
     const out: string[] = [];
-    out.push(`Zoom, last ${found.days} days.`);
+    out.push(`Zoom, ${found.window}.`);
     if (found.note) out.push(found.note);
     out.push("");
 

@@ -4,7 +4,8 @@ import { db } from "@/lib/db";
 import { dayInZone, formatMedium, timeInZone } from "@/lib/dates";
 import { getLockState } from "@/lib/lock";
 import { isLocked } from "@/lib/periods";
-import { orgTimezone } from "@/lib/google/sync";
+import { calendarWindowLabel, orgTimezone } from "@/lib/google/sync";
+import { recentLabel } from "@/lib/recency";
 import { googleConfigured } from "@/lib/google/auth";
 import { zoomConfigured } from "@/lib/zoom/client";
 import { aiConfigured } from "@/lib/ai/summarise";
@@ -39,7 +40,12 @@ export default async function MeetingsPage({
   const params = await searchParams;
   const everyone = admin && params.who === "all";
 
-  const [zone, lock] = await Promise.all([orgTimezone(), getLockState()]);
+  const [zone, lock, calendarWindow, writeUpWindow] = await Promise.all([
+    orgTimezone(),
+    getLockState(),
+    calendarWindowLabel(),
+    recentLabel(),
+  ]);
 
   const [pending, recent, projects] = await Promise.all([
     db.meeting.findMany({
@@ -190,6 +196,14 @@ export default async function MeetingsPage({
         }
         actions={<SyncButton admin={admin} zoom={zoomConfigured()} />}
       />
+
+      {/* What the syncs are actually looking at. Three settings decide it and
+          none of them was visible anywhere, so "why isn't my 2 September call
+          here" had no answer on the screen it was being asked on. */}
+      <p className="mb-4 text-xs text-ink-500">
+        Calendars are read {calendarWindow}; write-ups cover calls{" "}
+        {writeUpWindow}.
+      </p>
 
       {/* The one fact nothing else on any screen tells you, and the whole
           difference between a write-up and a list of scraped sentences.
