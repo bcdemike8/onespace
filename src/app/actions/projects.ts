@@ -468,12 +468,28 @@ export async function toggleClientArchivedAction(formData: FormData) {
   const client = await db.client.findUnique({ where: { id } });
   if (!client) return;
 
+  const bringingBack = Boolean(client.archivedAt);
+
   await db.client.update({
     where: { id },
-    data: { archivedAt: client.archivedAt ? null : new Date() },
+    data: { archivedAt: bringingBack ? null : new Date() },
   });
+
+  // Bringing a client back makes their domains match again, so the "meetings
+  // not shown" panel must stop naming them straight away. Leaving it to the
+  // next nightly sync reads as the button not having worked.
+  if (bringingBack) {
+    const { forgetUnmapped } = await import("@/lib/google/sync");
+    const domains = await db.clientDomain.findMany({
+      where: { clientId: id },
+      select: { domain: true },
+    });
+    await forgetUnmapped(domains.map((d) => d.domain));
+  }
+
   refresh();
   revalidatePath("/clients", "layout");
+  revalidatePath("/meetings", "layout");
 }
 
 /**

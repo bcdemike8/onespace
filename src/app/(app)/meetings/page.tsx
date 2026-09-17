@@ -255,6 +255,8 @@ export default async function MeetingsPage({
             meetings: u.meetings,
             example: u.example,
             people: u.people,
+            archivedClientId: u.archivedClientId,
+            archivedClientName: u.archivedClientName,
           }))}
           clients={clientOptions}
         />

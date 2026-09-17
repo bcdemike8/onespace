@@ -70,6 +70,9 @@ export interface SyncOutcome {
     meetings: number;
     example: string | null;
     people: string[];
+    /** Set when the domain belongs to an archived client - a different fix. */
+    archivedClientId: string | null;
+    archivedClientName: string | null;
   }[];
   people: number;
   failed: { name: string; error: string }[];
@@ -194,6 +197,19 @@ export async function syncCalendars(options?: {
 
   outcome.mappedDomains = clientByDomain.size;
 
+  // Domains that ARE attached to a client, but an archived one. Archiving
+  // deliberately stops a client's meetings being suggested — and looks
+  // exactly like never having mapped them, right up until you try to map
+  // them and are told the domain is already taken.
+  const archivedByDomain = new Map(
+    (
+      await db.clientDomain.findMany({
+        where: { client: { archivedAt: { not: null } } },
+        select: { domain: true, client: { select: { id: true, name: true } } },
+      })
+    ).map((d) => [d.domain, d.client]),
+  );
+
   // Domains not worth mentioning in the "you could map this" hint - already
   // decided against, or a partner, or a mail provider.
   const quiet = new Set([
@@ -213,7 +229,12 @@ export async function syncCalendars(options?: {
    */
   const unrecognised = new Map<
     string,
-    { meetings: number; example: string | null; people: Set<string> }
+    {
+      meetings: number;
+      example: string | null;
+      people: Set<string>;
+      archived: { id: string; name: string } | null;
+    }
   >();
 
   const from = options?.from ?? (await calendarSyncFrom());
@@ -253,11 +274,12 @@ export async function syncCalendars(options?: {
         });
         outcome.skipped += 1;
         for (const d of externalDomains) {
-          if (quiet.has(d)) continue;
+          if (quiet.has(d) && !archivedByDomain.has(d)) continue;
           const seen = unrecognised.get(d) ?? {
             meetings: 0,
             example: null,
             people: new Set<string>(),
+            archived: archivedByDomain.get(d) ?? null,
           };
           seen.meetings += 1;
           // The first real title wins. "(no title)" is not a clue.
@@ -353,6 +375,8 @@ export async function syncCalendars(options?: {
       meetings: seen.meetings,
       example: seen.example,
       people: [...seen.people].sort(),
+      archivedClientId: seen.archived?.id ?? null,
+      archivedClientName: seen.archived?.name ?? null,
     }))
     .sort((a, b) => b.meetings - a.meetings || a.domain.localeCompare(b.domain));
 
@@ -378,7 +402,14 @@ export async function syncCalendars(options?: {
  * actually want is "how many meetings would I get back if I mapped this".
  */
 async function recordUnmapped(
-  tally: { domain: string; meetings: number; example: string | null; people: string[] }[],
+  tally: {
+    domain: string;
+    meetings: number;
+    example: string | null;
+    people: string[];
+    archivedClientId: string | null;
+    archivedClientName: string | null;
+  }[],
   options: { replace: boolean; from: Date },
 ) {
   const now = new Date();
@@ -391,12 +422,16 @@ async function recordUnmapped(
         meetings: row.meetings,
         example: row.example,
         people: row.people,
+        archivedClientId: row.archivedClientId,
+        archivedClientName: row.archivedClientName,
         lastSeenAt: now,
       },
       update: {
         meetings: row.meetings,
         example: row.example,
         people: row.people,
+        archivedClientId: row.archivedClientId,
+        archivedClientName: row.archivedClientName,
         lastSeenAt: now,
       },
     });

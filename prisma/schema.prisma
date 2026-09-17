@@ -863,6 +863,14 @@ model UnmappedDomain {
   /// contact rather than a client the whole team works with.
   people String[] @default([])
 
+  /// Set when the domain IS attached to a client — an archived one, whose
+  /// domains deliberately stop matching. Without this the panel would tell
+  /// somebody to attach a domain that is already attached, and the attach
+  /// would be refused as a duplicate. The fix there is to un-archive, so
+  /// that is what it offers.
+  archivedClientId   String?
+  archivedClientName String?
+
   firstSeenAt DateTime @default(now())
   lastSeenAt  DateTime @default(now())
 
