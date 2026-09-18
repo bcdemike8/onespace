@@ -22,6 +22,7 @@ import { TimeEntryRow } from "@/components/TimeEntryRow";
 import { CallSummary } from "@/components/CallSummary";
 import { asSummaryDoc } from "@/lib/summary";
 import { saveProjectAsTemplateAction } from "@/app/actions/templates";
+import { ProjectBilling } from "./ProjectBilling";
 import { ProjectLifecycle } from "./ProjectLifecycle";
 import { ProjectSettings } from "./ProjectSettings";
 import {
@@ -250,6 +251,11 @@ export default async function ProjectPage({
           <>
             {/* Everyone, not just an admin: the person who finished the work
                 is the one who knows it is finished. */}
+            <ProjectBilling
+              projectId={project.id}
+              billingType={project.billingType}
+              loggedHours={Number(formatHours(totalMinutes))}
+            />
             <ProjectLifecycle
               projectId={project.id}
               status={project.status}

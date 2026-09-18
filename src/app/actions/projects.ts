@@ -1,13 +1,15 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import type { ProjectStatus } from "@prisma/client";
+import type { BillingType, ProjectStatus } from "@prisma/client";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireAdmin, requireUser } from "@/lib/auth";
 import { addDays, dayStart } from "@/lib/dates";
 import { parseMoneyToCents } from "@/lib/format";
+import { getLockState } from "@/lib/lock";
+import { isLocked } from "@/lib/periods";
 import { parseDomains } from "@/lib/domains";
 
 export type ActionState = { error?: string; ok?: boolean };
@@ -719,4 +721,65 @@ export async function setProjectStatusAction(formData: FormData) {
 
   refresh();
   revalidatePath(`/projects/${id}`);
+}
+
+/**
+ * Change how a project earns, and bring the hours already on it into line.
+ *
+ * Changing the type alone is not enough, and that is the whole reason this
+ * exists. A time entry snapshots whether it was billable when it was
+ * written, so a project wrongly set up as non-billable keeps reporting zero
+ * revenue for ever after somebody fixes the setting - the fix looks like it
+ * worked and the numbers do not move.
+ *
+ * So the entries follow. Only the flag: the bill rate stamped on each entry
+ * was always the real one (resolveRates sets it from the project or the
+ * person regardless of billing type, and only gates `billable`), and
+ * re-deriving rates would rewrite history with today's numbers, which is
+ * exactly what snapshotting exists to prevent.
+ *
+ * Closed months are left alone. An invoice has been sent against those, and
+ * quietly moving an hour from non-billable to billable after the fact is how
+ * a report stops matching what a client was charged.
+ */
+export async function setProjectBillingAction(formData: FormData) {
+  await requireUser();
+
+  const id = String(formData.get("id") ?? "");
+  const wanted = String(formData.get("billingType") ?? "");
+
+  const allowed: BillingType[] = ["HOURLY", "FIXED_FEE", "NON_BILLABLE"];
+  if (!allowed.includes(wanted as BillingType)) return;
+
+  const project = await db.project.findUnique({
+    where: { id },
+    select: { id: true, billingType: true },
+  });
+  if (!project || project.billingType === wanted) return;
+
+  const nowBillable = wanted !== "NON_BILLABLE";
+  const lock = await getLockState();
+
+  await db.project.update({
+    where: { id },
+    data: { billingType: wanted as BillingType },
+  });
+
+  // Only entries that disagree with the new type, and only in open months.
+  const entries = await db.timeEntry.findMany({
+    where: { projectId: id, billable: !nowBillable },
+    select: { id: true, date: true },
+  });
+  const open = entries.filter((e) => !isLocked(e.date, lock)).map((e) => e.id);
+
+  if (open.length > 0) {
+    await db.timeEntry.updateMany({
+      where: { id: { in: open } },
+      data: { billable: nowBillable },
+    });
+  }
+
+  refresh();
+  revalidatePath(`/projects/${id}`);
+  revalidatePath("/timesheet", "layout");
 }
