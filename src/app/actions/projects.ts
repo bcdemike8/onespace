@@ -1,10 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import type { ProjectStatus } from "@prisma/client";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { requireAdmin, requireUser } from "@/lib/auth";
 import { addDays, dayStart } from "@/lib/dates";
 import { parseMoneyToCents } from "@/lib/format";
 import { parseDomains } from "@/lib/domains";
@@ -676,4 +677,46 @@ export async function togglePartnerArchivedAction(formData: FormData) {
     data: { archivedAt: partner.archivedAt ? null : new Date() },
   });
   revalidatePath("/clients", "layout");
+}
+
+/**
+ * Finish a project, put it away, or bring it back.
+ *
+ * Its own action rather than a field in Settings, because those are two
+ * different jobs. Changing a project's client or its budget is an admin's
+ * work and rightly sits behind a form; saying "this one is done" is the last
+ * thing the person who delivered it does, and it was buried in a dropdown
+ * inside a dialog that only an admin could open.
+ *
+ * So: requireUser, not requireAdmin. Everyone here can create a project and
+ * log time to one; being unable to say it has finished was an oversight
+ * rather than a rule.
+ *
+ * Nothing is deleted and nothing is locked. A completed project keeps every
+ * hour, every task and every file; it stops appearing in the places that ask
+ * for live work — the project picker, the meeting suggestions, the default
+ * Projects view — and Reopen puts it straight back.
+ */
+export async function setProjectStatusAction(formData: FormData) {
+  await requireUser();
+
+  const id = String(formData.get("id") ?? "");
+  const wanted = String(formData.get("status") ?? "");
+
+  const allowed: ProjectStatus[] = ["ACTIVE", "ON_HOLD", "COMPLETED", "ARCHIVED"];
+  if (!allowed.includes(wanted as ProjectStatus)) return;
+
+  const project = await db.project.findUnique({
+    where: { id },
+    select: { id: true },
+  });
+  if (!project) return;
+
+  await db.project.update({
+    where: { id },
+    data: { status: wanted as ProjectStatus },
+  });
+
+  refresh();
+  revalidatePath(`/projects/${id}`);
 }

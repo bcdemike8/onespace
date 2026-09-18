@@ -22,6 +22,7 @@ import { TimeEntryRow } from "@/components/TimeEntryRow";
 import { CallSummary } from "@/components/CallSummary";
 import { asSummaryDoc } from "@/lib/summary";
 import { saveProjectAsTemplateAction } from "@/app/actions/templates";
+import { ProjectLifecycle } from "./ProjectLifecycle";
 import { ProjectSettings } from "./ProjectSettings";
 import {
   StatusUpdates,
@@ -246,7 +247,15 @@ export default async function ProjectPage({
           </span>
         }
         actions={
-          admin ? (
+          <>
+            {/* Everyone, not just an admin: the person who finished the work
+                is the one who knows it is finished. */}
+            <ProjectLifecycle
+              projectId={project.id}
+              status={project.status}
+              openTasks={openTasks.length}
+            />
+            {admin ? (
             <>
               <form action={saveProjectAsTemplateAction}>
                 <input type="hidden" name="projectId" value={project.id} />
@@ -286,7 +295,8 @@ export default async function ProjectPage({
                 }}
               />
             </>
-          ) : null
+            ) : null}
+          </>
         }
       />
 
