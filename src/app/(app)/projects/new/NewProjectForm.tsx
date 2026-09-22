@@ -21,12 +21,14 @@ export function NewProjectForm({
   partners,
   people,
   defaultStart,
+  defaultOwnerId,
 }: {
   templates: TemplateOption[];
   clients: { id: string; name: string; domains: string[] }[];
   partners: { id: string; name: string }[];
   people: { id: string; name: string }[];
   defaultStart: string;
+  defaultOwnerId?: string;
 }) {
   const [state, action] = useActionState(createProjectAction, {});
   const [templateId, setTemplateId] = useState("");
@@ -215,7 +217,12 @@ export function NewProjectForm({
             <label className="label" htmlFor="ownerId">
               Project owner
             </label>
-            <select id="ownerId" name="ownerId" className="input" defaultValue="">
+            <select
+              id="ownerId"
+              name="ownerId"
+              className="input"
+              defaultValue={defaultOwnerId ?? ""}
+            >
               <option value="">Unassigned</option>
               {people.map((p) => (
                 <option key={p.id} value={p.id}>

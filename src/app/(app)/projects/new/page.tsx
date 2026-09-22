@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireAdmin } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { toISODate, today } from "@/lib/dates";
 import { PageHeader } from "@/components/ui";
@@ -8,7 +8,10 @@ import { NewProjectForm, type TemplateOption } from "./NewProjectForm";
 export const dynamic = "force-dynamic";
 
 export default async function NewProjectPage() {
-  await requireAdmin();
+  // Anyone signed in. Starting a piece of work is the ordinary act of
+  // working here, not an administrative one, and the people who actually
+  // start projects are the consultants delivering them.
+  const user = await requireUser();
 
   const [templates, clients, partners, people] = await Promise.all([
     db.projectTemplate.findMany({
@@ -63,6 +66,7 @@ export default async function NewProjectPage() {
         }
       />
       <NewProjectForm
+        defaultOwnerId={user.id}
         templates={options}
         clients={clients.map((c) => ({
           id: c.id,

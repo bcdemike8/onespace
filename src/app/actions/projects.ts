@@ -135,7 +135,10 @@ export async function createProjectAction(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireAdmin();
+  // Anyone signed in, not just an admin. Everything a project needs after
+  // this - tasks, time, a status update, finishing it - is already open to
+  // everybody; only the first step was not.
+  const user = await requireUser();
 
   const parsed = projectSchema.safeParse({
     name: formData.get("name"),
@@ -174,7 +177,10 @@ export async function createProjectAction(
       code: d.code || null,
       clientId: d.clientId || null,
       partnerId: d.partnerId || null,
-      ownerId: d.ownerId || null,
+      // Whoever is creating it, unless they named somebody else. A project
+      // with no owner appears under nobody's "Mine" and nobody's digest,
+      // which is not what a person means when they start one.
+      ownerId: d.ownerId || user.id,
       templateId: d.templateId || null,
       startDate: d.startDate,
       dueDate: d.dueDate,
@@ -206,7 +212,7 @@ export async function createProjectAction(
   if (d.templateId) await applyTemplate(project.id, d.templateId, start);
 
   // Steps the template didn't name an owner for fall to the project's owner.
-  await cascadeOwnerToTasks(project.id, d.ownerId || null);
+  await cascadeOwnerToTasks(project.id, d.ownerId || user.id);
 
   refresh();
   redirect(`/projects/${project.id}`);

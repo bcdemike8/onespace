@@ -266,11 +266,9 @@ export default async function ProjectsPage({
         title="Projects"
         subtitle={`${rows.length} ${rows.length === 1 ? "project" : "projects"} · ${formatHours(totalHours)}h logged against them`}
         actions={
-          admin ? (
-            <Link href="/projects/new" className="btn-primary">
-              New project
-            </Link>
-          ) : null
+          <Link href="/projects/new" className="btn-primary">
+            New project
+          </Link>
         }
       />
 
@@ -415,7 +413,7 @@ export default async function ProjectsPage({
                 : "Build a template first, then spin up projects from it in a couple of clicks."
           }
           action={
-            admin && !filtered && status !== "mine"
+            !filtered && status !== "mine"
               ? { href: "/projects/new", label: "Create a project" }
               : undefined
           }
