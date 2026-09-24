@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { BillingType, ProjectStatus } from "@prisma/client";
 import { isAdmin, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { formatMedium, relativeDueLabel, today } from "@/lib/dates";
+import { formatMedium, relativeDueLabel, toISODate, today } from "@/lib/dates";
 import { formatHours, formatMoney, pct } from "@/lib/format";
 import {
   EmptyState,
@@ -15,7 +15,7 @@ import {
   BillingTypeBadge,
 } from "@/components/BillingTypeField";
 import { SortHeader, type SortDir } from "@/components/SortHeader";
-import { HealthChip } from "@/components/HealthChip";
+import { StatusCell } from "./StatusCell";
 import { setProjectOwnerAction } from "@/app/actions/projects";
 
 export const dynamic = "force-dynamic";
@@ -178,6 +178,8 @@ export default async function ProjectsPage({
   );
   const openTasks = new Map(openTaskCounts.map((r) => [r.projectId, r._count._all]));
   const now = today();
+  // Default for the "as of" field in the status dialog on every row.
+  const todayISO = toISODate(now);
 
   // Hours, open tasks and budget burn are all derived, so filtering and
   // sorting on them happens here rather than in the query.
@@ -192,6 +194,7 @@ export default async function ProjectsPage({
       usedPct,
       health: update?.health ?? null,
       healthDate: update?.date ?? null,
+      healthNote: update?.note ?? null,
     };
   });
 
@@ -529,21 +532,27 @@ export default async function ProjectsPage({
                       </td>
 
                       <td className="td">
-                        <HealthChip health={project.health} />
-                        <div className="mt-1 text-xs text-ink-500">
-                          {[
-                            project.healthDate
-                              ? `as of ${formatMedium(project.healthDate)}`
-                              : null,
-                            // The workflow state only earns space when it
-                            // isn't the default.
-                            project.status !== "ACTIVE"
-                              ? project.status.replace("_", " ").toLowerCase()
-                              : null,
-                          ]
-                            .filter(Boolean)
-                            .join(" · ") || "—"}
-                        </div>
+                        <StatusCell
+                          projectId={project.id}
+                          projectName={project.name}
+                          health={project.health}
+                          note={project.healthNote}
+                          today={todayISO}
+                          subtitle={
+                            [
+                              project.healthDate
+                                ? `as of ${formatMedium(project.healthDate)}`
+                                : null,
+                              // The workflow state only earns space when it
+                              // isn't the default.
+                              project.status !== "ACTIVE"
+                                ? project.status.replace("_", " ").toLowerCase()
+                                : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ") || "Click to post an update"
+                          }
+                        />
                       </td>
 
                       <td className="td text-sm">
