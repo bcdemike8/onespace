@@ -21,6 +21,7 @@ export interface DealValues {
   stage?: string | null;
   type?: string | null;
   amount?: string | null;
+  hoursSold?: number | null;
   closeDate?: string | null;
   probability?: number | null;
   forecastCategory?: string | null;
@@ -200,6 +201,12 @@ export function DealForm({
               name="amount"
               value={values.amount}
               hint="Commas and a $ are fine."
+            />
+            <NumberInput
+              label="Hours"
+              name="hoursSold"
+              value={values.hoursSold}
+              hint="What the SOW allows for. The consultant delivering it reads this."
             />
             <DateInput label="Close date" name="closeDate" value={values.closeDate} />
             <NumberInput

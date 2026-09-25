@@ -595,6 +595,13 @@ model Deal {
   /// Total quantity across the line items, as Salesforce held it.
   quantity Decimal? @db.Decimal(12, 2)
 
+  /// The hours the statement of work allows for. Not a Salesforce field -
+  /// the export has the money and never the hours, which is the number the
+  /// consultant delivering it actually needs. Kept here rather than only on
+  /// the project because it is a property of what was sold: it is true the
+  /// day the deal closes, and the project may not exist for another week.
+  hoursSold Float?
+
   isWon    Boolean @default(false)
   isClosed Boolean @default(false)
 

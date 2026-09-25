@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { formatMedium } from "@/lib/dates";
 import { STAGE_LABEL, money, stagePath } from "@/lib/crm/view";
+import { dealHours, hoursLabel, hoursNote } from "@/lib/crm/hours";
 import { Field, Figure, Related, Section } from "@/components/crm/Record";
 import { DealFiles } from "@/components/crm/DealFiles";
 import { StagePath } from "@/components/crm/StagePath";
@@ -66,7 +67,7 @@ export default async function DealPage({
           },
         },
       },
-      project: { select: { id: true, name: true, status: true } },
+      project: { select: { id: true, name: true, status: true, budgetHours: true } },
       // Never the bytes. They live in DealFileBody precisely so that opening
       // a deal doesn't read every attachment on it.
       files: {
@@ -109,6 +110,15 @@ export default async function DealPage({
   const when = (d: Date | null) => (d ? formatMedium(d) : null);
   const amount = deal.amount === null ? null : Number(deal.amount);
   const path = stagePath(deal.stage);
+
+  // What the statement of work allows for, and how delivery is tracking
+  // against it. The money alone never answered "is this deal worth the time".
+  const worked = dealHours({
+    hoursSold: deal.hoursSold,
+    projectBudgetHours: deal.project?.budgetHours ?? null,
+    amount,
+    loggedMinutes: hours?._sum.minutes ?? null,
+  });
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -154,6 +164,24 @@ export default async function DealPage({
               {money(amount)}
             </p>
           </div>
+          <div>
+            <p className="text-xs text-ink-500">
+              Hours
+              {worked.fromProject ? (
+                <span className="text-ink-400"> (project budget)</span>
+              ) : null}
+            </p>
+            <p className="text-3xl font-semibold tabular-nums text-ink-900">
+              {worked.hours === null ? (
+                <span className="text-ink-300">—</span>
+              ) : (
+                hoursLabel(worked.hours)
+              )}
+            </p>
+            {hoursNote(worked) ? (
+              <p className="text-xs text-ink-500">{hoursNote(worked)}</p>
+            ) : null}
+          </div>
           {/* Stage and close date only. Everything else this line could hold
               is repeated in full three inches below it. */}
           <Figure label="Stage" value={STAGE_LABEL[deal.stage]} />
@@ -175,6 +203,17 @@ export default async function DealPage({
             <Field label="Stage" value={STAGE_LABEL[deal.stage]} />
             <Field label="Opportunity name" value={deal.name} />
             <Field label="Amount" value={amount === null ? null : money(amount)} />
+            <Field
+              label="Hours"
+              value={worked.hours === null ? null : `${hoursLabel(worked.hours)} hours`}
+              note={
+                worked.fromProject
+                  ? "From the project's budget - not recorded on the deal."
+                  : worked.rate !== null
+                    ? `$${worked.rate.toLocaleString()} an hour`
+                    : null
+              }
+            />
             <Field label="Type" value={deal.partner?.name ?? "Direct"} />
             <Field label="Close date" value={when(deal.closeDate)} />
             <Field
@@ -370,8 +409,12 @@ export default async function DealPage({
                 </Link>
                 <p className="text-xs text-ink-500">
                   {deal.project.status}
-                  {hours?._sum.minutes
-                    ? ` · ${Math.round(hours._sum.minutes / 60).toLocaleString()} hours logged`
+                  {/* The same figure as the Hours line above it. Rounding
+                      to whole hours here read 13 where the strip read 12.5,
+                      and two numbers for one fact is how people stop
+                      believing either. */}
+                  {worked.logged !== null
+                    ? ` · ${hoursLabel(worked.logged)} hours logged`
                     : ""}
                 </p>
               </li>

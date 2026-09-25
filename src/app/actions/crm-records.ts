@@ -249,6 +249,7 @@ export async function saveDealAction(
     ...flags,
     type: choice(form.get("type"), ["DIRECT", "PARTNER"] as const, "DIRECT"),
     amount: decimal(form.get("amount")),
+    hoursSold: decimal(form.get("hoursSold")),
     closeDate: date(form.get("closeDate")),
     // Left empty on a closed deal, the stage answers it. Left empty on an
     // open one it stays empty, because that is a judgement nobody has made.
