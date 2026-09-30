@@ -26,7 +26,11 @@ export async function createTemplateAction(
   }
 
   const template = await db.projectTemplate.create({
-    data: { name, description: (formData.get("description") as string) || null },
+    data: {
+      name,
+      description: (formData.get("description") as string) || null,
+      groupName: String(formData.get("groupName") ?? "").trim() || null,
+    },
   });
 
   refresh();
@@ -41,7 +45,11 @@ export async function updateTemplateAction(formData: FormData) {
 
   await db.projectTemplate.update({
     where: { id },
-    data: { name, description: (formData.get("description") as string) || null },
+    data: {
+      name,
+      description: (formData.get("description") as string) || null,
+      groupName: String(formData.get("groupName") ?? "").trim() || null,
+    },
   });
   refresh(id);
 }
@@ -84,7 +92,7 @@ export async function duplicateTemplateAction(formData: FormData) {
   }
 
   const copy = await db.projectTemplate.create({
-    data: { name, description: source.description },
+    data: { name, description: source.description, groupName: source.groupName },
   });
 
   const sectionIdMap = new Map<string, string>();

@@ -1135,6 +1135,12 @@ model ProjectTemplate {
   id          String    @id @default(cuid())
   name        String    @unique
   description String?
+
+  /// The heading this template sits under in the New project picker -
+  /// "Salesloft", "Outreach Implementation - Amplify Core". Set it and the
+  /// template gets that section to itself, however few siblings it has.
+  /// Left null, the picker falls back to reading a family out of the name.
+  groupName String?
   archivedAt  DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt

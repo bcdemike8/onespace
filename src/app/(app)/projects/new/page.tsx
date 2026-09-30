@@ -44,6 +44,7 @@ export default async function NewProjectPage() {
     return {
       id: t.id,
       name: t.name,
+      groupName: t.groupName,
       description: t.description,
       taskCount: t.tasks.length,
       totalHours:

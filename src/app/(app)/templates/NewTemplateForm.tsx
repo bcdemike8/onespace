@@ -23,6 +23,18 @@ export function NewTemplateForm() {
         />
       </div>
       <div>
+        <label className="label" htmlFor="t-group">
+          Group <span className="font-normal text-ink-400">(optional)</span>
+        </label>
+        <input
+          id="t-group"
+          name="groupName"
+          className="input"
+          placeholder="Salesloft"
+        />
+        <p className="mt-1 text-xs text-ink-500">The heading this sits under on New project. Templates sharing a heading are listed together. Leave blank for "Other templates".</p>
+      </div>
+      <div>
         <label className="label" htmlFor="t-description">
           Description <span className="font-normal text-ink-400">(optional)</span>
         </label>

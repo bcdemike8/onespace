@@ -266,6 +266,19 @@ export default async function TemplatePage({
                 />
               </div>
               <div>
+                <label className="label" htmlFor="groupName">
+                  Group
+                </label>
+                <input
+                  id="groupName"
+                  name="groupName"
+                  defaultValue={template.groupName ?? ""}
+                  className="input"
+                  placeholder="Salesloft"
+                />
+                <p className="mt-1 text-xs text-ink-500">The heading this sits under on New project. Templates sharing a heading are listed together. Leave blank for "Other templates".</p>
+              </div>
+              <div>
                 <label className="label" htmlFor="description">
                   Description
                 </label>

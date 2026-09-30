@@ -5,10 +5,12 @@ import { createProjectAction } from "@/app/actions/projects";
 import { BillingTypeField } from "@/components/BillingTypeField";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ErrorNote } from "@/components/ui";
+import { groupTemplates } from "@/lib/template-groups";
 
 export interface TemplateOption {
   id: string;
   name: string;
+  groupName: string | null;
   description: string | null;
   taskCount: number;
   totalHours: number;
@@ -44,35 +46,10 @@ export function NewProjectForm({
     [templates, templateId],
   );
 
-  // "Amplify Core (1-19 seats)" becomes the option "1-19 seats" under an
-  // "Amplify Core" heading, so eight near-identical SOW names read as three
-  // families rather than eight strings to compare character by character.
-  // Only worth doing where a family actually has siblings — a lone template
-  // keeps its full name, which also stops a "(2)" dedupe suffix from being
-  // mistaken for a variant.
-  const grouped = useMemo(() => {
-    const split = (name: string) => /^(.*?)\s*\(([^()]*)\)\s*$/.exec(name);
-
-    const familySize = new Map<string, number>();
-    for (const t of templates) {
-      const m = split(t.name);
-      if (m) familySize.set(m[1], (familySize.get(m[1]) ?? 0) + 1);
-    }
-
-    const out = new Map<string, (TemplateOption & { optionLabel: string })[]>();
-    for (const t of templates) {
-      const m = split(t.name);
-      const family = m && (familySize.get(m[1]) ?? 0) > 1;
-      const group = family ? (m as RegExpExecArray)[1] : "Other templates";
-      const optionLabel = family ? (m as RegExpExecArray)[2] : t.name;
-      out.set(group, [...(out.get(group) ?? []), { ...t, optionLabel }]);
-    }
-
-    // Families first, the catch-all last.
-    return [...out.entries()].sort(([a], [b]) =>
-      a === "Other templates" ? 1 : b === "Other templates" ? -1 : a.localeCompare(b),
-    );
-  }, [templates]);
+  // Headings and option labels live in one tested place, because the rules
+  // are fiddlier than they look: sibling SOWs collapse, a named group stands
+  // alone, and a "(variant 2)" suffix must not be mistaken for a family.
+  const grouped = useMemo(() => groupTemplates(templates), [templates]);
 
   return (
     <form action={action} className="space-y-6">
@@ -98,9 +75,9 @@ export function NewProjectForm({
           <option value="">Blank project — start empty</option>
           {grouped.map(([group, items]) => (
             <optgroup key={group} label={group}>
-              {items.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.optionLabel}
+              {items.map(({ template, optionLabel }) => (
+                <option key={template.id} value={template.id}>
+                  {optionLabel}
                 </option>
               ))}
             </optgroup>
