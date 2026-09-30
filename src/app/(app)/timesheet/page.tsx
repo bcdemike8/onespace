@@ -4,14 +4,22 @@ import { db } from "@/lib/db";
 import {
   addDays,
   dayStart,
-  formatMedium,
+  formatRange,
   formatShort,
   formatWeekday,
   toISODate,
   today,
   weekStart,
 } from "@/lib/dates";
-import { formatHours } from "@/lib/format";
+import { formatHours, formatMoney } from "@/lib/format";
+import {
+  TIMESHEET_PERIODS,
+  billableSplit,
+  parsePeriod,
+  periodLabel,
+  periodRange,
+  summarize,
+} from "@/lib/timesheet-period";
 import { getLockState } from "@/lib/lock";
 import { isLocked, lockSummary } from "@/lib/periods";
 import { PeriodLockNotice } from "@/components/PeriodLockNotice";
@@ -28,7 +36,7 @@ export const dynamic = "force-dynamic";
 export default async function TimesheetPage({
   searchParams,
 }: {
-  searchParams: Promise<{ week?: string; person?: string }>;
+  searchParams: Promise<{ week?: string; person?: string; period?: string }>;
 }) {
   const viewer = await requireUser();
   const params = await searchParams;
@@ -36,6 +44,12 @@ export default async function TimesheetPage({
   const anchor = params.week ? dayStart(params.week) : today();
   const from = weekStart(anchor);
   const to = addDays(from, 6);
+
+  // The grid is always a week. The figures above it are not: at month end
+  // the question is what September came to, and answering it used to mean
+  // leaving for Reports and rebuilding a filter.
+  const period = parsePeriod(params.period);
+  const span = periodRange(period, from, to, today());
 
   // Admins can look at (but not edit) anyone's week.
   const admin = isAdmin(viewer);
@@ -108,6 +122,21 @@ export default async function TimesheetPage({
     where: { userId: subject.id },
     _sum: { minutes: true },
   });
+
+  // Rates come off the entry, not off the project or the person: an entry
+  // stores what the work was worth on the day it was logged, so a rate rise
+  // in October doesn't quietly rewrite what August earned.
+  const periodTotals = summarize(
+    await db.timeEntry.findMany({
+      where: { userId: subject.id, date: { gte: span.from, lte: span.to } },
+      select: {
+        minutes: true,
+        billable: true,
+        billRateCents: true,
+        projectId: true,
+      },
+    }),
+  );
 
   const projects = await db.project.findMany({
     where: { id: { in: projectIds } },
@@ -187,10 +216,10 @@ export default async function TimesheetPage({
   });
   const anyClosed = days.some((d) => d.closed);
 
-  const weekMinutes = entries.reduce((sum, e) => sum + e.minutes, 0);
   const prevWeek = toISODate(addDays(from, -7));
   const nextWeek = toISODate(addDays(from, 7));
   const personQuery = readOnly ? `&person=${subject.id}` : "";
+  const periodQuery = period === "week" ? "" : `&period=${period}`;
 
   return (
     <div>
@@ -204,20 +233,20 @@ export default async function TimesheetPage({
         actions={
           <div className="flex items-center gap-1.5">
             <Link
-              href={`/timesheet?week=${prevWeek}${personQuery}`}
+              href={`/timesheet?week=${prevWeek}${periodQuery}${personQuery}`}
               className="btn-secondary btn-sm"
               aria-label="Previous week"
             >
               ←
             </Link>
             <Link
-              href={`/timesheet${readOnly ? `?person=${subject.id}` : ""}`}
+              href={`/timesheet?period=${period}${personQuery}`}
               className="btn-secondary btn-sm"
             >
               This week
             </Link>
             <Link
-              href={`/timesheet?week=${nextWeek}${personQuery}`}
+              href={`/timesheet?week=${nextWeek}${periodQuery}${personQuery}`}
               className="btn-secondary btn-sm"
               aria-label="Next week"
             >
@@ -233,18 +262,43 @@ export default async function TimesheetPage({
         }
       />
 
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        {TIMESHEET_PERIODS.map((p) => {
+          const on = p.value === period;
+          return (
+            <Link
+              key={p.value}
+              href={`/timesheet?week=${toISODate(from)}&period=${p.value}${personQuery}`}
+              aria-current={on ? "true" : undefined}
+              className={on ? "btn-primary btn-sm" : "btn-secondary btn-sm"}
+            >
+              {p.label}
+            </Link>
+          );
+        })}
+        <span className="text-sm text-ink-500">{periodLabel(period, span.from, span.to)}</span>
+      </div>
+
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-        <div className="grid flex-1 gap-3 sm:grid-cols-2 lg:max-w-3xl lg:grid-cols-4">
+        <div className="grid flex-1 gap-3 sm:grid-cols-2 lg:max-w-4xl lg:grid-cols-4">
           <Stat
-            label="Week"
-            value={formatMedium(from)}
-            hint={`through ${formatMedium(to)}`}
+            label="Hours logged"
+            value={`${formatHours(periodTotals.minutes)}h`}
+            hint={periodLabel(period, span.from, span.to)}
           />
-          <Stat label="Total logged" value={`${formatHours(weekMinutes)}h`} />
+          <Stat
+            label="Billable value"
+            value={formatMoney(periodTotals.billableCents)}
+            hint={billableSplit(periodTotals)}
+          />
           <Stat
             label={readOnly ? "Their projects" : "Your projects"}
             value={grid.length}
-            hint={`${grid.filter((p) => p.rows.length > 0).length} with time this week`}
+            hint={`${periodTotals.projectCount} with time in ${periodLabel(
+              period,
+              span.from,
+              span.to,
+            )}`}
           />
           <Stat
             label="Logged all time"
@@ -259,6 +313,7 @@ export default async function TimesheetPage({
               Viewing
             </label>
             <input type="hidden" name="week" value={toISODate(from)} />
+            <input type="hidden" name="period" value={period} />
             <select id="person" name="person" defaultValue={subject.id} className="input">
               {people.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -282,6 +337,15 @@ export default async function TimesheetPage({
           }
         />
       ) : null}
+
+      <h2 className="mb-2 text-sm font-semibold text-ink-900">
+        Week of {formatRange(from, to)}
+        {period === "week" ? null : (
+          <span className="ml-2 font-normal text-ink-500">
+            — the figures above cover {periodLabel(period, span.from, span.to)}
+          </span>
+        )}
+      </h2>
 
       <TimesheetGrid projects={grid} days={days} readOnly={readOnly} />
     </div>
