@@ -4,18 +4,13 @@ import { isAdmin, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { formatMedium, relativeDueLabel, toISODate, today } from "@/lib/dates";
 import { formatHours, formatMoney, pct } from "@/lib/format";
-import {
-  EmptyState,
-  PageHeader,
-  ProgressBar,
-} from "@/components/ui";
+import { EmptyState, PageHeader, ProgressBar } from "@/components/ui";
 import { AutoSubmitSelect } from "@/components/AutoSubmitSelect";
-import {
-  BILLING_TYPES,
-  BillingTypeBadge,
-} from "@/components/BillingTypeField";
+import { BILLING_TYPES, BillingTypeBadge } from "@/components/BillingTypeField";
 import { SortHeader, type SortDir } from "@/components/SortHeader";
 import { StatusCell } from "./StatusCell";
+import { ProjectTable } from "./ProjectTable";
+import { searchText } from "@/lib/search";
 import { setProjectOwnerAction } from "@/app/actions/projects";
 
 export const dynamic = "force-dynamic";
@@ -165,18 +160,28 @@ export default async function ProjectsPage({
 
   const healthByProject = new Map<
     string,
-    { health: (typeof latestUpdates)[number]["health"]; date: Date; note: string | null }
+    {
+      health: (typeof latestUpdates)[number]["health"];
+      date: Date;
+      note: string | null;
+    }
   >();
   for (const u of latestUpdates) {
     if (!healthByProject.has(u.projectId)) {
-      healthByProject.set(u.projectId, { health: u.health, date: u.date, note: u.note });
+      healthByProject.set(u.projectId, {
+        health: u.health,
+        date: u.date,
+        note: u.note,
+      });
     }
   }
 
   const minutes = new Map(
     minutesByProject.map((r) => [r.projectId, r._sum.minutes ?? 0]),
   );
-  const openTasks = new Map(openTaskCounts.map((r) => [r.projectId, r._count._all]));
+  const openTasks = new Map(
+    openTaskCounts.map((r) => [r.projectId, r._count._all]),
+  );
   const now = today();
   // Default for the "as of" field in the status dialog on every row.
   const todayISO = toISODate(now);
@@ -200,12 +205,17 @@ export default async function ProjectsPage({
 
   if (health === "none") rows = rows.filter((r) => r.health === null);
   else if (health === "attention")
-    rows = rows.filter((r) => r.health === "AT_RISK" || r.health === "OFF_TRACK");
+    rows = rows.filter(
+      (r) => r.health === "AT_RISK" || r.health === "OFF_TRACK",
+    );
   else if (health) rows = rows.filter((r) => r.health === health);
 
-  if (budget === "over") rows = rows.filter((r) => r.usedPct !== null && r.usedPct > 100);
-  if (budget === "risk") rows = rows.filter((r) => r.usedPct !== null && r.usedPct >= 85);
-  if (budget === "under") rows = rows.filter((r) => r.usedPct !== null && r.usedPct < 85);
+  if (budget === "over")
+    rows = rows.filter((r) => r.usedPct !== null && r.usedPct > 100);
+  if (budget === "risk")
+    rows = rows.filter((r) => r.usedPct !== null && r.usedPct >= 85);
+  if (budget === "under")
+    rows = rows.filter((r) => r.usedPct !== null && r.usedPct < 85);
   if (budget === "none") rows = rows.filter((r) => r.usedPct === null);
 
   const factor = dir === "asc" ? 1 : -1;
@@ -253,7 +263,17 @@ export default async function ProjectsPage({
 
   const query = (overrides: Record<string, string | undefined>) => {
     const q = new URLSearchParams();
-    const merged = { status, client: clientId, partner: partnerId, owner: ownerId, budget, health, sort, dir, ...overrides };
+    const merged = {
+      status,
+      client: clientId,
+      partner: partnerId,
+      owner: ownerId,
+      budget,
+      health,
+      sort,
+      dir,
+      ...overrides,
+    };
     for (const [k, v] of Object.entries(merged)) if (v) q.set(k, String(v));
     return `/projects?${q.toString()}`;
   };
@@ -279,7 +299,10 @@ export default async function ProjectsPage({
         {STATUS_TABS.map((tab) => (
           <Link
             key={tab.value}
-            href={query({ status: tab.value, owner: tab.value === "mine" ? "" : ownerId })}
+            href={query({
+              status: tab.value,
+              owner: tab.value === "mine" ? "" : ownerId,
+            })}
             className={`rounded-lg px-2.5 py-1.5 text-sm font-medium ${
               status === tab.value
                 ? "bg-ink-900 text-white"
@@ -300,7 +323,12 @@ export default async function ProjectsPage({
           <label className="label" htmlFor="f-owner">
             Owner
           </label>
-          <select id="f-owner" name="owner" defaultValue={ownerId} className="input">
+          <select
+            id="f-owner"
+            name="owner"
+            defaultValue={ownerId}
+            className="input"
+          >
             <option value="">Anyone</option>
             <option value="none">Unassigned</option>
             {people.map((p) => (
@@ -315,7 +343,12 @@ export default async function ProjectsPage({
           <label className="label" htmlFor="f-client">
             Client
           </label>
-          <select id="f-client" name="client" defaultValue={clientId} className="input">
+          <select
+            id="f-client"
+            name="client"
+            defaultValue={clientId}
+            className="input"
+          >
             <option value="">All clients</option>
             {clients.map((c) => (
               <option key={c.id} value={c.id}>
@@ -329,7 +362,12 @@ export default async function ProjectsPage({
           <label className="label" htmlFor="f-partner">
             Partner
           </label>
-          <select id="f-partner" name="partner" defaultValue={partnerId} className="input">
+          <select
+            id="f-partner"
+            name="partner"
+            defaultValue={partnerId}
+            className="input"
+          >
             <option value="">All partners</option>
             {partners.map((p) => (
               <option key={p.id} value={p.id}>
@@ -343,7 +381,12 @@ export default async function ProjectsPage({
           <label className="label" htmlFor="f-health">
             Project status
           </label>
-          <select id="f-health" name="health" defaultValue={health} className="input">
+          <select
+            id="f-health"
+            name="health"
+            defaultValue={health}
+            className="input"
+          >
             {HEALTH_FILTERS.map((h) => (
               <option key={h.value} value={h.value}>
                 {h.label}
@@ -356,7 +399,12 @@ export default async function ProjectsPage({
           <label className="label" htmlFor="f-billing">
             Billing
           </label>
-          <select id="f-billing" name="billing" defaultValue={billing} className="input">
+          <select
+            id="f-billing"
+            name="billing"
+            defaultValue={billing}
+            className="input"
+          >
             <option value="">All billing</option>
             {BILLING_TYPES.map((t) => (
               <option key={t.value} value={t.value}>
@@ -370,7 +418,12 @@ export default async function ProjectsPage({
           <label className="label" htmlFor="f-budget">
             Budget
           </label>
-          <select id="f-budget" name="budget" defaultValue={budget} className="input">
+          <select
+            id="f-budget"
+            name="budget"
+            defaultValue={budget}
+            className="input"
+          >
             {BUDGET_FILTERS.map((b) => (
               <option key={b.value} value={b.value}>
                 {b.label}
@@ -422,188 +475,212 @@ export default async function ProjectsPage({
           }
         />
       ) : (
-        <div className="card overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[58rem]">
-              <thead className="border-b border-ink-200 bg-ink-50">
-                <tr>
-                  <SortHeader
-                    label="Project"
-                    column="project"
-                    activeColumn={sort}
-                    activeDir={dir}
-                    href={(c, d) => query({ sort: c, dir: d })}
-                  />
-                  <SortHeader
-                    label="Owner"
-                    column="owner"
-                    activeColumn={sort}
-                    activeDir={dir}
-                    href={(c, d) => query({ sort: c, dir: d })}
-                  />
-                  <SortHeader
-                    label="Status"
-                    column="health"
-                    activeColumn={sort}
-                    activeDir={dir}
-                    href={(c, d) => query({ sort: c, dir: d })}
-                  />
-                  <SortHeader
-                    label="Due"
-                    column="due"
-                    activeColumn={sort}
-                    activeDir={dir}
-                    href={(c, d) => query({ sort: c, dir: d })}
-                  />
-                  <SortHeader
-                    label="Open tasks"
-                    column="open"
-                    activeColumn={sort}
-                    activeDir={dir}
-                    defaultDir="desc"
-                    align="right"
-                    href={(c, d) => query({ sort: c, dir: d })}
-                  />
-                  <SortHeader
-                    label="Hours"
-                    column="hours"
-                    activeColumn={sort}
-                    activeDir={dir}
-                    defaultDir="desc"
-                    align="right"
-                    href={(c, d) => query({ sort: c, dir: d })}
-                  />
-                  <SortHeader
-                    label="Budget used"
-                    column="budget"
-                    activeColumn={sort}
-                    activeDir={dir}
-                    defaultDir="desc"
-                    href={(c, d) => query({ sort: c, dir: d })}
-                  />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-ink-100">
-                {rows.map((project) => {
-                  const overdue =
-                    project.dueDate && project.dueDate < now && project.status === "ACTIVE";
+        <ProjectTable
+          initialQuery={params.q ?? ""}
+          allHref={query({ status: "all" })}
+          narrowed={filtered || status !== "all"}
+          header={
+            <tr>
+              <SortHeader
+                label="Project"
+                column="project"
+                activeColumn={sort}
+                activeDir={dir}
+                href={(c, d) => query({ sort: c, dir: d })}
+              />
+              <SortHeader
+                label="Owner"
+                column="owner"
+                activeColumn={sort}
+                activeDir={dir}
+                href={(c, d) => query({ sort: c, dir: d })}
+              />
+              <SortHeader
+                label="Status"
+                column="health"
+                activeColumn={sort}
+                activeDir={dir}
+                href={(c, d) => query({ sort: c, dir: d })}
+              />
+              <SortHeader
+                label="Due"
+                column="due"
+                activeColumn={sort}
+                activeDir={dir}
+                href={(c, d) => query({ sort: c, dir: d })}
+              />
+              <SortHeader
+                label="Open tasks"
+                column="open"
+                activeColumn={sort}
+                activeDir={dir}
+                defaultDir="desc"
+                align="right"
+                href={(c, d) => query({ sort: c, dir: d })}
+              />
+              <SortHeader
+                label="Hours"
+                column="hours"
+                activeColumn={sort}
+                activeDir={dir}
+                defaultDir="desc"
+                align="right"
+                href={(c, d) => query({ sort: c, dir: d })}
+              />
+              <SortHeader
+                label="Budget used"
+                column="budget"
+                activeColumn={sort}
+                activeDir={dir}
+                defaultDir="desc"
+                href={(c, d) => query({ sort: c, dir: d })}
+              />
+            </tr>
+          }
+          rows={rows.map((project) => {
+            const overdue =
+              project.dueDate &&
+              project.dueDate < now &&
+              project.status === "ACTIVE";
 
-                  return (
-                    <tr key={project.id} className="hover:bg-ink-50/60">
-                      <td className="td">
-                        <Link
-                          href={`/projects/${project.id}`}
-                          className="font-medium text-ink-900 hover:text-brand-700"
-                        >
-                          {project.name}
-                        </Link>
-                        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-ink-500">
-                          <span>
-                            {project.client?.name ?? "No client"}
-                            {project.partner ? ` · via ${project.partner.name}` : ""}
-                            {project.code ? ` · ${project.code}` : ""}
-                          </span>
-                          <BillingTypeBadge type={project.billingType} />
-                        </div>
-                      </td>
+            return {
+              key: project.id,
+              // What somebody would actually type to find this row.
+              text: searchText(
+                project.name,
+                project.code,
+                project.client?.name,
+                project.partner?.name,
+                project.owner?.name,
+              ),
+              node: (
+                <tr key={project.id} className="hover:bg-ink-50/60">
+                  <td className="td">
+                    <Link
+                      href={`/projects/${project.id}`}
+                      className="font-medium text-ink-900 hover:text-brand-700"
+                    >
+                      {project.name}
+                    </Link>
+                    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-ink-500">
+                      <span>
+                        {project.client?.name ?? "No client"}
+                        {project.partner
+                          ? ` · via ${project.partner.name}`
+                          : ""}
+                        {project.code ? ` · ${project.code}` : ""}
+                      </span>
+                      <BillingTypeBadge type={project.billingType} />
+                    </div>
+                  </td>
 
-                      <td className="td">
-                        {admin ? (
-                          <form action={setProjectOwnerAction}>
-                            <input type="hidden" name="id" value={project.id} />
-                            <AutoSubmitSelect
-                              name="ownerId"
-                              ariaLabel={`Owner of ${project.name}`}
-                              defaultValue={project.ownerId ?? ""}
-                              className={`input w-36 py-1 text-xs ${
-                                project.ownerId ? "" : "text-ink-400"
-                              }`}
-                              options={[
-                                { value: "", label: "— unassigned —" },
-                                ...people.map((p) => ({ value: p.id, label: p.name })),
-                              ]}
-                            />
-                          </form>
-                        ) : (
-                          <span className="text-sm text-ink-600">
-                            {project.owner?.name ?? "—"}
-                          </span>
-                        )}
-                      </td>
-
-                      <td className="td">
-                        <StatusCell
-                          projectId={project.id}
-                          projectName={project.name}
-                          health={project.health}
-                          note={project.healthNote}
-                          today={todayISO}
-                          subtitle={
-                            [
-                              project.healthDate
-                                ? `as of ${formatMedium(project.healthDate)}`
-                                : null,
-                              // The workflow state only earns space when it
-                              // isn't the default.
-                              project.status !== "ACTIVE"
-                                ? project.status.replace("_", " ").toLowerCase()
-                                : null,
-                            ]
-                              .filter(Boolean)
-                              .join(" · ") || "Click to post an update"
-                          }
+                  <td className="td">
+                    {admin ? (
+                      <form action={setProjectOwnerAction}>
+                        <input type="hidden" name="id" value={project.id} />
+                        <AutoSubmitSelect
+                          name="ownerId"
+                          ariaLabel={`Owner of ${project.name}`}
+                          defaultValue={project.ownerId ?? ""}
+                          className={`input w-36 py-1 text-xs ${
+                            project.ownerId ? "" : "text-ink-400"
+                          }`}
+                          options={[
+                            { value: "", label: "— unassigned —" },
+                            ...people.map((p) => ({
+                              value: p.id,
+                              label: p.name,
+                            })),
+                          ]}
                         />
-                      </td>
+                      </form>
+                    ) : (
+                      <span className="text-sm text-ink-600">
+                        {project.owner?.name ?? "—"}
+                      </span>
+                    )}
+                  </td>
 
-                      <td className="td text-sm">
-                        {project.dueDate ? (
-                          <span className={overdue ? "font-medium text-bad-700" : ""}>
-                            {formatMedium(project.dueDate)}
-                            <div className="text-xs text-ink-500">
-                              {relativeDueLabel(project.dueDate, now)}
-                            </div>
-                          </span>
-                        ) : (
-                          <span className="text-ink-400">—</span>
-                        )}
-                      </td>
+                  <td className="td">
+                    <StatusCell
+                      projectId={project.id}
+                      projectName={project.name}
+                      health={project.health}
+                      note={project.healthNote}
+                      today={todayISO}
+                      subtitle={
+                        [
+                          project.healthDate
+                            ? `as of ${formatMedium(project.healthDate)}`
+                            : null,
+                          // The workflow state only earns space when it
+                          // isn't the default.
+                          project.status !== "ACTIVE"
+                            ? project.status.replace("_", " ").toLowerCase()
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ") || "Click to post an update"
+                      }
+                    />
+                  </td>
 
-                      <td className="td text-right tnum">
-                        {project.open}
-                        <span className="text-ink-400">/{project._count.tasks}</span>
-                      </td>
+                  <td className="td text-sm">
+                    {project.dueDate ? (
+                      <span
+                        className={overdue ? "font-medium text-bad-700" : ""}
+                      >
+                        {formatMedium(project.dueDate)}
+                        <div className="text-xs text-ink-500">
+                          {relativeDueLabel(project.dueDate, now)}
+                        </div>
+                      </span>
+                    ) : (
+                      <span className="text-ink-400">—</span>
+                    )}
+                  </td>
 
-                      <td className="td text-right tnum font-medium">
-                        {formatHours(project.logged)}
-                        {project.budgetHours ? (
-                          <span className="text-ink-400"> / {project.budgetHours}</span>
-                        ) : null}
-                      </td>
+                  <td className="td text-right tnum">
+                    {project.open}
+                    <span className="text-ink-400">
+                      /{project._count.tasks}
+                    </span>
+                  </td>
 
-                      <td className="td w-48">
-                        {project.budgetHours ? (
-                          <ProgressBar
-                            value={project.logged / 60}
-                            max={project.budgetHours}
-                            label={`${pct(project.logged / 60, project.budgetHours)}% of ${
-                              project.budgetHours
-                            }h${
-                              project.budgetCents
-                                ? ` · ${formatMoney(project.budgetCents)} budget`
-                                : ""
-                            }`}
-                          />
-                        ) : (
-                          <span className="text-xs text-ink-400">No budget set</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
+                  <td className="td text-right tnum font-medium">
+                    {formatHours(project.logged)}
+                    {project.budgetHours ? (
+                      <span className="text-ink-400">
+                        {" "}
+                        / {project.budgetHours}
+                      </span>
+                    ) : null}
+                  </td>
+
+                  <td className="td w-48">
+                    {project.budgetHours ? (
+                      <ProgressBar
+                        value={project.logged / 60}
+                        max={project.budgetHours}
+                        label={`${pct(project.logged / 60, project.budgetHours)}% of ${
+                          project.budgetHours
+                        }h${
+                          project.budgetCents
+                            ? ` · ${formatMoney(project.budgetCents)} budget`
+                            : ""
+                        }`}
+                      />
+                    ) : (
+                      <span className="text-xs text-ink-400">
+                        No budget set
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ),
+            };
+          })}
+        />
       )}
     </div>
   );
