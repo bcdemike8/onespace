@@ -71,6 +71,32 @@ export function weekEndingThursday(now: Date): { from: Date; to: Date } {
 
 // ------------------------------------------------------------------- inputs
 
+/**
+ * One call in the week, and whatever is known about what was said on it.
+ *
+ * The transcript itself is never kept — `summary` is the write-up that
+ * replaces it, and `note` says why there isn't one when there isn't. "Nobody
+ * recorded this" and "Zoom refused the download" look identical from a
+ * meeting list and only one is worth chasing.
+ */
+export interface MeetingNote {
+  title: string;
+  date: Date;
+  minutes: number;
+  recorded: boolean;
+  summary: string | null;
+  note: string | null;
+}
+
+/** Something somebody promised on a call, lifted out of the transcript. */
+export interface CommitmentNote {
+  task: string;
+  speaker: string | null;
+  dueDate: Date | null;
+  /** True when the date came from the words, not from a three-day fallback. */
+  dueStated: boolean;
+}
+
 /** What OneSpace saw happen on a project during the week, with nobody typing. */
 export interface Activity {
   minutes: number;
@@ -79,7 +105,8 @@ export interface Activity {
   tasksCompleted: string[];
   tasksDueNext: string[];
   tasksOverdue: string[];
-  meetings: number;
+  meetings: MeetingNote[];
+  commitments: CommitmentNote[];
 }
 
 export interface ReportProject {
@@ -162,8 +189,15 @@ export function draftFromActivity(a: Activity): string {
     const who = a.people.length ? ` by ${andList(a.people)}` : "";
     bits.push(`${hours} ${hours === 1 ? "hour" : "hours"} logged${who}.`);
   }
-  if (a.meetings > 0) {
-    bits.push(`${a.meetings} ${a.meetings === 1 ? "meeting" : "meetings"} held.`);
+  if (a.meetings.length > 0) {
+    const n = a.meetings.length;
+    // Named, not counted. "3 meetings held" is a number; "kickoff, config
+    // check-in and UAT review" is the week.
+    bits.push(
+      `${n} ${n === 1 ? "meeting" : "meetings"}: ${andList(
+        a.meetings.map((m) => m.title),
+      )}.`,
+    );
   }
   if (a.tasksCompleted.length) {
     bits.push(`Completed: ${andList(a.tasksCompleted)}.`);
@@ -178,11 +212,31 @@ export function draftFromActivity(a: Activity): string {
   return bits.join(" ");
 }
 
-/** Open work, as a numbered list the template asks for. */
+/**
+ * Open work, as the numbered list the template asks for.
+ *
+ * What was promised on a call comes before what a task board says is due.
+ * A commitment has a person attached and was made out loud to the customer,
+ * which is both a better next step and the one they will remember.
+ */
 export function draftNextSteps(a: Activity, owner: string | null): string | null {
-  if (!a.tasksDueNext.length) return null;
-  const who = owner ? ` — ${owner}` : "";
-  return a.tasksDueNext.map((t, i) => `${i + 1}. ${t}${who}`).join("\n");
+  const lines: string[] = [];
+
+  for (const c of a.commitments) {
+    const who = c.speaker ?? owner;
+    // An invented due date reads as a question, not as a date anyone agreed
+    // to, so only a stated one is printed.
+    const when = c.dueDate && c.dueStated ? `, by ${isoDay(c.dueDate)}` : "";
+    lines.push(`${c.task}${who ? ` — ${who}` : ""}${when}`);
+  }
+
+  for (const t of a.tasksDueNext) {
+    if (lines.some((l) => l.startsWith(t))) continue;
+    lines.push(`${t}${owner ? ` — ${owner}` : ""}`);
+  }
+
+  if (!lines.length) return null;
+  return lines.map((l, i) => `${i + 1}. ${l}`).join("\n");
 }
 
 // ------------------------------------------------------------------- render

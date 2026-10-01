@@ -12,7 +12,10 @@ import {
   renderUpdate,
   weekEndingThursday,
 } from "@/lib/rocketlane";
+import { searchText } from "@/lib/search";
 import { CopyBlock } from "./CopyBlock";
+import { MeetingNotes, type MeetingRow } from "./MeetingNotes";
+import { WeeklyList, type WeeklyRow } from "./WeeklyList";
 
 export const dynamic = "force-dynamic";
 
@@ -38,7 +41,9 @@ export default async function WeeklyReportPage({
   await requireAdmin();
   const params = await searchParams;
 
-  const week = weekEndingThursday(params.week ? dayStart(params.week) : new Date());
+  const week = weekEndingThursday(
+    params.week ? dayStart(params.week) : new Date(),
+  );
   // The window runs to the end of its last day, so Thursday's own work counts.
   const windowEnd = addDays(week.to, 1);
 
@@ -93,7 +98,11 @@ export default async function WeeklyReportPage({
     }),
     db.timeEntry.findMany({
       where: { projectId: { in: ids }, date: { gte: week.from, lte: week.to } },
-      select: { projectId: true, minutes: true, user: { select: { name: true } } },
+      select: {
+        projectId: true,
+        minutes: true,
+        user: { select: { name: true } },
+      },
     }),
     db.task.findMany({
       where: {
@@ -122,13 +131,44 @@ export default async function WeeklyReportPage({
       select: { projectId: true, name: true },
       orderBy: { dueDate: "asc" },
     }),
-    db.meeting.groupBy({
-      by: ["projectId"],
+    // The calls themselves, not a count: what was said on them is the best
+    // material anyone has for writing the week up. The transcript is never
+    // stored - `summary` is the write-up that replaces it.
+    db.meeting.findMany({
       where: {
         projectId: { in: ids },
         startsAt: { gte: week.from, lt: windowEnd },
+        // One row per attendee, so take the organiser's copy where there is
+        // one; otherwise every call appears as many times as RevOptics had
+        // people in it.
+        status: { not: "DISMISSED" },
       },
-      _count: true,
+      orderBy: { startsAt: "asc" },
+      select: {
+        id: true,
+        projectId: true,
+        title: true,
+        startsAt: true,
+        minutes: true,
+        actualMinutes: true,
+        summary: true,
+        recordingUrl: true,
+        transcriptNote: true,
+        isOrganizer: true,
+        googleId: true,
+        zoomUuid: true,
+        commitments: {
+          where: { status: { not: "DISMISSED" } },
+          orderBy: { atSeconds: "asc" },
+          select: {
+            id: true,
+            suggestedTask: true,
+            speaker: true,
+            dueDate: true,
+            dueStated: true,
+          },
+        },
+      },
     }),
   ]);
 
@@ -149,10 +189,29 @@ export default async function WeeklyReportPage({
   const names = (rows: { projectId: string; name: string }[], id: string) =>
     rows.filter((r) => r.projectId === id).map((r) => r.name);
 
-  const meetingsBy = new Map(meetings.map((m) => [m.projectId, m._count]));
+  // A meeting with four RevOptics people on it is four rows, one per
+  // calendar. Collapse on the event id, preferring the organiser's copy and
+  // then whichever has a write-up — the same call, listed once.
+  const bestByEvent = new Map<string, (typeof meetings)[number]>();
+  for (const m of meetings) {
+    const key = m.googleId ?? m.zoomUuid ?? m.id;
+    const seen = bestByEvent.get(key);
+    const better =
+      !seen ||
+      (m.isOrganizer && !seen.isOrganizer) ||
+      (!!m.summary && !seen.summary);
+    if (better) bestByEvent.set(key, m);
+  }
+
+  const meetingsBy = new Map<string, (typeof meetings)[number][]>();
+  for (const m of bestByEvent.values()) {
+    if (!m.projectId) continue;
+    meetingsBy.set(m.projectId, [...(meetingsBy.get(m.projectId) ?? []), m]);
+  }
 
   const rows = projects.map((p) => {
     const perPerson = minutesBy.get(p.id) ?? new Map<string, number>();
+    const calls = meetingsBy.get(p.id) ?? [];
     const activity: Activity = {
       minutes: [...perPerson.values()].reduce((a, b) => a + b, 0),
       people: [...perPerson.entries()]
@@ -161,7 +220,22 @@ export default async function WeeklyReportPage({
       tasksCompleted: names(done, p.id).slice(0, 6),
       tasksDueNext: names(dueNext, p.id).slice(0, 5),
       tasksOverdue: names(overdue, p.id).slice(0, 5),
-      meetings: meetingsBy.get(p.id) ?? 0,
+      meetings: calls.map((m) => ({
+        title: m.title,
+        date: m.startsAt,
+        minutes: m.actualMinutes ?? m.minutes,
+        recorded: Boolean(m.recordingUrl),
+        summary: m.summary,
+        note: m.transcriptNote,
+      })),
+      commitments: calls.flatMap((m) =>
+        m.commitments.map((c) => ({
+          task: c.suggestedTask,
+          speaker: c.speaker,
+          dueDate: c.dueDate,
+          dueStated: c.dueStated,
+        })),
+      ),
     };
 
     const u = p.statusUpdates[0] ?? null;
@@ -175,6 +249,27 @@ export default async function WeeklyReportPage({
       health: u?.health ?? null,
       gap,
       activity,
+      search: searchText(p.name, p.client?.name, p.owner?.name),
+      meetingRows: calls.map(
+        (m): MeetingRow => ({
+          id: m.id,
+          title: m.title,
+          dateLabel: formatMedium(m.startsAt),
+          minutes: m.actualMinutes ?? m.minutes,
+          recordingUrl: m.recordingUrl,
+          summary: m.summary,
+          note: m.transcriptNote,
+          commitments: m.commitments.map((c) => ({
+            id: c.id,
+            task: c.suggestedTask,
+            speaker: c.speaker,
+            // Only a date somebody actually said. An invented one reads as a
+            // deadline that was agreed, and it wasn't.
+            when:
+              c.dueDate && c.dueStated ? `by ${formatMedium(c.dueDate)}` : null,
+          })),
+        }),
+      ),
       text: renderUpdate({
         project: {
           name: p.name,
@@ -230,7 +325,6 @@ export default async function WeeklyReportPage({
 
   const prev = toISODate(addDays(week.to, -7));
   const next = toISODate(addDays(week.to, 7));
-  const everything = rows.map((r) => r.text).join("\n\n---\n\n");
 
   return (
     <div>
@@ -256,13 +350,6 @@ export default async function WeeklyReportPage({
             >
               →
             </Link>
-            {rows.length > 0 ? (
-              <CopyBlock
-                text={everything}
-                label={`Copy all ${rows.length}`}
-                className="btn-primary btn-sm"
-              />
-            ) : null}
           </div>
         }
       />
@@ -281,7 +368,11 @@ export default async function WeeklyReportPage({
         <Stat
           label="Missing"
           value={missing.length}
-          hint={missing.length ? "drafted from the week's activity below" : "nothing outstanding"}
+          hint={
+            missing.length
+              ? "drafted from the week's activity below"
+              : "nothing outstanding"
+          }
         />
         <Stat
           label="RAG"
@@ -295,53 +386,66 @@ export default async function WeeklyReportPage({
           No active projects, so there is nothing to report on this week.
         </div>
       ) : (
-        <div className="space-y-4">
-          {rows.map((r) => (
-            <section key={r.id} className="card overflow-hidden">
-              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-ink-200 p-4">
-                <div className="min-w-0">
-                  <Link
-                    href={`/projects/${r.id}`}
-                    className="font-medium text-ink-900 hover:text-brand-700"
-                  >
-                    {r.name}
-                  </Link>
-                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-ink-500">
-                    <HealthChip health={r.health} size="sm" />
-                    <span>{r.clientName ?? "No client"}</span>
-                    <span>·</span>
-                    <span>{r.ownerName ?? "No owner"}</span>
-                    <span>·</span>
-                    <span className={r.gap.missing ? "font-medium text-bad-700" : ""}>
-                      {gapLabel(r.gap)}
-                    </span>
+        <WeeklyList
+          rows={rows.map(
+            (r): WeeklyRow => ({
+              key: r.id,
+              text: r.search,
+              copy: r.text,
+              node: (
+                <section className="card overflow-hidden">
+                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-ink-200 p-4">
+                    <div className="min-w-0">
+                      <Link
+                        href={`/projects/${r.id}`}
+                        className="font-medium text-ink-900 hover:text-brand-700"
+                      >
+                        {r.name}
+                      </Link>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-ink-500">
+                        <HealthChip health={r.health} size="sm" />
+                        <span>{r.clientName ?? "No client"}</span>
+                        <span>·</span>
+                        <span>{r.ownerName ?? "No owner"}</span>
+                        <span>·</span>
+                        <span
+                          className={
+                            r.gap.missing ? "font-medium text-bad-700" : ""
+                          }
+                        >
+                          {gapLabel(r.gap)}
+                        </span>
+                      </div>
+                    </div>
+                    <CopyBlock text={r.text} />
                   </div>
-                </div>
-                <CopyBlock text={r.text} />
-              </div>
 
-              {r.gap.missing ? (
-                <p className="border-b border-ink-100 bg-warn-50 px-4 py-2 text-xs text-warn-700">
-                  No update this week. The block below is a draft from what
-                  OneSpace saw happen — the RAG status and the risks are
-                  still yours to write.
-                </p>
-              ) : null}
+                  {r.gap.missing ? (
+                    <p className="border-b border-ink-100 bg-warn-50 px-4 py-2 text-xs text-warn-700">
+                      No update this week. The block below is a draft from what
+                      OneSpace saw happen — the RAG status and the risks are
+                      still yours to write.
+                    </p>
+                  ) : null}
 
-              <pre className="overflow-x-auto whitespace-pre-wrap px-4 py-3 text-xs leading-relaxed text-ink-700">
-                {r.text}
-              </pre>
-            </section>
-          ))}
-        </div>
+                  <pre className="overflow-x-auto whitespace-pre-wrap px-4 py-3 text-xs leading-relaxed text-ink-700">
+                    {r.text}
+                  </pre>
+
+                  <MeetingNotes meetings={r.meetingRows} />
+                </section>
+              ),
+            }),
+          )}
+        />
       )}
 
       <p className="mt-4 text-xs text-ink-500">
-        RAG reads {RAG_LABEL.ON_TRACK} / {RAG_LABEL.AT_RISK} / {RAG_LABEL.OFF_TRACK}{" "}
-        for On track / At risk / Off track. Anything in [brackets] is a prompt
-        from the template that nobody has answered yet — fill it on the project
-        or in the status update, not here, and it will be filled in next week
-        too.
+        RAG reads {RAG_LABEL.ON_TRACK} / {RAG_LABEL.AT_RISK} /{" "}
+        {RAG_LABEL.OFF_TRACK} for On track / At risk / Off track. Anything in
+        [brackets] is a prompt from the template that nobody has answered yet —
+        fill it on the project or in the status update, not here, and it will be
+        filled in next week too.
       </p>
     </div>
   );

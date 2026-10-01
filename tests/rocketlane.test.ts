@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   type Activity,
+  type MeetingNote,
   type ReportProject,
   type ReportUpdate,
   draftFromActivity,
@@ -22,8 +23,19 @@ const QUIET: Activity = {
   tasksCompleted: [],
   tasksDueNext: [],
   tasksOverdue: [],
-  meetings: 0,
+  meetings: [],
+  commitments: [],
 };
+
+const CALL = (title: string, over: Partial<MeetingNote> = {}): MeetingNote => ({
+  title,
+  date: d("2026-09-29"),
+  minutes: 30,
+  recorded: false,
+  summary: null,
+  note: null,
+  ...over,
+});
 
 const BUSY: Activity = {
   minutes: 450,
@@ -31,7 +43,25 @@ const BUSY: Activity = {
   tasksCompleted: ["Configure field mappings", "Run the kickoff"],
   tasksDueNext: ["User acceptance testing", "Enablement planning"],
   tasksOverdue: ["Install the Salesloft package"],
-  meetings: 3,
+  meetings: [
+    CALL("Kickoff"),
+    CALL("Config check-in", { recorded: true, summary: "Walked the field mappings." }),
+    CALL("UAT review", { note: "This call wasn't recorded to the cloud." }),
+  ],
+  commitments: [
+    {
+      task: "Send the field mapping doc",
+      speaker: "Marcus",
+      dueDate: d("2026-10-02"),
+      dueStated: true,
+    },
+    {
+      task: "Confirm the SSO approach",
+      speaker: null,
+      dueDate: d("2026-10-05"),
+      dueStated: false,
+    },
+  ],
 };
 
 const PROJECT: ReportProject = {
@@ -127,7 +157,7 @@ test("the gap reads as English", () => {
 test("a draft reports only what OneSpace watched happen", () => {
   const text = draftFromActivity(BUSY);
   assert.match(text, /7\.5 hours logged by Marcus Callaway and Shannon Myers\./);
-  assert.match(text, /3 meetings held\./);
+  assert.match(text, /3 meetings: Kickoff, Config check-in and UAT review\./);
   assert.match(text, /Completed: Configure field mappings and Run the kickoff\./);
   assert.match(text, /Now overdue: Install the Salesloft package\./);
 });
@@ -140,17 +170,54 @@ test("a quiet week says so rather than saying nothing", () => {
 });
 
 test("singular hours and meetings read as singular", () => {
-  const text = draftFromActivity({ ...QUIET, minutes: 60, meetings: 1, people: ["Ana"] });
+  const text = draftFromActivity({
+    ...QUIET,
+    minutes: 60,
+    meetings: [CALL("Weekly sync")],
+    people: ["Ana"],
+  });
   assert.match(text, /1 hour logged by Ana\./);
-  assert.match(text, /1 meeting held\./);
+  assert.match(text, /1 meeting: Weekly sync\./);
 });
 
-test("next steps come out numbered, with an owner on each", () => {
+test("what was promised on a call comes before what the board says is due", () => {
   assert.equal(
     draftNextSteps(BUSY, "Marcus Callaway"),
-    "1. User acceptance testing — Marcus Callaway\n2. Enablement planning — Marcus Callaway",
+    [
+      "1. Send the field mapping doc — Marcus, by 2026-10-02",
+      // No date: it was never said out loud, and a three-day fallback is
+      // not something the customer agreed to.
+      "2. Confirm the SSO approach — Marcus Callaway",
+      "3. User acceptance testing — Marcus Callaway",
+      "4. Enablement planning — Marcus Callaway",
+    ].join("\n"),
   );
   assert.equal(draftNextSteps(QUIET, "Marcus Callaway"), null);
+});
+
+test("a commitment and a task saying the same thing are listed once", () => {
+  const out = draftNextSteps(
+    {
+      ...QUIET,
+      tasksDueNext: ["Send the field mapping doc"],
+      commitments: [
+        { task: "Send the field mapping doc", speaker: "Marcus", dueDate: null, dueStated: false },
+      ],
+    },
+    "Shannon",
+  );
+  assert.equal(out, "1. Send the field mapping doc — Marcus");
+});
+
+test("commitments alone are enough to draft next steps", () => {
+  const out = draftNextSteps(
+    {
+      ...QUIET,
+      commitments: [{ task: "Chase SSO", speaker: null, dueDate: null, dueStated: false }],
+    },
+    null,
+  );
+  assert.equal(out, "1. Chase SSO");
 });
 
 // -------------------------------------------------------------------- render
@@ -224,7 +291,7 @@ test("drafting fills Current Status and Next Steps, and nothing else", () => {
     draft: true,
   });
   assert.match(out, /^Current Status: 7\.5 hours logged by/m);
-  assert.match(out, /^Next Steps:\n1\. User acceptance testing — Marcus Callaway$/m);
+  assert.match(out, /^Next Steps:\n1\. Send the field mapping doc — Marcus, by 2026-10-02$/m);
   // A judgement no activity can make for you stays a blank.
   assert.match(out, /^RAG Status: \[Green \/ Amber \/ Red\]$/m);
   assert.match(out, /^Risk: \[What could slip/m);
