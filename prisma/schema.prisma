@@ -219,64 +219,59 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  avatarImage   UserAvatar?
-  skippedMeetings SkippedMeeting[]
-  uploadedDealFiles DealFile[] @relation("DealFileUploader")
-  sessions      Session[]
-  assignedTasks Task[]         @relation("TaskAssignee")
-  timeEntries   TimeEntry[]
-  timer         RunningTimer?
-  templateTasks TemplateTask[] @relation("TemplateDefaultAssignee")
-  ownedProjects Project[]      @relation("ProjectOwner")
-  statusUpdates StatusUpdate[] @relation("StatusUpdateAuthor")
-  meetings      Meeting[]
-  mailThreads   MailThread[]
+  avatarImage       UserAvatar?
+  skippedMeetings   SkippedMeeting[]
+  uploadedDealFiles DealFile[]       @relation("DealFileUploader")
+  sessions          Session[]
+  assignedTasks     Task[]           @relation("TaskAssignee")
+  timeEntries       TimeEntry[]
+  timer             RunningTimer?
+  templateTasks     TemplateTask[]   @relation("TemplateDefaultAssignee")
+  ownedProjects     Project[]        @relation("ProjectOwner")
+  statusUpdates     StatusUpdate[]   @relation("StatusUpdateAuthor")
+  meetings          Meeting[]
+  mailThreads       MailThread[]
 
   // The CRM. Salesforce spread ownership across five different fields and
   // all five pointed at the same eight people.
-  ownedClients       Client[]  @relation("ClientOwner")
-  createdClients     Client[]  @relation("ClientCreatedBy")
-  ownedContacts      Contact[] @relation("ContactOwner")
-  createdContacts    Contact[] @relation("ContactCreatedBy")
-  modifiedContacts   Contact[] @relation("ContactLastModifiedBy")
+  ownedClients       Client[]      @relation("ClientOwner")
+  createdClients     Client[]      @relation("ClientCreatedBy")
+  ownedContacts      Contact[]     @relation("ContactOwner")
+  createdContacts    Contact[]     @relation("ContactCreatedBy")
+  modifiedContacts   Contact[]     @relation("ContactLastModifiedBy")
   createdLines       DealProduct[] @relation("LineCreatedBy")
   modifiedLines      DealProduct[] @relation("LineLastModifiedBy")
-  ownedDeals         Deal[]    @relation("DealOwner")
-  createdDeals       Deal[]    @relation("DealCreatedBy")
-  modifiedDeals      Deal[]    @relation("DealLastModifiedBy")
-  leadConsultantOn   Deal[]    @relation("DealLeadConsultant")
-  secondConsultantOn Deal[]    @relation("DealSecondaryConsultant")
+  ownedDeals         Deal[]        @relation("DealOwner")
+  createdDeals       Deal[]        @relation("DealCreatedBy")
+  modifiedDeals      Deal[]        @relation("DealLastModifiedBy")
+  leadConsultantOn   Deal[]        @relation("DealLeadConsultant")
+  secondConsultantOn Deal[]        @relation("DealSecondaryConsultant")
 
   @@index([isActive])
 }
 
 /**
  * A profile photo, in Postgres rather than in a bucket.
- *
  * Its own table for one reason: every page in the app calls requireUser(),
  * and Prisma has no way to leave a column out of a findUnique. With the
  * bytes on User, opening any page in OneSpace would pull a photo out of the
  * database, hand it to the React server renderer, and — the first time it
  * reached a client component — fail to serialise it at all. Which is exactly
  * what happened.
- *
  * In a table of its own the bytes are only read by the one route that serves
  * them. User keeps avatarUpdatedAt, which is the cache key and the "is there
  * a photo" flag, and costs nothing to carry.
- *
  * Not Supabase Storage: a few people at eighty kilobytes each is not a
  * storage problem, and this is one fewer credential to hold, back up, and
  * explain in two years.
  */
 /**
  * A file attached to a deal — the signed SOW, the order form, the quote.
- *
  * Kept in Postgres rather than a storage bucket, the same choice as a
  * profile photo and for the same reasons: one fewer service to hold a
  * credential for, keep in backups, and explain in two years. A few hundred
  * order forms at a megabyte each is not a storage problem. Revisit if
  * somebody starts attaching recordings.
- *
  * The bytes are in DealFileBody, never here. Listing a deal's files must
  * never read them — that mistake, made once with profile photos, put a
  * whole image through the server renderer on every page load and took the
@@ -294,7 +289,7 @@ model DealFile {
   size     Int
 
   uploadedById String?
-  uploadedBy   User?   @relation("DealFileUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  uploadedBy   User?    @relation("DealFileUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
   uploadedAt   DateTime @default(now())
 
   body DealFileBody?
@@ -884,18 +879,15 @@ model Partner {
  */
 /**
  * An outside email domain that turns up in meetings and belongs to no client.
- *
  * The calendar sync stores a meeting only when somebody in the invite is on a
  * domain mapped to a client — which is right, because a calendar carries far
  * more internal and prospect meetings than client ones. But it made the
  * failure invisible: a real client call with an unmapped domain was passed
  * over in silence, and the only clue was one sentence that appeared after
  * pressing Sync and then disappeared.
- *
  * So the sync writes down what it passed over, and the Meetings page shows
  * it. "Why isn't my 2 September call here" now has an answer on the screen
  * where it is asked, and a button to fix it.
- *
  * Rows are the last sync's view, not a running total — see the sync for why.
  */
 model UnmappedDomain {
@@ -929,13 +921,11 @@ model UnmappedDomain {
 
 /**
  * A calendar entry the sync passed over, by name.
- *
  * UnmappedDomain answers "which company is unrecognised". It could not
  * answer "where is my Thursday 3pm", because a meeting with nobody external
  * in it at all has no domain to file under — the loop that recorded domains
  * simply did not run, and the meeting vanished with no trace anywhere. Three
  * rounds of debugging went past that hole.
- *
  * So: one row per meeting the sync declined to keep, with its title, its
  * guests and the reason. Replaced on each sync of that person, because it
  * describes the last run rather than accumulating history.
@@ -950,7 +940,7 @@ model SkippedMeeting {
   startsAt DateTime
 
   /// A short machine tag: no-client, all-internal, not-a-meeting.
-  code String
+  code   String
   /// The sentence shown to a person.
   reason String
 
@@ -1042,6 +1032,23 @@ model Project {
   /// a project.
   deal Deal?
 
+  /// RocketLane weekly update, the slow-moving half. These describe the
+  /// engagement rather than the week, so they are set once and carried into
+  /// every update instead of being retyped each Thursday.
+  useCases String?
+  kpis     String?
+
+  /// Amplify engagements carry four more fields and an evaluation window.
+  /// Everything else - seat deployments, Deal and Forecasting work - omits
+  /// them, which is what the template itself asks for.
+  isAmplify           Boolean   @default(false)
+  amplifyStatus       String?
+  amplifyProduct      String?
+  amplifyDataProvider String?
+  amplifyCompetitor   String?
+  evaluationStartDate DateTime?
+  evaluationDueDate   DateTime?
+
   @@index([clientId])
   @@index([partnerId])
   @@index([status])
@@ -1116,6 +1123,18 @@ model StatusUpdate {
   health ProjectHealth
   note   String?
 
+  /// RocketLane weekly update, the half that changes every week. `health` is
+  /// the RAG status and `note` is Current Status; these are the rest of it.
+  /// All optional: a one-line "still on track" is a legitimate update, and a
+  /// form that demands seven boxes is a form nobody fills in.
+  ragReasons      String?
+  painPoints      String?
+  risk            String?
+  nextSteps       String?
+  customerQuotes  String?
+  baselineMetrics String?
+  projectMetrics  String?
+
   /**
    * The day the update speaks to — not necessarily when it was typed.
    */
@@ -1132,18 +1151,18 @@ model StatusUpdate {
 // them, how long they normally take, and when they're due relative to kickoff.
 
 model ProjectTemplate {
-  id          String    @id @default(cuid())
-  name        String    @unique
+  id          String  @id @default(cuid())
+  name        String  @unique
   description String?
 
   /// The heading this template sits under in the New project picker -
   /// "Salesloft", "Outreach Implementation - Amplify Core". Set it and the
   /// template gets that section to itself, however few siblings it has.
   /// Left null, the picker falls back to reading a family out of the name.
-  groupName String?
-  archivedAt  DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  groupName  String?
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
   sections TemplateSection[]
   tasks    TemplateTask[]

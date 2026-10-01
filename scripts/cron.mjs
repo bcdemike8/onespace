@@ -10,6 +10,7 @@
 //   mail      pull client email and refresh the inbox
 //   zoom      real call lengths, off-calendar calls, and commitments
 //   digest    send the 5am Slack brief
+//   nudge     DM each owner the projects owing a weekly update (Thursdays)
 //
 // ONESPACE_JOB picks which, as one name or several separated by commas:
 //
@@ -25,7 +26,7 @@
 //
 // Needs APP_URL (or RAILWAY_PUBLIC_DOMAIN) and CRON_SECRET.
 
-const KNOWN = ["calendar", "mail", "zoom", "digest"];
+const KNOWN = ["calendar", "mail", "zoom", "digest", "nudge"];
 
 /** Every job asked for, with "both"/"all"/unset meaning the lot. */
 const asked = (process.env.ONESPACE_JOB ?? "both")
@@ -263,6 +264,20 @@ if (wants("digest")) {
   jobs.push(() =>
     call("digest", "/api/cron/slack-digest", (b) =>
       `sent ${b.sent}, skipped ${b.skipped}` +
+      (b.unlinked?.length ? `, no Slack account for ${b.unlinked.join(", ")}` : "") +
+      (b.failed?.length
+        ? `, failed for ${b.failed.map((f) => `${f.name} (${f.error})`).join(", ")}`
+        : ""),
+    ),
+  );
+}
+
+if (wants("nudge")) {
+  jobs.push(() =>
+    call("nudge", "/api/cron/weekly-nudge", (b) =>
+      `nudged ${b.sent} ${b.sent === 1 ? "owner" : "owners"} about ` +
+      `${b.projectsFlagged} ${b.projectsFlagged === 1 ? "project" : "projects"}` +
+      (b.clear ? `, ${b.clear} up to date` : "") +
       (b.unlinked?.length ? `, no Slack account for ${b.unlinked.join(", ")}` : "") +
       (b.failed?.length
         ? `, failed for ${b.failed.map((f) => `${f.name} (${f.error})`).join(", ")}`

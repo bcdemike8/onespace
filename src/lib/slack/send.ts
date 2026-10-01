@@ -4,9 +4,11 @@ import { addDays, today, weekStart } from "@/lib/dates";
 import { postMessage, slackConfigured } from "@/lib/slack/client";
 import {
   buildDailyDigest,
+  buildWeeklyNudge,
   type DigestProject,
   type DigestTask,
 } from "@/lib/slack/digest";
+import { gapLabel, gapOf, weekEndingThursday } from "@/lib/rocketlane";
 
 /** Where links in Slack messages point. Railway sets the domain for us. */
 import { appUrl } from "@/lib/app-url";
@@ -213,4 +215,94 @@ export async function tryPost(channel: string | null, text: string, blocks?: unk
   } catch {
     // Deliberately swallowed. The status update is already saved.
   }
+}
+
+export interface NudgeOutcome {
+  sent: number;
+  /** Owners who had nothing outstanding. */
+  clear: number;
+  projectsFlagged: number;
+  unlinked: string[];
+  failed: { name: string; error: string }[];
+}
+
+/**
+ * Thursday morning: tell each owner which of their projects nobody wrote up.
+ *
+ * Only the owner is messaged, and only about their own projects. A weekly
+ * update is one named person's job; a channel-wide list of everything
+ * outstanding is a list nobody owns.
+ */
+export async function sendWeeklyNudges(): Promise<NudgeOutcome> {
+  const week = weekEndingThursday(new Date());
+
+  const projects = await db.project.findMany({
+    where: { status: { in: ["ACTIVE", "ON_HOLD"] }, ownerId: { not: null } },
+    select: {
+      id: true,
+      name: true,
+      ownerId: true,
+      owner: { select: { name: true, slackUserId: true, isActive: true } },
+      statusUpdates: {
+        orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+        take: 1,
+        select: { date: true },
+      },
+    },
+    orderBy: { name: "asc" },
+  });
+
+  const outcome: NudgeOutcome = {
+    sent: 0,
+    clear: 0,
+    projectsFlagged: 0,
+    unlinked: [],
+    failed: [],
+  };
+
+  const byOwner = new Map<
+    string,
+    { name: string; slackUserId: string | null; rows: { id: string; name: string; gapLabel: string }[] }
+  >();
+
+  for (const p of projects) {
+    if (!p.ownerId || !p.owner?.isActive) continue;
+    const bucket = byOwner.get(p.ownerId) ?? {
+      name: p.owner.name,
+      slackUserId: p.owner.slackUserId,
+      rows: [],
+    };
+    const gap = gapOf(p.statusUpdates[0]?.date ?? null, week);
+    if (gap.missing) {
+      bucket.rows.push({ id: p.id, name: p.name, gapLabel: gapLabel(gap) });
+    }
+    byOwner.set(p.ownerId, bucket);
+  }
+
+  for (const owner of byOwner.values()) {
+    if (owner.rows.length === 0) {
+      outcome.clear += 1;
+      continue;
+    }
+    outcome.projectsFlagged += owner.rows.length;
+
+    // Nothing to send to. Counted and named rather than silently dropped -
+    // an owner who never linked Slack is the one who never gets nudged, and
+    // that is exactly the person whose updates go missing.
+    if (!owner.slackUserId) {
+      outcome.unlinked.push(owner.name);
+      continue;
+    }
+
+    const msg = buildWeeklyNudge({
+      name: owner.name,
+      projects: owner.rows,
+      url: appUrl(),
+    });
+    const r = await postMessage(owner.slackUserId, msg.text, msg.blocks);
+    if (r.ok) outcome.sent += 1;
+    else outcome.failed.push({ name: owner.name, error: r.error ?? "unknown" });
+  }
+
+  return outcome;
 }

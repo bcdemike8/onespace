@@ -24,6 +24,7 @@ const BASE_NAV: NavItem[] = [
 ];
 
 const ADMIN_NAV: NavItem[] = [
+  { href: "/reports/weekly", label: "Weekly report", icon: "◫" },
   { href: "/templates", label: "Templates", icon: "⧉" },
   { href: "/clients", label: "Clients", icon: "◈" },
   { href: "/people", label: "People", icon: "◍" },

@@ -9,6 +9,7 @@ import {
 import { SubmitButton } from "@/components/SubmitButton";
 import { ErrorNote } from "@/components/ui";
 import { HealthChip, HEALTH_LABEL } from "@/components/HealthChip";
+import { StatusDetailFields } from "@/components/StatusDetailFields";
 
 export interface StatusUpdateView {
   id: string;
@@ -142,6 +143,8 @@ export function StatusUpdates({
               />
             </div>
           </div>
+
+          <StatusDetailFields idPrefix="su" />
 
           <ErrorNote message={state.error} />
 

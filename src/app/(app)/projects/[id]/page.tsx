@@ -24,6 +24,7 @@ import { asSummaryDoc } from "@/lib/summary";
 import { saveProjectAsTemplateAction } from "@/app/actions/templates";
 import { ProjectBilling } from "./ProjectBilling";
 import { ProjectLifecycle } from "./ProjectLifecycle";
+import { ProjectEngagement } from "./ProjectEngagement";
 import { ProjectSettings } from "./ProjectSettings";
 import {
   StatusUpdates,
@@ -386,6 +387,25 @@ export default async function ProjectPage({
             today={toISODate(today())}
             current={currentUpdate ?? null}
             history={olderUpdates}
+          />
+
+          <ProjectEngagement
+            projectId={project.id}
+            value={{
+              useCases: project.useCases,
+              kpis: project.kpis,
+              isAmplify: project.isAmplify,
+              amplifyStatus: project.amplifyStatus,
+              amplifyProduct: project.amplifyProduct,
+              amplifyDataProvider: project.amplifyDataProvider,
+              amplifyCompetitor: project.amplifyCompetitor,
+              evaluationStartDate: project.evaluationStartDate
+                ? toISODate(project.evaluationStartDate)
+                : "",
+              evaluationDueDate: project.evaluationDueDate
+                ? toISODate(project.evaluationDueDate)
+                : "",
+            }}
           />
 
           {visibleGroups.map((group) => (

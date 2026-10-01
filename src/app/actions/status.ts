@@ -20,6 +20,28 @@ const schema = z.object({
   note: z.string().trim().max(4000).optional().nullable(),
 });
 
+/** The rest of the RocketLane update. Optional, and the same shape each. */
+const DETAIL = [
+  "ragReasons",
+  "painPoints",
+  "risk",
+  "nextSteps",
+  "customerQuotes",
+  "baselineMetrics",
+  "projectMetrics",
+] as const;
+
+function detailFrom(formData: FormData) {
+  const out: Record<string, string | null> = {};
+  for (const key of DETAIL) {
+    const v = String(formData.get(key) ?? "").trim();
+    // 4000 matches the note: long enough for a real answer, short enough
+    // that a paste of an entire transcript is rejected rather than stored.
+    out[key] = v ? v.slice(0, 4000) : null;
+  }
+  return out;
+}
+
 export async function addStatusUpdateAction(
   _prev: ActionState,
   formData: FormData,
@@ -55,6 +77,7 @@ export async function addStatusUpdateAction(
       health: health as ProjectHealth,
       note: note?.trim() || null,
       date: dayStart(date),
+      ...detailFrom(formData),
     },
   });
 
@@ -78,6 +101,7 @@ export async function addStatusUpdateAction(
 
   revalidatePath(`/projects/${projectId}`, "layout");
   revalidatePath("/projects", "layout");
+  revalidatePath("/reports/weekly", "layout");
   revalidatePath("/", "layout");
   return { ok: true };
 }

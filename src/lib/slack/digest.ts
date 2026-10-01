@@ -181,3 +181,60 @@ export function buildStatusUpdateMessage({
   ];
   return { text, blocks };
 }
+
+/**
+ * Thursday's nudge: the projects this person owes a weekly update on.
+ *
+ * Addressed to the owner rather than broadcast, because an update is one
+ * person's job and a channel message is nobody's. It names the projects and
+ * how stale each one is: "three projects" is a chore, "Honeycomb, last
+ * updated 19 days ago" is a specific thing to go and do.
+ */
+export function buildWeeklyNudge({
+  name,
+  projects,
+  url,
+}: {
+  name: string;
+  projects: { name: string; gapLabel: string; id: string }[];
+  url: string;
+}): SlackMessage {
+  const n = projects.length;
+  const text = `${n} ${n === 1 ? "project needs" : "projects need"} a weekly update`;
+
+  return {
+    text: `${text} — ${name}`,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text:
+            `*Weekly update${n === 1 ? "" : "s"} due today.* ` +
+            `${n === 1 ? "One project" : `${n} projects`} you own ` +
+            `${n === 1 ? "has" : "have"} had nothing written this week.`,
+        },
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: projects
+            .map((p) => `• <${url}/projects/${p.id}|${p.name}> — ${p.gapLabel}`)
+            .join("\n"),
+        },
+      },
+      {
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text:
+              "Click the status chip on <" +
+              `${url}/projects|Projects> to write them all without opening each one.`,
+          },
+        ],
+      },
+    ],
+  };
+}

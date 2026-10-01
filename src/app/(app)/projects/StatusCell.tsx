@@ -7,6 +7,7 @@ import { addStatusUpdateAction } from "@/app/actions/status";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ErrorNote } from "@/components/ui";
 import { HealthChip, HEALTH_LABEL } from "@/components/HealthChip";
+import { StatusDetailFields } from "@/components/StatusDetailFields";
 
 /**
  * The Status cell on the Projects list, and the dialog behind it.
@@ -210,6 +211,8 @@ function StatusDialog({
               />
             </div>
           </div>
+
+          <StatusDetailFields idPrefix="sc" />
 
           <ErrorNote message={state.error} />
 

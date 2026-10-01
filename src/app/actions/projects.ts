@@ -789,3 +789,50 @@ export async function setProjectBillingAction(formData: FormData) {
   revalidatePath(`/projects/${id}`);
   revalidatePath("/timesheet", "layout");
 }
+
+/**
+ * The engagement facts the weekly RocketLane update needs.
+ *
+ * Separate from Settings because they are a different job and a different
+ * audience. Settings is an admin changing the client or the budget; this is
+ * the consultant delivering the work writing down what the engagement is
+ * for. They are also the fields that make the Thursday report come out
+ * finished rather than full of brackets, so the person who files it has to
+ * be able to fill them.
+ *
+ * Text only, and all of it optional. A half-filled engagement block still
+ * saves the consultant from retyping the half that is filled.
+ */
+export async function setProjectEngagementAction(formData: FormData) {
+  await requireUser();
+
+  const id = String(formData.get("id") ?? "");
+  if (!id) return;
+
+  const text = (key: string) => {
+    const v = String(formData.get(key) ?? "").trim();
+    return v || null;
+  };
+  const date = (key: string) => {
+    const v = String(formData.get(key) ?? "").trim();
+    return /^\d{4}-\d{2}-\d{2}$/.test(v) ? dayStart(v) : null;
+  };
+
+  await db.project.update({
+    where: { id },
+    data: {
+      useCases: text("useCases"),
+      kpis: text("kpis"),
+      isAmplify: formData.get("isAmplify") === "on",
+      amplifyStatus: text("amplifyStatus"),
+      amplifyProduct: text("amplifyProduct"),
+      amplifyDataProvider: text("amplifyDataProvider"),
+      amplifyCompetitor: text("amplifyCompetitor"),
+      evaluationStartDate: date("evaluationStartDate"),
+      evaluationDueDate: date("evaluationDueDate"),
+    },
+  });
+
+  revalidatePath(`/projects/${id}`, "layout");
+  revalidatePath("/reports/weekly", "layout");
+}
