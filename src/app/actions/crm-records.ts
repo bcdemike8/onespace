@@ -19,6 +19,11 @@ import {
   defaultProbability,
   text,
 } from "@/lib/crm/form";
+import {
+  cleanContact,
+  contactProblem,
+  isBillingRole,
+} from "@/lib/crm/contact-roles";
 
 /**
  * Writing to the CRM.
@@ -474,4 +479,153 @@ export async function setDealStageAction(
   refresh();
   revalidatePath(`/crm/deals/${id}`);
   return { ok: true };
+}
+
+// ------------------------------------------------------- contacts on a deal
+
+/**
+ * Put somebody on a deal, as Salesforce's Contact Roles does.
+ *
+ * Either a contact already on the account, or a new one typed here. Making
+ * people leave the deal to create a contact and come back is how a billing
+ * contact ends up in an email thread instead of the CRM.
+ *
+ * Naming the role "Billing Contact" also sets the deal's billing contact
+ * field, because those are the same fact and nobody should say it twice. A
+ * billing contact recorded in one of two places is the one the invoice
+ * misses.
+ */
+export async function addDealContactAction(
+  _prev: SaveState,
+  form: FormData,
+): Promise<SaveState> {
+  const user = await requireUser();
+
+  const dealId = text(form.get("dealId"));
+  if (!dealId) return { error: "No deal to add them to." };
+
+  const deal = await db.deal.findUnique({
+    where: { id: dealId },
+    select: { id: true, clientId: true },
+  });
+  if (!deal) return { error: "That deal no longer exists." };
+
+  const role = text(form.get("role"));
+  const isPrimary = bool(form.get("isPrimary"));
+
+  let contactId = relation(form.get("contactId"));
+
+  // Nobody picked an existing one, so they typed a new person.
+  if (!contactId) {
+    const fresh = cleanContact({
+      firstName: text(form.get("firstName")),
+      lastName: text(form.get("lastName")) ?? "",
+      email: text(form.get("email")),
+      title: text(form.get("title")),
+      phone: text(form.get("phone")),
+    });
+
+    const problem = contactProblem(fresh);
+    if (problem) return { error: problem };
+
+    // Same person, already on the account. Reuse rather than make a second
+    // row: duplicate contacts are the thing that makes a CRM untrustworthy,
+    // and the email is the only identifier anybody actually types.
+    const existing = fresh.email
+      ? await db.contact.findFirst({
+          where: { clientId: deal.clientId, email: fresh.email },
+          select: { id: true },
+        })
+      : null;
+
+    if (existing) {
+      contactId = existing.id;
+    } else {
+      const created = await db.contact.create({
+        data: {
+          ...fresh,
+          clientId: deal.clientId,
+          createdById: user.id,
+          lastModifiedById: user.id,
+          lastModifiedAt: new Date(),
+          firstSeenAt: new Date(),
+        },
+        select: { id: true },
+      });
+      contactId = created.id;
+    }
+  }
+
+  const already = await db.dealContactRole.findFirst({
+    where: { dealId, contactId },
+    select: { id: true },
+  });
+  if (already) {
+    return { error: "They're already on this deal. Remove the row first to change it." };
+  }
+
+  // One primary, like Salesforce. Demote whoever held it rather than leaving
+  // two rows both claiming to be the main contact.
+  if (isPrimary) {
+    await db.dealContactRole.updateMany({
+      where: { dealId, isPrimary: true },
+      data: { isPrimary: false },
+    });
+  }
+
+  await db.dealContactRole.create({
+    data: { dealId, contactId, role, isPrimary },
+  });
+
+  const alsoOnDeal: { billingContactId?: string; primaryContactId?: string } = {};
+  if (isBillingRole(role)) alsoOnDeal.billingContactId = contactId;
+  if (isPrimary) alsoOnDeal.primaryContactId = contactId;
+  if (Object.keys(alsoOnDeal).length) {
+    await db.deal.update({ where: { id: dealId }, data: alsoOnDeal });
+  }
+
+  revalidatePath(`/crm/deals/${dealId}`, "layout");
+  return { ok: true };
+}
+
+/**
+ * Take somebody off a deal.
+ *
+ * The contact itself is left alone — they still work there, and deleting a
+ * person because they came off one opportunity would lose every other deal
+ * they are on. Only the role goes.
+ */
+export async function removeDealContactAction(form: FormData) {
+  await requireUser();
+
+  const id = text(form.get("id"));
+  if (!id) return;
+
+  const row = await db.dealContactRole.findUnique({
+    where: { id },
+    select: { dealId: true, contactId: true },
+  });
+  if (!row) return;
+
+  await db.dealContactRole.delete({ where: { id } });
+
+  // The deal's own fields pointed at this person because of this role, so
+  // they go with it. A billing contact nobody is on the deal any more is
+  // worse than a blank: it reads as checked.
+  const deal = await db.deal.findUnique({
+    where: { id: row.dealId },
+    select: { billingContactId: true, primaryContactId: true },
+  });
+  const clear: { billingContactId?: null; primaryContactId?: null } = {};
+  if (deal?.billingContactId && deal.billingContactId === row.contactId) {
+    clear.billingContactId = null;
+  }
+  if (deal?.primaryContactId && deal.primaryContactId === row.contactId) {
+    clear.primaryContactId = null;
+  }
+  if (Object.keys(clear).length) {
+    await db.deal.update({ where: { id: row.dealId }, data: clear });
+  }
+
+  revalidatePath(`/crm/deals/${row.dealId}`, "layout");
 }

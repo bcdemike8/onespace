@@ -6,7 +6,10 @@ import { formatMedium } from "@/lib/dates";
 import { STAGE_LABEL, money, stagePath } from "@/lib/crm/view";
 import { dealHours, hoursLabel, hoursNote } from "@/lib/crm/hours";
 import { Field, Figure, Related, Section } from "@/components/crm/Record";
+import { DealContacts } from "@/components/crm/DealContacts";
 import { DealFiles } from "@/components/crm/DealFiles";
+import { contactName } from "@/lib/crm/contact-roles";
+import { contactOptions } from "@/lib/crm/options";
 import { StagePath } from "@/components/crm/StagePath";
 import { PageHeader } from "@/components/ui";
 
@@ -96,6 +99,10 @@ export default async function DealPage({
   });
 
   if (!deal) notFound();
+
+  // Everybody already on this account, so the common case - somebody who is
+  // already a contact - doesn't go through the new-person form.
+  const people = await contactOptions(deal.client.id);
 
   const hours = deal.project
     ? await db.timeEntry.aggregate({
@@ -346,30 +353,19 @@ export default async function DealPage({
         </div>
 
         <div className="flex flex-col gap-4">
-          <Related title="Contact roles" count={deal.contactRoles.length}>
-            {deal.contactRoles.map((r) => (
-              <li key={r.id} className="py-2 text-sm">
-                <div className="flex items-baseline gap-2">
-                  {r.contact ? (
-                    <Link
-                      href={`/crm/contacts/${r.contact.id}`}
-                      className="text-ink-900 underline"
-                    >
-                      {person(r.contact)}
-                    </Link>
-                  ) : (
-                    <span className="text-ink-500">No longer in the contacts</span>
-                  )}
-                  {r.isPrimary ? (
-                    <span className="chip bg-brand-100 text-brand-700">Primary</span>
-                  ) : null}
-                </div>
-                <p className="text-xs text-ink-500">
-                  {[r.role, r.contact?.title].filter(Boolean).join(" · ") || "No role"}
-                </p>
-              </li>
-            ))}
-          </Related>
+          <DealContacts
+            dealId={deal.id}
+            rows={deal.contactRoles.map((r) => ({
+              id: r.id,
+              contactId: r.contact?.id ?? null,
+              name: r.contact ? contactName(r.contact) : "",
+              email: r.contact?.email ?? null,
+              title: r.contact?.title ?? null,
+              role: r.role,
+              isPrimary: r.isPrimary,
+            }))}
+            choices={people}
+          />
 
           <Related title="Products" count={deal.lines.length}>
             {deal.lines.map((l) => (
