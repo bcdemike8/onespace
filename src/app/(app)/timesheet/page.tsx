@@ -258,6 +258,17 @@ export default async function TimesheetPage({
             >
               Full history
             </Link>
+            {/* Opens the printable sheet for whatever period the figures are
+                showing, which is the period somebody is filing. */}
+            <Link
+              href={`/timesheet/print?from=${toISODate(span.from)}&to=${toISODate(
+                span.to,
+              )}${readOnly ? `&person=${subject.id}` : ""}`}
+              target="_blank"
+              className="btn-secondary btn-sm"
+            >
+              Download PDF
+            </Link>
           </div>
         }
       />

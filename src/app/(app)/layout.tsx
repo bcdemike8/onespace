@@ -103,8 +103,11 @@ export default async function AppLayout({
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Compact nav for phones — the same links, scrolled horizontally. */}
-        <div className="flex items-center gap-1 overflow-x-auto border-b border-ink-200 bg-white px-3 py-2 lg:hidden">
+        {/* Compact nav for phones — the same links, scrolled horizontally.
+            `no-print` as well as `lg:hidden`, because a printed page is laid
+            out at paper width, which is under the lg breakpoint: without it
+            this bar un-hides on exactly the pages meant for paper. */}
+        <div className="no-print flex items-center gap-1 overflow-x-auto border-b border-ink-200 bg-white px-3 py-2 lg:hidden">
           <span className="mr-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-brand-300 text-[10px] font-bold text-ink-900">
             {BRAND.mark}
           </span>

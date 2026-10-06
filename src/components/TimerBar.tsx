@@ -35,7 +35,7 @@ export function TimerBar({ timer }: { timer: RunningTimerInfo }) {
   )}:${two(total % 60)}`;
 
   return (
-    <div className="sticky top-0 z-20 border-b border-brand-300 bg-brand-200/95 backdrop-blur">
+    <div className="no-print sticky top-0 z-20 border-b border-brand-300 bg-brand-200/95 backdrop-blur">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-2.5 sm:px-6">
         <span className="relative flex h-2 w-2 shrink-0">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand-700 opacity-50" />

@@ -53,7 +53,7 @@ export function UpdateNotice() {
   if (!stale) return null;
 
   return (
-    <div className="sticky top-0 z-50 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-brand-600 px-4 py-2 text-center text-xs text-white">
+    <div className="no-print sticky top-0 z-50 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-brand-600 px-4 py-2 text-center text-xs text-white">
       <span>OneSpace was updated. Reload before using the buttons on this page.</span>
       <button
         type="button"

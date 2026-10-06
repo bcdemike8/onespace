@@ -133,3 +133,58 @@ input[type="number"]::-webkit-inner-spin-button {
 input[type="number"] {
   -moz-appearance: textfield;
 }
+
+/* --------------------------------------------------------------- printing
+ *
+ * The PDF export is the browser's own "Save as PDF", so the printed page is
+ * the product rather than a side effect. Everything that frames the app —
+ * sidebar, timer bar, the notice explaining the dialog — comes off, and the
+ * sheet is laid out for paper.
+ */
+@media print {
+  .no-print,
+  aside,
+  nav {
+    display: none !important;
+  }
+
+  html,
+  body {
+    background: #fff;
+  }
+
+  /* Next renders the app inside nested flex wrappers; paper has no columns. */
+  body * {
+    overflow: visible !important;
+  }
+
+  main {
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: none !important;
+  }
+
+  .print-sheet {
+    max-width: none;
+    margin: 0;
+    font-size: 11px;
+  }
+
+  /* A project's rows should not be split across two sheets when they fit. */
+  .break-inside-avoid {
+    break-inside: avoid;
+  }
+
+  /* Table headers repeat on every page of a long month. */
+  thead {
+    display: table-header-group;
+  }
+
+  a[href]::after {
+    content: "";
+  }
+
+  @page {
+    margin: 14mm;
+  }
+}
