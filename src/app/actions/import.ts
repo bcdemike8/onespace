@@ -71,6 +71,15 @@ export interface AsanaPreview {
   };
   people?: PersonMatch[];
   clients?: { id: string; name: string }[];
+  /** Everyone who could own the project. */
+  owners?: { id: string; name: string }[];
+  /**
+   * Whoever holds the most tasks in the file. The export already says whose
+   * project this is, so the picker opens on the right answer instead of on
+   * nobody - and a project with no owner is in nobody's Mine and nobody's
+   * digest, which is never what an import meant.
+   */
+  suggestedOwnerId?: string | null;
 }
 
 function summariseAsana(plan: AsanaPlan): NonNullable<AsanaPreview["plan"]> {
@@ -125,7 +134,7 @@ export async function previewAsanaImportAction(
       };
     }
 
-    const [people, clients] = await Promise.all([
+    const [people, clients, owners] = await Promise.all([
       matchPeople(
         plan.assignees.map((a) => ({
           name: a.name,
@@ -138,9 +147,30 @@ export async function previewAsanaImportAction(
         select: { id: true, name: true },
         orderBy: { name: "asc" },
       }),
+      db.user.findMany({
+        where: { isActive: true },
+        select: { id: true, name: true },
+        orderBy: { name: "asc" },
+      }),
     ]);
 
-    return { ok: true, plan: summariseAsana(plan), people, clients };
+    // Whoever carries the most of the file. Sorted here rather than trusted
+    // from the parser, which lists assignees in the order the rows happen to
+    // mention them - that is the first person named, not the one whose
+    // project it is.
+    const suggestedOwnerId =
+      [...people]
+        .filter((p) => p.matchedUserId)
+        .sort((a, b) => b.weight - a.weight)[0]?.matchedUserId ?? null;
+
+    return {
+      ok: true,
+      plan: summariseAsana(plan),
+      people,
+      clients,
+      owners,
+      suggestedOwnerId,
+    };
   } catch (error) {
     return {
       ok: false,
@@ -151,6 +181,8 @@ export async function previewAsanaImportAction(
 
 export interface AsanaCommitOptions {
   projectName: string;
+  /** Who owns the project. Blank means nobody, which is almost never right. */
+  ownerId: string;
   clientId: string;
   newClientName: string;
   startDate: string;
@@ -219,6 +251,7 @@ export async function commitAsanaImportAction(
   const project = await db.project.create({
     data: {
       name: projectName,
+      ownerId: options.ownerId || null,
       clientId,
       startDate,
       dueDate: dueDates.length ? new Date(Math.max(...dueDates)) : null,

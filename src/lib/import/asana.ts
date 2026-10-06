@@ -201,13 +201,19 @@ export function parseAsanaCsv(text: string): AsanaPlan {
     );
   }
 
+  // This used to say OneSpace had no subtasks, which stopped being true when
+  // the hierarchy landed and left the preview promising the opposite of what
+  // the import does. A warning that is wrong is worse than no warning: it
+  // gets people to exclude rows that would have come in correctly.
   const subtaskCount = tasks.filter((t) => t.isSubtask).length;
   if (subtaskCount > 0) {
     warnings.push(
       `${subtaskCount} of these ${subtaskCount === 1 ? "is an" : "are"} Asana ` +
-        `${subtaskCount === 1 ? "subtask" : "subtasks"}. OneSpace has no subtasks, ` +
-        `so ${subtaskCount === 1 ? "it will" : "they'll"} come in as ordinary tasks ` +
-        "in the same section — or you can leave them out below.",
+        `${subtaskCount === 1 ? "subtask" : "subtasks"}, and ` +
+        `${subtaskCount === 1 ? "it will come" : "they'll come"} in under ` +
+        `${subtaskCount === 1 ? "its" : "their"} parent. Where the parent isn't ` +
+        "in this file, the subtask arrives as an ordinary task rather than " +
+        "disappearing.",
     );
   }
   if (skippedRows > 0) {

@@ -239,6 +239,7 @@ function AsanaImport() {
   const [pending, start] = useTransition();
 
   const [projectName, setProjectName] = useState("");
+  const [ownerId, setOwnerId] = useState("");
   const [clientId, setClientId] = useState("");
   const [newClientName, setNewClientName] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -262,6 +263,9 @@ function AsanaImport() {
         setProjectName(guessed);
         setTemplateName(`${guessed} template`);
         if (p.plan.startDate) setStartDate(toISODate(new Date(p.plan.startDate)));
+        // Whoever holds most of the file. Overridable, but right by default:
+        // the export already says whose project this is.
+        setOwnerId(p.suggestedOwnerId ?? "");
       }
     });
   };
@@ -271,6 +275,7 @@ function AsanaImport() {
       setResult(
         await commitAsanaImportAction(text, {
           projectName,
+          ownerId,
           clientId,
           newClientName,
           startDate,
@@ -397,6 +402,30 @@ function AsanaImport() {
               </div>
 
               <div>
+                <label className="label" htmlFor="i-owner">
+                  Project owner
+                </label>
+                <select
+                  id="i-owner"
+                  className="input"
+                  value={ownerId}
+                  onChange={(e) => setOwnerId(e.target.value)}
+                >
+                  <option value="">— unassigned —</option>
+                  {(preview.owners ?? []).map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-ink-500">
+                  {ownerId
+                    ? "Taken from whoever holds most of the tasks in the file."
+                    : "An unowned project is in nobody's Mine and nobody's digest."}
+                </p>
+              </div>
+
+              <div>
                 <label className="label" htmlFor="i-client">
                   Client
                 </label>
@@ -457,7 +486,6 @@ function AsanaImport() {
                 />
                 <span>
                   Include Asana subtasks ({preview.plan.subtaskCount} in this file)
-                  as ordinary tasks
                 </span>
               </label>
 
