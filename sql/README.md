@@ -18,7 +18,7 @@ bottom.
 | `onespace-setup.sql` | The original import: 54 Asana projects, their sections, tasks and estimates, plus clients, partners and people | Run |
 | `onespace-owners.sql` | Sets the owner on 125 projects — 59 from Everhour's Leads column, 66 inferred from who logged the most hours | Run |
 | `onespace-sow-templates.sql` | The eight Amplify implementation templates built from the signed SOWs | Run |
-| `onespace-salesloft-template.sql` | The Salesloft Do-It-For-You onboarding template, from the 2026 SOW. Gives itself a "Salesloft" heading on New project, so one SOW doesn't have to wait for siblings to get a section | Ready |
+| ~~`onespace-salesloft-template.sql`~~ | The Salesloft Do-It-For-You onboarding template. **Moved to `prisma/migrations/20261006090000_salesloft_template/`** — it sat here for a week unrun, which is what a step that needs somebody to remember it does. Templates from here on go in a migration | Moved |
 | `onespace-client-domains.sql` | Maps clients to the email domains Google matching depends on. Section 2 reads your own unmatched meetings and tells you which domains are worth adding | Optional — the Clients page does the same thing one at a time |
 | `onespace-domain-worksheet.sql` | Read-only. Prints every unmapped client and partner as fill-in-the-blank lines, ordered by how much work each represents | Run first |
 | `onespace-partner-domains.sql` | Maps partners to their domains. A partner in a client meeting must not read as a second client | Optional — the Clients page does the same |

@@ -1,8 +1,14 @@
 -- Salesloft — Do-It-For-You Onboarding, from the signed 2026 SOW
--- =====================================================================
--- Adds one project template and gives it a "Salesloft" heading of its own
--- on New project, so the first Salesloft SOW doesn't land in "Other
--- templates" beside the odds and ends.
+--
+-- A migration rather than a file somebody runs in the Supabase console,
+-- because the console version sat in the repo for a week and the template
+-- still didn't exist. A step that depends on a person remembering to paste
+-- SQL is a step that doesn't happen; this one runs itself on deploy.
+--
+-- Reference data, not schema. That is a deliberate exception: the eight
+-- Outreach templates were loaded by hand and this is the ninth, so the
+-- pattern was already "SQL that creates a template". Putting it here only
+-- changes who runs it.
 --
 -- Structure follows the SOW exactly: its consulting blocks are the sections,
 -- the RevOptics deliverables and the client's responsibilities are steps and
@@ -36,11 +42,9 @@
 --
 -- Timeline: 35 days, inside the SOW's 4-week minimum and 8-week maximum.
 --
--- Safe to re-run: deletes and rebuilds only this template, by name.
--- Projects already created from it keep their tasks - the link is by id and
--- nothing cascades into a live project.
-
-BEGIN;
+-- The DELETE at the top means re-running this by hand is safe. Projects
+-- already created from it keep their tasks — the link is by id, and nothing
+-- here cascades into a live project.
 
 DO $$
 DECLARE
@@ -239,22 +243,3 @@ BEGIN
   INSERT INTO onespace."TemplateTask" (id,"templateId","sectionId","parentId",name,"offsetDays","estimatedHours","orderIndex")
   VALUES (gen_random_uuid()::text, v_t, v_s, v_p, 'Confirm any hours beyond the estimate were consented to in writing', 35, NULL, 46);
 END $$;
-
-COMMIT;
-
-
--- ------------------------------------------------------------- confirm
--- Expect: 25 hours, 35 days, and a "Salesloft" group.
-select t.name,
-       t."groupName",
-       count(*) filter (where tt."parentId" is null)     as steps,
-       count(*) filter (where tt."parentId" is not null) as subtasks,
-       sum(tt."estimatedHours")                          as hours,
-       max(tt."offsetDays")                              as runs_days
-from onespace."ProjectTemplate" t
-  join onespace."TemplateTask" tt on tt."templateId" = t.id
-where t.name = 'Salesloft — Do-It-For-You Onboarding'
-group by 1, 2;
-
--- Undo:
--- DELETE FROM onespace."ProjectTemplate" WHERE name = 'Salesloft — Do-It-For-You Onboarding';
