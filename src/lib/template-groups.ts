@@ -44,7 +44,12 @@ export function labelUnder(group: string, name: string): string {
   const lower = name.toLowerCase();
   if (!lower.startsWith(group.toLowerCase())) return name;
   const rest = name.slice(group.length).replace(/^[\s—–:-]+/, "").trim();
-  return rest || name;
+  if (!rest) return name;
+  // "Outreach - MSO (3 Months)" under an "Outreach - MSO" heading should read
+  // "3 Months", the way the inferred families already read "1-19 seats" -
+  // the brackets were only ever there to separate the variant from the name.
+  const unwrapped = /^\(([^()]*)\)$/.exec(rest);
+  return unwrapped ? unwrapped[1].trim() || rest : rest;
 }
 
 export function groupTemplates<T extends GroupableTemplate>(

@@ -26,6 +26,7 @@ const REAL = [
   t("Outreach Implementation: Engage + Starter Add-On (1-19) (variant 2)"),
   t("Quick Start - 10 Hours"),
   t("Salesloft — Do-It-For-You Onboarding", "Salesloft"),
+  t("Outreach - MSO (3 Months)", "Outreach - MSO"),
 ];
 
 const headings = (rows: ReturnType<typeof groupTemplates>) => rows.map(([g]) => g);
@@ -55,6 +56,7 @@ test("sibling SOWs collapse into one heading", () => {
 test("an explicit heading gets its own section with one template in it", () => {
   const rows = groupTemplates(REAL);
   assert.deepEqual(under(rows, "Salesloft"), ["Do-It-For-You Onboarding"]);
+  assert.deepEqual(under(rows, "Outreach - MSO"), ["3 Months"]);
 });
 
 test("a lone bracketed name stays in the catch-all, suffix and all", () => {
@@ -81,6 +83,14 @@ test("a heading is not repeated inside its own options", () => {
   assert.equal(labelUnder("Salesloft", "Salesloft — Do-It-For-You Onboarding"), "Do-It-For-You Onboarding");
   assert.equal(labelUnder("Salesloft", "Salesloft: Migration"), "Migration");
   assert.equal(labelUnder("Salesloft", "Salesloft Admin Training"), "Admin Training");
+  // A bracketed variant reads like the inferred families do, without them.
+  assert.equal(labelUnder("Outreach - MSO", "Outreach - MSO (3 Months)"), "3 Months");
+  assert.equal(labelUnder("Outreach - MSO", "Outreach - MSO (12 Months)"), "12 Months");
+  // Brackets in the middle are part of the name, not a wrapper.
+  assert.equal(
+    labelUnder("Outreach", "Outreach Implementation: Engage (1-19) extra"),
+    "Implementation: Engage (1-19) extra",
+  );
   // A name that isn't prefixed by its heading is left alone.
   assert.equal(labelUnder("Salesloft", "Cadence rebuild"), "Cadence rebuild");
   // And a name that is only the heading keeps something to click on.
