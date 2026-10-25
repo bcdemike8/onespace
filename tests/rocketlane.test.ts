@@ -144,6 +144,13 @@ test("a project nobody has ever updated is a gap with no age", () => {
 
 test("an update on the first day of the week counts as inside it", () => {
   assert.equal(gapOf(WEEK.from, WEEK).missing, false);
+  assert.equal(gapOf(WEEK.to, WEEK).missing, false);
+});
+
+test("an update dated after the week is not this week's update", () => {
+  // Somebody post-dating one leaves the week itself unwritten, and the page
+  // has to say so rather than count it and disagree with its own RAG spread.
+  assert.equal(gapOf(d("2026-10-15"), WEEK).missing, true);
 });
 
 test("the gap reads as English", () => {

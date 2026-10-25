@@ -155,7 +155,11 @@ export function gapOf(
   if (!lastUpdate) return { missing: true, daysSince: null };
   const day = 86_400_000;
   return {
-    missing: lastUpdate < week.from,
+    // Outside the window in either direction. An update dated next month is
+    // not this week's update, and counting it left the Updated figure one
+    // ahead of the RAG spread, which is the kind of disagreement that makes
+    // somebody stop trusting the whole page.
+    missing: lastUpdate < week.from || lastUpdate > week.to,
     daysSince: Math.max(
       0,
       Math.round((week.to.getTime() - lastUpdate.getTime()) / day),

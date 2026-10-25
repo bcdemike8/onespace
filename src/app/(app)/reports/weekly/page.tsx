@@ -3,7 +3,7 @@ import { requireAdmin } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { addDays, dayStart, formatMedium, toISODate } from "@/lib/dates";
 import { HealthChip } from "@/components/HealthChip";
-import { PageHeader, Stat } from "@/components/ui";
+import { PageHeader } from "@/components/ui";
 import {
   type Activity,
   RAG_LABEL,
@@ -316,13 +316,6 @@ export default async function WeeklyReportPage({
       a.name.localeCompare(b.name),
   );
 
-  const missing = rows.filter((r) => r.gap.missing);
-  const spread = {
-    ON_TRACK: rows.filter((r) => r.health === "ON_TRACK").length,
-    AT_RISK: rows.filter((r) => r.health === "AT_RISK").length,
-    OFF_TRACK: rows.filter((r) => r.health === "OFF_TRACK").length,
-  };
-
   const prev = toISODate(addDays(week.to, -7));
   const next = toISODate(addDays(week.to, 7));
 
@@ -354,44 +347,21 @@ export default async function WeeklyReportPage({
         }
       />
 
-      <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat
-          label="Week"
-          value={formatMedium(week.to)}
-          hint={`from ${formatMedium(week.from)}`}
-        />
-        <Stat
-          label="Updated"
-          value={`${rows.length - missing.length} of ${rows.length}`}
-          hint="live projects with an update this week"
-        />
-        <Stat
-          label="Missing"
-          value={missing.length}
-          hint={
-            missing.length
-              ? "drafted from the week's activity below"
-              : "nothing outstanding"
-          }
-        />
-        <Stat
-          label="RAG"
-          value={`${spread.ON_TRACK} / ${spread.AT_RISK} / ${spread.OFF_TRACK}`}
-          hint="green / amber / red, this week"
-        />
-      </div>
-
       {rows.length === 0 ? (
         <div className="card p-6 text-sm text-ink-600">
           No active projects, so there is nothing to report on this week.
         </div>
       ) : (
         <WeeklyList
+          weekLabel={formatMedium(week.to)}
+          weekFrom={formatMedium(week.from)}
           rows={rows.map(
             (r): WeeklyRow => ({
               key: r.id,
               text: r.search,
               copy: r.text,
+              missing: r.gap.missing,
+              health: r.health,
               node: (
                 <section className="card overflow-hidden">
                   <div className="flex flex-wrap items-start justify-between gap-3 border-b border-ink-200 p-4">
