@@ -24,6 +24,7 @@ import {
   contactProblem,
   isBillingRole,
 } from "@/lib/crm/contact-roles";
+import { RESET, cloneName } from "@/lib/crm/clone";
 
 /**
  * Writing to the CRM.
@@ -628,4 +629,104 @@ export async function removeDealContactAction(form: FormData) {
   }
 
   revalidatePath(`/crm/deals/${row.dealId}`, "layout");
+}
+
+// -------------------------------------------------------------- cloning
+
+/**
+ * Clone an opportunity, products and contact roles included.
+ *
+ * Carry-by-default: everything on the deal comes across except the fields
+ * `RESET` names — its identity, its outcome, how far it had got, and the
+ * references pointing at its paperwork elsewhere. A field added to the
+ * schema next year describes the engagement too, and follows it without
+ * anybody having to remember this function.
+ *
+ * The clone opens at the first stage, not closed and not won. A clone that
+ * arrived Closed Won would add its amount to the closed-business dashboard
+ * the moment it was created, and nobody checks a total that went up.
+ *
+ * Files are deliberately left behind: they are the signed paperwork for the
+ * term that just ended, and a renewal carrying the old SOW is worse than an
+ * empty list.
+ */
+export async function cloneDealAction(formData: FormData) {
+  const user = await requireUser();
+
+  const id = text(formData.get("id"));
+  if (!id) return;
+
+  const source = await db.deal.findUnique({
+    where: { id },
+    include: {
+      lines: true,
+      contactRoles: true,
+    },
+  });
+  if (!source) return;
+
+  // Names aren't unique in the database, which is why the marker matters:
+  // two identical rows in a pipeline list are a coin toss to open.
+  const siblings = await db.deal.findMany({
+    where: { clientId: source.clientId },
+    select: { name: true },
+  });
+
+  const carried: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(source)) {
+    // Relations come back as arrays from `include`; they are copied below.
+    if (RESET.includes(key) || Array.isArray(value)) continue;
+    carried[key] = value;
+  }
+
+  const stage = "QUALIFICATION" as const;
+  const clone = await db.deal.create({
+    data: {
+      ...(carried as Prisma.DealUncheckedCreateInput),
+      name: cloneName(source.name, siblings.map((s) => s.name)),
+      stage,
+      ...stageFlags(stage),
+      probability: defaultProbability(stage),
+      createdById: user.id,
+      lastModifiedById: user.id,
+      lastModifiedAt: new Date(),
+    },
+    select: { id: true },
+  });
+
+  if (source.lines.length > 0) {
+    await db.dealProduct.createMany({
+      data: source.lines.map((l) => ({
+        dealId: clone.id,
+        productId: l.productId,
+        productName: l.productName,
+        productCode: l.productCode,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        totalPrice: l.totalPrice,
+        listPrice: l.listPrice,
+        description: l.description,
+        // Not serviceDate: that was when the old term was delivered. And not
+        // sfdcId, which is unique and belongs to the line it came from.
+        createdById: user.id,
+      })),
+    });
+  }
+
+  if (source.contactRoles.length > 0) {
+    await db.dealContactRole.createMany({
+      data: source.contactRoles.map((r) => ({
+        dealId: clone.id,
+        contactId: r.contactId,
+        role: r.role,
+        isPrimary: r.isPrimary,
+      })),
+    });
+  }
+
+  revalidatePath("/crm/deals", "layout");
+  // Straight to the form, the way Salesforce's own Clone does: a renewal
+  // always needs a close date and usually a new name, and landing on a
+  // read-only page leaves somebody to go and find the Edit button.
+  redirect(`/crm/deals/${clone.id}/edit`);
 }

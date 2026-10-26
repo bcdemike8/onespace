@@ -9,6 +9,7 @@ import { Field, Figure, Related, Section } from "@/components/crm/Record";
 import { DealContacts } from "@/components/crm/DealContacts";
 import { DealFiles } from "@/components/crm/DealFiles";
 import { contactName } from "@/lib/crm/contact-roles";
+import { cloneDealAction } from "@/app/actions/crm-records";
 import { contactOptions } from "@/lib/crm/options";
 import { StagePath } from "@/components/crm/StagePath";
 import { PageHeader } from "@/components/ui";
@@ -152,6 +153,16 @@ export default async function DealPage({
             >
               Add product
             </Link>
+            <form action={cloneDealAction}>
+              <input type="hidden" name="id" value={deal.id} />
+              <button
+                type="submit"
+                className="btn-secondary btn-sm"
+                title="Copy this deal's scope, products and contacts into a new open opportunity"
+              >
+                Clone
+              </button>
+            </form>
           </>
         }
       />
