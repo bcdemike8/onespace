@@ -13,16 +13,42 @@ import { formatMonth, formatRange, monthEnd, monthStart } from "@/lib/dates";
  * worth testing, and tests can't import anything server-only.
  */
 
-export type TimesheetPeriod = "week" | "month" | "last_month";
+export type TimesheetPeriod = "week" | "month" | "last_month" | "custom";
 
 export const TIMESHEET_PERIODS: { value: TimesheetPeriod; label: string }[] = [
   { value: "week", label: "This week" },
   { value: "month", label: "This month" },
   { value: "last_month", label: "Last month" },
+  { value: "custom", label: "Custom" },
 ];
 
 export function parsePeriod(raw: string | undefined | null): TimesheetPeriod {
-  return raw === "month" || raw === "last_month" ? raw : "week";
+  return raw === "month" || raw === "last_month" || raw === "custom" ? raw : "week";
+}
+
+/** A date somebody typed, or null if it wasn't one. */
+export function parseDay(raw: string | undefined | null): Date | null {
+  if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const d = new Date(`${raw}T00:00:00.000Z`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * The two ends of a custom range, in order.
+ *
+ * Reversed dates are swapped rather than rejected. Somebody who typed the
+ * end into the start box meant the range between them, and an error message
+ * that makes them retype both is pedantry about a mistake the machine can
+ * see through.
+ */
+export function customRange(
+  fromRaw: string | undefined | null,
+  toRaw: string | undefined | null,
+): { from: Date; to: Date } | null {
+  const a = parseDay(fromRaw);
+  const b = parseDay(toRaw);
+  if (!a || !b) return null;
+  return a <= b ? { from: a, to: b } : { from: b, to: a };
 }
 
 /**
@@ -38,7 +64,11 @@ export function periodRange(
   weekFrom: Date,
   weekTo: Date,
   now: Date,
+  custom?: { from: Date; to: Date } | null,
 ): { from: Date; to: Date } {
+  // A half-filled custom range falls back to the week rather than showing
+  // nothing: the figures are never blank because of a box nobody finished.
+  if (period === "custom") return custom ?? { from: weekFrom, to: weekTo };
   if (period === "month") return { from: monthStart(now), to: monthEnd(now) };
   if (period === "last_month") {
     const inLastMonth = monthStart(new Date(monthStart(now).getTime() - 1));
@@ -47,9 +77,15 @@ export function periodRange(
   return { from: weekFrom, to: weekTo };
 }
 
-/** "Sep 28 – Oct 4" for a week; "September 2026" for a month. */
+/** "Sep 28 – Oct 4" for a week or a custom span; "Sep 2026" for a month. */
 export function periodLabel(period: TimesheetPeriod, from: Date, to: Date): string {
-  return period === "week" ? formatRange(from, to) : formatMonth(from);
+  if (period === "month" || period === "last_month") return formatMonth(from);
+  return formatRange(from, to);
+}
+
+/** How many days the figures cover, both ends included. */
+export function daysInRange(from: Date, to: Date): number {
+  return Math.round((to.getTime() - from.getTime()) / 86_400_000) + 1;
 }
 
 export interface PeriodEntry {

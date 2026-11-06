@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import { toISODate } from "../src/lib/dates";
 import {
   billableSplit,
+  customRange,
+  daysInRange,
+  parseDay,
   parsePeriod,
   periodLabel,
   periodRange,
@@ -21,6 +24,58 @@ test("anything unrecognised means the week, not a crash", () => {
   assert.equal(parsePeriod("quarter"), "week");
   assert.equal(parsePeriod("month"), "month");
   assert.equal(parsePeriod("last_month"), "last_month");
+  assert.equal(parsePeriod("custom"), "custom");
+});
+
+test("only a real yyyy-mm-dd is a day", () => {
+  assert.equal(parseDay("2026-11-02")?.toISOString().slice(0, 10), "2026-11-02");
+  for (const bad of [null, undefined, "", "2026-11", "02/11/2026", "2026-13-40", "yesterday"]) {
+    assert.equal(parseDay(bad), null, String(bad));
+  }
+});
+
+test("a custom range comes back in order however it was typed", () => {
+  const forwards = customRange("2026-11-02", "2026-11-20")!;
+  assert.equal(toISODate(forwards.from), "2026-11-02");
+  assert.equal(toISODate(forwards.to), "2026-11-20");
+  // Typed backwards: swapped, not refused. They meant the span between them.
+  const backwards = customRange("2026-11-20", "2026-11-02")!;
+  assert.equal(toISODate(backwards.from), "2026-11-02");
+  assert.equal(toISODate(backwards.to), "2026-11-20");
+});
+
+test("one day is a legitimate range", () => {
+  const r = customRange("2026-11-02", "2026-11-02")!;
+  assert.equal(toISODate(r.from), "2026-11-02");
+  assert.equal(daysInRange(r.from, r.to), 1);
+});
+
+test("a half-filled or nonsense custom range is no range at all", () => {
+  assert.equal(customRange("2026-11-02", null), null);
+  assert.equal(customRange(null, "2026-11-02"), null);
+  assert.equal(customRange("", ""), null);
+  assert.equal(customRange("not-a-date", "2026-11-02"), null);
+});
+
+test("custom with nothing filled in falls back to the week", () => {
+  // Never a blank set of figures because somebody didn't finish a box.
+  const r = periodRange("custom", d("2026-09-28"), d("2026-10-04"), d("2026-09-30"), null);
+  assert.deepEqual([toISODate(r.from), toISODate(r.to)], ["2026-09-28", "2026-10-04"]);
+});
+
+test("custom covers exactly the days given, ignoring the week and today", () => {
+  const span = customRange("2026-08-15", "2026-11-02")!;
+  const r = periodRange("custom", d("2026-09-28"), d("2026-10-04"), d("2026-09-30"), span);
+  assert.deepEqual([toISODate(r.from), toISODate(r.to)], ["2026-08-15", "2026-11-02"]);
+  assert.equal(periodLabel("custom", r.from, r.to), "Aug 15 – Nov 2, 2026");
+});
+
+test("a range counts both of its ends", () => {
+  assert.equal(daysInRange(d("2026-11-02"), d("2026-11-02")), 1);
+  assert.equal(daysInRange(d("2026-11-02"), d("2026-11-08")), 7);
+  // Across a month boundary, and across a leap day.
+  assert.equal(daysInRange(d("2026-10-31"), d("2026-11-01")), 2);
+  assert.equal(daysInRange(d("2028-02-28"), d("2028-03-01")), 3);
 });
 
 test("the week follows the sheet, so the arrows move the figures with it", () => {

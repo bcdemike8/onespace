@@ -15,6 +15,8 @@ import { formatHours, formatMoney } from "@/lib/format";
 import {
   TIMESHEET_PERIODS,
   billableSplit,
+  customRange,
+  daysInRange,
   parsePeriod,
   periodLabel,
   periodRange,
@@ -36,7 +38,13 @@ export const dynamic = "force-dynamic";
 export default async function TimesheetPage({
   searchParams,
 }: {
-  searchParams: Promise<{ week?: string; person?: string; period?: string }>;
+  searchParams: Promise<{
+    week?: string;
+    person?: string;
+    period?: string;
+    from?: string;
+    to?: string;
+  }>;
 }) {
   const viewer = await requireUser();
   const params = await searchParams;
@@ -49,7 +57,8 @@ export default async function TimesheetPage({
   // the question is what September came to, and answering it used to mean
   // leaving for Reports and rebuilding a filter.
   const period = parsePeriod(params.period);
-  const span = periodRange(period, from, to, today());
+  const custom = customRange(params.from, params.to);
+  const span = periodRange(period, from, to, today(), custom);
 
   // Admins can look at (but not edit) anyone's week.
   const admin = isAdmin(viewer);
@@ -219,7 +228,13 @@ export default async function TimesheetPage({
   const prevWeek = toISODate(addDays(from, -7));
   const nextWeek = toISODate(addDays(from, 7));
   const personQuery = readOnly ? `&person=${subject.id}` : "";
-  const periodQuery = period === "week" ? "" : `&period=${period}`;
+  const periodQuery =
+    period === "week"
+      ? ""
+      : `&period=${period}` +
+        (period === "custom" && custom
+          ? `&from=${toISODate(custom.from)}&to=${toISODate(custom.to)}`
+          : "");
 
   return (
     <div>
@@ -287,8 +302,61 @@ export default async function TimesheetPage({
             </Link>
           );
         })}
-        <span className="text-sm text-ink-500">{periodLabel(period, span.from, span.to)}</span>
+        <span className="text-sm text-ink-500">
+          {periodLabel(period, span.from, span.to)}
+          {period === "custom" && custom ? (
+            <span className="text-ink-400">
+              {" "}
+              · {daysInRange(span.from, span.to)} days
+            </span>
+          ) : null}
+        </span>
       </div>
+
+      {period === "custom" ? (
+        // A plain GET form: two dates and a button need no JavaScript, and
+        // the range ends up in the URL, so a particular span is a link
+        // somebody can keep or send on.
+        <form className="mb-3 flex flex-wrap items-end gap-2">
+          <input type="hidden" name="period" value="custom" />
+          <input type="hidden" name="week" value={toISODate(from)} />
+          {readOnly ? (
+            <input type="hidden" name="person" value={subject.id} />
+          ) : null}
+          <div>
+            <label className="label" htmlFor="ts-from">
+              From
+            </label>
+            <input
+              id="ts-from"
+              name="from"
+              type="date"
+              defaultValue={toISODate(span.from)}
+              className="input w-auto"
+            />
+          </div>
+          <div>
+            <label className="label" htmlFor="ts-to">
+              To
+            </label>
+            <input
+              id="ts-to"
+              name="to"
+              type="date"
+              defaultValue={toISODate(span.to)}
+              className="input w-auto"
+            />
+          </div>
+          <button type="submit" className="btn-secondary">
+            Apply
+          </button>
+          {custom ? null : (
+            <p className="text-sm text-ink-500">
+              Pick both ends — the figures are showing this week until you do.
+            </p>
+          )}
+        </form>
+      ) : null}
 
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div className="grid flex-1 gap-3 sm:grid-cols-2 lg:max-w-4xl lg:grid-cols-4">
@@ -325,6 +393,13 @@ export default async function TimesheetPage({
             </label>
             <input type="hidden" name="week" value={toISODate(from)} />
             <input type="hidden" name="period" value={period} />
+            {/* Switching person must not quietly drop the span they chose. */}
+            {period === "custom" && custom ? (
+              <>
+                <input type="hidden" name="from" value={toISODate(custom.from)} />
+                <input type="hidden" name="to" value={toISODate(custom.to)} />
+              </>
+            ) : null}
             <select id="person" name="person" defaultValue={subject.id} className="input">
               {people.map((p) => (
                 <option key={p.id} value={p.id}>
