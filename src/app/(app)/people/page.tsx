@@ -5,6 +5,7 @@ import { addDays, formatMedium, today } from "@/lib/dates";
 import { centsToInput, formatHours, formatMoney } from "@/lib/format";
 import { PageHeader } from "@/components/ui";
 import {
+  startActingAsAction,
   togglePersonActiveAction,
   updatePersonAction,
 } from "@/app/actions/people";
@@ -163,6 +164,22 @@ export default async function PeoplePage() {
                 <div className="mt-2 flex justify-end">
                   <ResetPasswordForm userId={person.id} />
                 </div>
+
+                {person.id !== admin.id && person.isActive ? (
+                  <form
+                    action={startActingAsAction}
+                    className="mt-2 border-t border-ink-100 pt-2"
+                  >
+                    <input type="hidden" name="id" value={person.id} />
+                    <button
+                      type="submit"
+                      className="text-xs text-ink-500 hover:text-ink-900"
+                      title={`See OneSpace as ${person.name} does — their work, their meetings, their calendar sync`}
+                    >
+                      Act as {person.name.split(" ")[0]} — see what they see
+                    </button>
+                  </form>
+                ) : null}
 
                 {person.id !== admin.id ? (
                   <form

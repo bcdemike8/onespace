@@ -1,9 +1,16 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { requireAdmin, requireUser } from "@/lib/auth";
+import {
+  getViewer,
+  requireAdmin,
+  requireUser,
+  startActingAs,
+  stopActingAs,
+} from "@/lib/auth";
 import { hashPassword, verifyPassword } from "@/lib/password";
 import { parseMoneyToCents } from "@/lib/format";
 
@@ -178,6 +185,19 @@ export async function changeOwnPasswordAction(
 ): Promise<ActionState> {
   const user = await requireUser();
 
+  // Not while acting as somebody. An admin who knows a colleague's password
+  // can sign in as them anywhere, forever, with nothing recording it — and
+  // admins already have a Reset password button on this page, which is the
+  // visible way to do the legitimate version of this.
+  const viewer = await getViewer();
+  if (viewer?.actingAdmin) {
+    return {
+      error:
+        "You're acting as somebody else. Stop acting first — their password " +
+        "is theirs to change, and you can reset it from the People page.",
+    };
+  }
+
   const current = String(formData.get("current") ?? "");
   const next = String(formData.get("password") ?? "").trim();
   const confirm = String(formData.get("confirm") ?? "").trim();
@@ -194,4 +214,24 @@ export async function changeOwnPasswordAction(
   });
 
   return { ok: true };
+}
+
+/**
+ * Step into somebody else's account, and step back out.
+ *
+ * Both answer to the real signed-in admin rather than to whoever the session
+ * is currently showing, which is what makes the way out reliable: while
+ * acting as a member, the effective user is a member, and a stop button the
+ * current view forbids is no way out.
+ */
+export async function startActingAsAction(formData: FormData) {
+  await startActingAs(String(formData.get("id") ?? ""));
+  revalidatePath("/", "layout");
+  redirect("/");
+}
+
+export async function stopActingAsAction() {
+  await stopActingAs();
+  revalidatePath("/", "layout");
+  redirect("/people");
 }

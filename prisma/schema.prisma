@@ -223,6 +223,8 @@ model User {
   skippedMeetings   SkippedMeeting[]
   uploadedDealFiles DealFile[]       @relation("DealFileUploader")
   sessions          Session[]
+  /// Sessions where an admin is currently acting as this person.
+  actedAsInSessions Session[]        @relation("SessionActingAs")
   assignedTasks     Task[]           @relation("TaskAssignee")
   timeEntries       TimeEntry[]
   timer             RunningTimer?
@@ -320,6 +322,16 @@ model Session {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt DateTime
   createdAt DateTime @default(now())
+
+  /// Who this session is acting as, when an admin has stepped into somebody
+  /// else's account to see what they see. `userId` stays the real admin, so
+  /// ending it is always possible and the banner always knows who is here.
+  ///
+  /// SetNull rather than Cascade: deleting the person being acted as should
+  /// drop the admin back to themselves, not sign them out.
+  actingAsUserId String?
+  actingAs       User?     @relation("SessionActingAs", fields: [actingAsUserId], references: [id], onDelete: SetNull)
+  actingSince    DateTime?
 
   @@index([userId])
   @@index([expiresAt])

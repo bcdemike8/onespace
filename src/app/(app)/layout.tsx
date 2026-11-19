@@ -1,11 +1,12 @@
 import Link from "next/link";
-import { requireUser } from "@/lib/auth";
+import { getViewer, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { logoutAction } from "@/app/login/actions";
 import { BRAND } from "@/lib/brand";
 import { NavLinks, type NavItem } from "@/components/NavLinks";
 import { TimerBar } from "@/components/TimerBar";
 import { UpdateNotice } from "@/components/UpdateNotice";
+import { ActingBanner } from "@/components/ActingBanner";
 import { Avatar } from "@/components/Avatar";
 
 export const dynamic = "force-dynamic";
@@ -42,6 +43,8 @@ export default async function AppLayout({
 }) {
   const user = await requireUser();
   const admin = user.role === "ADMIN";
+  // Null in the ordinary case. Set only while an admin is acting as somebody.
+  const viewer = await getViewer();
 
   const timer = await db.runningTimer.findUnique({
     where: { userId: user.id },
@@ -133,6 +136,13 @@ export default async function AppLayout({
             </button>
           </form>
         </div>
+
+        {viewer?.actingAdmin ? (
+          <ActingBanner
+            actingAs={viewer.user.name}
+            adminName={viewer.actingAdmin.name}
+          />
+        ) : null}
 
         <UpdateNotice />
 
