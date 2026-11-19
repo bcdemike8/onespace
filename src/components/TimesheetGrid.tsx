@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import { setTimesheetCellAction } from "@/app/actions/time";
+import { CellNote } from "@/components/CellNote";
 import { formatHours, parseDuration } from "@/lib/format";
 
 export interface TimesheetRow {
@@ -11,6 +12,8 @@ export interface TimesheetRow {
   taskName: string;
   /** Minutes this grid owns and may edit, keyed by ISO date. */
   minutes: Record<string, number>;
+  /** What each of those hours went on, keyed by the same ISO date. */
+  notes: Record<string, string>;
   /**
    * Minutes booked elsewhere — a project page, the stopwatch, an import.
    * Shown here so the week reads true, but not editable from the grid.
@@ -106,6 +109,7 @@ export function TimesheetGrid({
             taskId: taskId || null,
             taskName: task?.name ?? "General project time",
             minutes: {},
+            notes: {},
             locked: {},
           },
         ],
@@ -268,7 +272,10 @@ export function TimesheetGrid({
                               }
 
                               return (
-                                <td key={d.iso} className="p-1 text-center align-top">
+                                <td
+                                  key={d.iso}
+                                  className="group/cell relative p-1 text-center align-top"
+                                >
                                   {locked > 0 ? (
                                     <div
                                       className="mb-0.5 text-xs tnum text-ink-400"
@@ -291,6 +298,18 @@ export function TimesheetGrid({
                                       }
                                     />
                                   </form>
+                                  {/* Outside the cell's form on purpose — a
+                                      form inside a form is not a form. */}
+                                  <CellNote
+                                    projectId={project.id}
+                                    taskId={row.taskId ?? ""}
+                                    date={d.iso}
+                                    dayLabel={`${d.weekday} ${d.label}`}
+                                    taskName={row.taskName}
+                                    value={row.notes[d.iso] ?? ""}
+                                    hasTime={(row.minutes[d.iso] ?? 0) > 0}
+                                    disabled={readOnly || Boolean(d.closed)}
+                                  />
                                 </td>
                               );
                             })}

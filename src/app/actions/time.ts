@@ -202,6 +202,65 @@ export async function setTimesheetCellAction(formData: FormData) {
   refresh();
 }
 
+/**
+ * The note on a timesheet cell.
+ *
+ * Separate from the hours rather than part of the same form. The cell is a
+ * single input somebody tabs through at speed, and the grid's whole value is
+ * that filling a week takes seconds; a textarea in that path would slow down
+ * the common case to serve the rarer one.
+ *
+ * A note needs an entry to live on. "1.5" with no explanation is a normal
+ * timesheet line; an explanation attached to no hours is not something a
+ * timesheet can hold, so this writes nothing rather than inventing a
+ * zero-minute entry for it to sit on.
+ */
+export async function setTimesheetNoteAction(input: {
+  projectId: string;
+  taskId: string;
+  date: string;
+  notes: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  const user = await requireUser();
+
+  const { projectId, taskId, date: dateRaw } = input;
+  if (!projectId || !/^\d{4}-\d{2}-\d{2}$/.test(dateRaw)) {
+    return { ok: false, error: "That isn't a day on this sheet." };
+  }
+
+  const date = dayStart(dateRaw);
+  await assertUnlocked(date);
+
+  const notes = input.notes.trim().slice(0, 2000) || null;
+
+  const existing = await db.timeEntry.findMany({
+    where: {
+      userId: user.id,
+      taskId: taskId || null,
+      projectId,
+      date,
+      source: "TIMESHEET",
+    },
+    orderBy: { createdAt: "asc" },
+    select: { id: true },
+  });
+
+  if (existing.length === 0) {
+    return { ok: false, error: "Log some time on this day first." };
+  }
+
+  // The cell collapses to one entry when hours are saved, so in practice
+  // this is one row; updating all of them keeps the note true of the cell
+  // either way.
+  await db.timeEntry.updateMany({
+    where: { id: { in: existing.map((e) => e.id) } },
+    data: { notes },
+  });
+
+  refresh();
+  return { ok: true };
+}
+
 // ---------------------------------------------------------------- stopwatch
 
 export async function startTimerAction(formData: FormData) {

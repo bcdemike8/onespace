@@ -78,6 +78,7 @@ export default async function TimesheetPage({
         taskId: true,
         projectId: true,
         source: true,
+        notes: true,
         task: { select: { name: true } },
       },
     }),
@@ -176,6 +177,7 @@ export default async function TimesheetPage({
         taskId: entry.taskId,
         taskName: entry.task?.name ?? "General project time",
         minutes: {},
+        notes: {},
         locked: {},
       };
 
@@ -184,6 +186,8 @@ export default async function TimesheetPage({
     const bucket = entry.source === "TIMESHEET" ? row.minutes : row.locked;
     const iso = toISODate(entry.date);
     bucket[iso] = (bucket[iso] ?? 0) + entry.minutes;
+    // Only the grid's own entry carries a note the grid can edit.
+    if (entry.source === "TIMESHEET" && entry.notes) row.notes[iso] = entry.notes;
     forProject.set(key, row);
     rowsByProject.set(entry.projectId, forProject);
   }
