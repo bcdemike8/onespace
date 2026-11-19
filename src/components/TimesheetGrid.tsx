@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState } from "react";
 import { setTimesheetCellAction } from "@/app/actions/time";
 import { CellNote } from "@/components/CellNote";
+import { TaskPicker } from "@/components/TaskPicker";
 import { formatHours, parseDuration } from "@/lib/format";
 
 export interface TimesheetRow {
@@ -95,9 +96,8 @@ export function TimesheetGrid({
   );
   const weekTotal = dayTotals.reduce((a, b) => a + b, 0);
 
-  function addRow(project: TimesheetProject, taskId: string) {
-    const task = project.openTasks.find((t) => t.id === taskId);
-    const key = `${project.id}|${taskId}`;
+  function addRow(project: TimesheetProject, task: { id: string; name: string }) {
+    const key = `${project.id}|${task.id}`;
     setExtra((prev) => {
       if ((prev[project.id] ?? []).some((r) => r.key === key)) return prev;
       return {
@@ -106,8 +106,8 @@ export function TimesheetGrid({
           ...(prev[project.id] ?? []),
           {
             key,
-            taskId: taskId || null,
-            taskName: task?.name ?? "General project time",
+            taskId: task.id || null,
+            taskName: task.name || "General project time",
             minutes: {},
             notes: {},
             locked: {},
@@ -172,32 +172,15 @@ export function TimesheetGrid({
               <div className="flex flex-wrap items-center gap-3 px-4 py-2.5">
                 {readOnly ? (
                   <p className="text-sm text-ink-500">Nothing logged this week.</p>
-                ) : available.length > 0 ? (
-                  <>
-                    <select
-                      aria-label={`Add a task from ${project.name}`}
-                      className="input max-w-md py-1.5 text-sm"
-                      value=""
-                      onChange={(e) => {
-                        if (e.target.value !== "") addRow(project, e.target.value);
-                      }}
-                    >
-                      <option value="">+ Add a task to log against…</option>
-                      {available.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name}
-                        </option>
-                      ))}
-                    </select>
-                    <span className="text-xs text-ink-500">
-                      {available.length} unfinished{" "}
-                      {available.length === 1 ? "task" : "tasks"}
-                    </span>
-                  </>
                 ) : (
-                  <p className="text-sm text-ink-500">
-                    No unfinished tasks on this project.
-                  </p>
+                  <TaskPicker
+                    projectId={project.id}
+                    projectName={project.name}
+                    available={available}
+                    placeholder="+ Add a task to log against…"
+                    emptyNote="No unfinished tasks on this project."
+                    onPicked={(t) => addRow(project, t)}
+                  />
                 )}
               </div>
             ) : (
@@ -327,27 +310,14 @@ export function TimesheetGrid({
 
                 {!readOnly ? (
                   <div className="border-t border-ink-100 bg-white px-4 py-2.5">
-                    {available.length > 0 ? (
-                      <select
-                        aria-label={`Add a task from ${project.name}`}
-                        className="input max-w-md py-1.5 text-sm"
-                        value=""
-                        onChange={(e) => {
-                          if (e.target.value !== "") addRow(project, e.target.value);
-                        }}
-                      >
-                        <option value="">+ Add another task…</option>
-                        {available.map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.name}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <p className="text-xs text-ink-500">
-                        Every unfinished task on this project is already here.
-                      </p>
-                    )}
+                    <TaskPicker
+                      projectId={project.id}
+                      projectName={project.name}
+                      available={available}
+                      placeholder="+ Add another task…"
+                      emptyNote="Every unfinished task on this project is already here."
+                      onPicked={(t) => addRow(project, t)}
+                    />
                   </div>
                 ) : null}
               </>

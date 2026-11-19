@@ -8,6 +8,11 @@ import { resolveRates } from "@/lib/rates";
 import { assertUnlocked, setReopenedFrom } from "@/lib/lock";
 import { dayStart } from "@/lib/dates";
 import { parseDuration } from "@/lib/format";
+import {
+  UNPLANNED_SECTION,
+  cleanTaskName,
+  matchExisting,
+} from "@/lib/timesheet-task";
 
 export type ActionState = { error?: string; ok?: boolean };
 
@@ -262,6 +267,89 @@ export async function setTimesheetNoteAction(input: {
 }
 
 // ---------------------------------------------------------------- stopwatch
+
+/**
+ * "Other" on the timesheet's task picker: log against work the plan never
+ * named.
+ *
+ * It makes a real task rather than a free-text label on the entry, so the
+ * hours behave like every other hour in OneSpace — they roll into the
+ * project, they show on the printed timesheet with a name beside them, and
+ * next week the same task is already in the picker instead of being retyped
+ * slightly differently. It lands in a section of its own so a project owner
+ * reading the plan can tell sold work from unplanned work at a glance.
+ */
+export async function addTimesheetTaskAction(input: {
+  projectId: string;
+  name: string;
+}): Promise<{ ok: boolean; task?: { id: string; name: string }; error?: string }> {
+  const user = await requireUser();
+
+  const cleaned = cleanTaskName(input.name ?? "");
+  if ("error" in cleaned) return { ok: false, error: cleaned.error };
+  const name = cleaned.name;
+
+  const project = await db.project.findUnique({
+    where: { id: input.projectId ?? "" },
+    select: { id: true },
+  });
+  if (!project) return { ok: false, error: "That project no longer exists." };
+
+  // Typing the name of something already on the project lands on it rather
+  // than standing a near-identical task beside it.
+  const open = await db.task.findMany({
+    where: { projectId: project.id, status: { not: "DONE" } },
+    select: { id: true, name: true },
+  });
+  const existing = matchExisting(name, open);
+  if (existing) {
+    // Nothing changed, so nothing to revalidate.
+    return { ok: true, task: { id: existing.id, name: existing.name } };
+  }
+
+  let section = await db.section.findFirst({
+    where: { projectId: project.id, name: UNPLANNED_SECTION },
+    select: { id: true },
+  });
+  if (!section) {
+    const lastSection = await db.section.findFirst({
+      where: { projectId: project.id },
+      orderBy: { orderIndex: "desc" },
+      select: { orderIndex: true },
+    });
+    section = await db.section.create({
+      data: {
+        projectId: project.id,
+        name: UNPLANNED_SECTION,
+        orderIndex: (lastSection?.orderIndex ?? -1) + 1,
+      },
+      select: { id: true },
+    });
+  }
+
+  const last = await db.task.findFirst({
+    where: { projectId: project.id, sectionId: section.id, parentId: null },
+    orderBy: { orderIndex: "desc" },
+    select: { orderIndex: true },
+  });
+
+  // Assigned to whoever is logging it: they did the work, and it keeps the
+  // project on their sheet next week without them going looking for it.
+  const task = await db.task.create({
+    data: {
+      projectId: project.id,
+      sectionId: section.id,
+      name,
+      assigneeId: user.id,
+      orderIndex: (last?.orderIndex ?? -1) + 1,
+    },
+    select: { id: true, name: true },
+  });
+
+  refresh();
+  revalidatePath(`/projects/${project.id}`, "layout");
+  return { ok: true, task };
+}
 
 export async function startTimerAction(formData: FormData) {
   const user = await requireUser();
