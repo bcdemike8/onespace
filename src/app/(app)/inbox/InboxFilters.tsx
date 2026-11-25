@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import {
   inboxHref,
   REPLY_FILTERS,
+  WHEN_PRESETS,
   type FilterGroup,
   type ReplyFilter,
 } from "@/lib/inbox-filters";
@@ -15,6 +16,23 @@ interface Current {
   show?: string;
   which?: string;
   reply?: string;
+  when?: string;
+  from?: string;
+  to?: string;
+}
+
+/** The other filters, carried through a GET form so submitting keeps them. */
+function Carry({ current, skip }: { current: Current; skip: (keyof Current)[] }) {
+  const keys: (keyof Current)[] = ["who", "show", "which", "reply", "when", "from", "to"];
+  return (
+    <>
+      {keys
+        .filter((k) => !skip.includes(k) && current[k] && !(k === "reply" && current[k] === "all"))
+        .map((k) => (
+          <input key={k} type="hidden" name={k} value={current[k]} />
+        ))}
+    </>
+  );
 }
 
 /**
@@ -38,15 +56,7 @@ export function ProjectFilter({
 
   return (
     <form action="/inbox" className="flex items-center gap-2">
-      {current.who ? (
-        <input type="hidden" name="who" value={current.who} />
-      ) : null}
-      {current.show ? (
-        <input type="hidden" name="show" value={current.show} />
-      ) : null}
-      {current.reply && current.reply !== "all" ? (
-        <input type="hidden" name="reply" value={current.reply} />
-      ) : null}
+      <Carry current={current} skip={["which"]} />
 
       <label className="sr-only" htmlFor="which">
         Project
@@ -120,5 +130,101 @@ export function ReplyFilterTabs({
         </Link>
       ))}
     </div>
+  );
+}
+
+/**
+ * When the thread was last active.
+ *
+ * Presets navigate straight away, like the project dropdown. "Custom range"
+ * opens two date fields and waits for Apply, because picking the first date
+ * of a pair shouldn't reload the page under you before you pick the second.
+ * Nothing earlier than the mail start date can be chosen: there's nothing
+ * there to find.
+ */
+export function TimeFilter({
+  current,
+  earliest,
+  latest,
+  earliestLabel,
+}: {
+  current: Current;
+  /** YYYY-MM-DD: the mail start date. */
+  earliest: string;
+  /** YYYY-MM-DD: today. */
+  latest: string;
+  /** "1 Nov 2026", for the "any time" option. */
+  earliestLabel: string;
+}) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const isPreset = WHEN_PRESETS.some((p) => p.value === current.when);
+  const initial = isPreset ? current.when! : current.from || current.to ? "custom" : "";
+  const [mode, setMode] = useState(initial);
+
+  return (
+    <form action="/inbox" className="flex flex-wrap items-center gap-2">
+      <Carry current={current} skip={["when", "from", "to"]} />
+
+      <label className="sr-only" htmlFor="when">
+        Timeframe
+      </label>
+      <select
+        id="when"
+        value={mode}
+        onChange={(e) => {
+          const value = e.target.value;
+          setMode(value);
+          if (value === "custom") return;
+          start(() =>
+            router.push(
+              inboxHref(current, { when: value || null, from: null, to: null }),
+            ),
+          );
+        }}
+        className={`input w-[11rem] py-1 text-sm ${pending ? "opacity-60" : ""}`}
+      >
+        <option value="">Since {earliestLabel}</option>
+        {WHEN_PRESETS.map((p) => (
+          <option key={p.value} value={p.value}>
+            {p.label}
+          </option>
+        ))}
+        <option value="custom">Custom range…</option>
+      </select>
+
+      {mode === "custom" ? (
+        <>
+          <label className="sr-only" htmlFor="when-from">
+            From
+          </label>
+          <input
+            id="when-from"
+            type="date"
+            name="from"
+            min={earliest}
+            max={latest}
+            defaultValue={current.from ?? ""}
+            className="input w-[9.5rem] py-1 text-sm"
+          />
+          <span className="text-xs text-ink-500">to</span>
+          <label className="sr-only" htmlFor="when-to">
+            To
+          </label>
+          <input
+            id="when-to"
+            type="date"
+            name="to"
+            min={earliest}
+            max={latest}
+            defaultValue={current.to ?? ""}
+            className="input w-[9.5rem] py-1 text-sm"
+          />
+          <button type="submit" className="btn-secondary btn-sm">
+            Apply
+          </button>
+        </>
+      ) : null}
+    </form>
   );
 }

@@ -28,6 +28,79 @@ export function replyWhere(reply: ReplyFilter): { awaitingUs?: boolean } {
 }
 
 /**
+ * When the thread was last active.
+ *
+ * Presets cover the usual question ("what came in this week?"); a custom
+ * from/to covers the rest. Measured on the newest message, so an old
+ * conversation the client picked up again yesterday counts as yesterday.
+ */
+export type WhenPreset = "7d" | "14d" | "30d";
+
+export const WHEN_PRESETS: { value: WhenPreset; label: string; days: number }[] = [
+  { value: "7d", label: "Last 7 days", days: 7 },
+  { value: "14d", label: "Last 14 days", days: 14 },
+  { value: "30d", label: "Last 30 days", days: 30 },
+];
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const DAY = 86_400_000;
+
+/** A YYYY-MM-DD as the start of that day in UTC, or null if it isn't one. */
+export function parseDay(iso: string | undefined): Date | null {
+  if (!iso || !ISO_DATE.test(iso)) return null;
+  const [y, m, d] = iso.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  // Rejects 2026-02-31 and friends rather than rolling them into March.
+  return date.getUTCMonth() === m - 1 && date.getUTCDate() === d ? date : null;
+}
+
+export interface WhenParams {
+  when?: string;
+  from?: string;
+  to?: string;
+}
+
+/**
+ * The `when`, `from` and `to` parameters, resolved to a lastMessageAt range.
+ *
+ * `today` is the start of the current day; `floor` is the mail start date,
+ * which nothing goes earlier than. A preset wins over a custom range. `to`
+ * is inclusive: "to 20 Nov" means through the end of the 20th. Anything
+ * unreadable is ignored rather than turned into an empty list nobody can
+ * explain.
+ */
+export function whenRange(
+  params: WhenParams,
+  today: Date,
+  floor: Date,
+): { gte: Date; lt?: Date } {
+  const preset = WHEN_PRESETS.find((p) => p.value === params.when);
+  let gte = floor;
+  let lt: Date | undefined;
+
+  if (preset) {
+    gte = new Date(today.getTime() - (preset.days - 1) * DAY);
+  } else {
+    const from = parseDay(params.from);
+    const to = parseDay(params.to);
+    if (from) gte = from;
+    if (to) lt = new Date(to.getTime() + DAY);
+  }
+
+  if (gte < floor) gte = floor;
+  return lt ? { gte, lt } : { gte };
+}
+
+/** Whether a time filter is actually in effect. */
+export function hasWhen(params: WhenParams): boolean {
+  return (
+    WHEN_PRESETS.some((p) => p.value === params.when) ||
+    parseDay(params.from) !== null ||
+    parseDay(params.to) !== null
+  );
+}
+
+/**
  * The `which` parameter, resolved to a Prisma condition.
  *
  * Four shapes, because "project" isn't quite the whole question. A thread
@@ -206,7 +279,7 @@ export function filterLabel(
   return null;
 }
 
-const KEYS = ["who", "show", "which", "reply"] as const;
+const KEYS = ["who", "show", "which", "reply", "when", "from", "to"] as const;
 type Key = (typeof KEYS)[number];
 
 /**

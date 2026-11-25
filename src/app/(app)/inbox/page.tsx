@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { isAdmin, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { formatMedium } from "@/lib/dates";
+import { formatMedium, toISODate, today } from "@/lib/dates";
 import { googleConfigured } from "@/lib/google/auth";
 import { mailSyncFrom } from "@/lib/google/mail-sync";
 import {
@@ -9,14 +9,16 @@ import {
   attributeRows,
   filterLabel,
   filterOptions,
+  hasWhen,
   inboxHref,
   replyWhere,
+  whenRange,
   whichWhere,
   type ReplyFilter,
 } from "@/lib/inbox-filters";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { MailSyncButton } from "./MailSyncButton";
-import { ProjectFilter, ReplyFilterTabs } from "./InboxFilters";
+import { ProjectFilter, ReplyFilterTabs, TimeFilter } from "./InboxFilters";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +42,9 @@ export default async function InboxPage({
     show?: string;
     which?: string;
     reply?: string;
+    when?: string;
+    from?: string;
+    to?: string;
   }>;
 }) {
   const user = await requireUser();
@@ -54,13 +59,18 @@ export default async function InboxPage({
   // reply tabs are both built from this, so neither one hides choices the
   // other would have offered.
   //
+  // The timeframe is part of the scope too, so the counts beside each
+  // client and reply state are counts for the dates being looked at.
+  //
   // Nothing older than the mail start date. Threads from before it were
   // stored by earlier syncs; they're hidden, not deleted, so moving the date
   // back brings them back.
+  const floor = await mailSyncFrom();
+  const now = today();
   const scope = {
     ...(everyone ? {} : { userId: user.id }),
     status: (showDone ? "DONE" : "OPEN") as "DONE" | "OPEN",
-    lastMessageAt: { gte: await mailSyncFrom() },
+    lastMessageAt: whenRange(params, now, floor),
   };
 
   const current = {
@@ -68,6 +78,9 @@ export default async function InboxPage({
     show: params.show,
     which,
     reply: params.reply,
+    when: params.when,
+    from: params.from,
+    to: params.to,
   };
 
   if (!googleConfigured()) {
@@ -159,7 +172,7 @@ export default async function InboxPage({
     },
   });
 
-  const filtered = Boolean(which) || reply !== "all";
+  const filtered = Boolean(which) || reply !== "all" || hasWhen(params);
   const whichLabel = filterLabel(groups, which);
 
   return (
@@ -210,9 +223,23 @@ export default async function InboxPage({
       <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
         <ProjectFilter groups={groups} current={current} />
         <ReplyFilterTabs current={current} counts={replyCounts} />
+        <TimeFilter
+          // Remounted when the URL changes, so the dropdown follows Back.
+          key={`${params.when ?? ""}|${params.from ?? ""}|${params.to ?? ""}`}
+          current={current}
+          earliest={toISODate(floor)}
+          latest={toISODate(now)}
+          earliestLabel={formatMedium(floor)}
+        />
         {filtered ? (
           <Link
-            href={inboxHref(current, { which: null, reply: null })}
+            href={inboxHref(current, {
+              which: null,
+              reply: null,
+              when: null,
+              from: null,
+              to: null,
+            })}
             className="text-xs text-ink-500 underline decoration-ink-300 hover:text-ink-800"
           >
             Clear
@@ -238,7 +265,7 @@ export default async function InboxPage({
           }
           body={
             filtered
-              ? "No thread in this tab matches the client and reply state you picked. Clear the filters to see the rest."
+              ? "No thread in this tab matches the filters you picked. Clear them to see the rest."
               : showDone
                 ? "Threads you've replied to or marked done show up here."
                 : "No client email is waiting on a reply. Sync if you're expecting something — only mail from domains mapped to a client is pulled in."
