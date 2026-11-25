@@ -232,18 +232,17 @@ export default async function ProjectsPage({
   // across the tab, not just among the rows a filter left showing.
   const updatesOverdue = rows.filter((r) => r.due.state === "overdue").length;
   const updatesDue = rows.filter((r) => r.due.state === "due").length;
-  // Status updates are only chased on open work. A completed or archived
-  // project that never had one isn't owed one now, on any tab.
-  const isOpen = (r: { status: ProjectStatus }) =>
-    r.status === "ACTIVE" || r.status === "ON_HOLD";
-  const neverPosted = rows.filter((r) => r.health === null && isOpen(r)).length;
+  // Status updates are only chased on active work. A project on hold,
+  // completed or archived that never had one isn't owed one, on any tab.
+  const isActive = (r: { status: ProjectStatus }) => r.status === "ACTIVE";
+  const neverPosted = rows.filter((r) => r.health === null && isActive(r)).length;
 
   if (health === "owed")
     rows = rows.filter((r) => r.due.state === "overdue" || r.due.state === "due");
   else if (health === "missed") rows = rows.filter((r) => r.due.state === "overdue");
   else if (health === "due") rows = rows.filter((r) => r.due.state === "due");
   else if (health === "none")
-    rows = rows.filter((r) => r.health === null && isOpen(r));
+    rows = rows.filter((r) => r.health === null && isActive(r));
   else if (health === "attention")
     rows = rows.filter(
       (r) => r.health === "AT_RISK" || r.health === "OFF_TRACK",
@@ -719,11 +718,11 @@ export default async function ProjectsPage({
                       today={todayISO}
                       subtitleTone={
                         updateAlert(project.due, orgToday)?.tone ??
-                        (project.health === null && isOpen(project) ? "warn" : undefined)
+                        (project.health === null && isActive(project) ? "warn" : undefined)
                       }
                       subtitle={
                         updateAlert(project.due, orgToday)?.label ??
-                        (project.health === null && isOpen(project)
+                        (project.health === null && isActive(project)
                           ? "Never posted an update"
                           : [
                               project.healthDate
