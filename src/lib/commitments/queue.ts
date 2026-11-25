@@ -78,6 +78,20 @@ const ACTION_WORDS = new Set([
   "follow", "confirm", "schedule", "book", "new", "revis", "final", "team",
 ]);
 
+/** The words naming the deliverable - content words, less the verbs every title has. */
+function thingWords(text: string): Set<string> {
+  return new Set([...contentWords(text)].filter((w) => !ACTION_WORDS.has(w)));
+}
+
+/** One title is the other said more fully: "Book the training" / "Book Northwind's admin training". */
+function narrows(a: string, b: string): boolean {
+  const x = thingWords(a);
+  const y = thingWords(b);
+  if (x.size === 0 || y.size === 0) return false;
+  const [small, big] = x.size <= y.size ? [x, y] : [y, x];
+  return [...small].every((w) => big.has(w));
+}
+
 function compare(a: string, b: string): { shared: number; things: number; overlap: number } {
   const x = contentWords(a);
   const y = contentWords(b);
@@ -116,7 +130,11 @@ export function sameUndertaking(
   const titles = compare(a.title, b.title);
   if (titles.overlap >= 0.8) return true;
   if (a.quote && b.quote && compare(a.quote, b.quote).overlap >= 0.6) {
-    return titles.things >= 2 && titles.overlap >= 0.25;
+    // Same sentence: the same thing if the titles share two words about it,
+    // or one title is just the other said more fully. Two deliverables from
+    // one sentence ("the sequences ... and the recommendations") share
+    // neither.
+    return (titles.things >= 2 && titles.overlap >= 0.25) || narrows(a.title, b.title);
   }
   return false;
 }
