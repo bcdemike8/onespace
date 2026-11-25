@@ -2,17 +2,14 @@
 
 import Link from "next/link";
 import { useActionState, useState } from "react";
-import {
-  acceptMeetingAction,
-  dismissMeetingAction,
-  markMeetingsLoggedAction,
-} from "@/app/actions/google";
+import { acceptMeetingAction, dismissMeetingAction } from "@/app/actions/google";
 import { ComboBox } from "@/components/ComboBox";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ErrorNote } from "@/components/ui";
 import { Commitments, type CommitmentRow } from "./Commitments";
 import type { SummaryDoc } from "@/lib/summary";
 import { SummaryPeek } from "./SummaryPeek";
+import { AlreadyLoggedButton, RemoveButton } from "./MeetingButtons";
 
 export interface ProjectOption {
   id: string;
@@ -303,6 +300,7 @@ export function MeetingCard({
       >
         <AlreadyLoggedButton id={meeting.id} />
         <DismissButton id={meeting.id} />
+        <RemoveButton id={meeting.id} />
       </div>
 
       {hideHeader ? null : (
@@ -333,42 +331,6 @@ function DismissButton({ id }: { id: string }) {
       <SubmitButton pendingLabel="…" className="btn-ghost btn-sm">
         Not billable work
       </SubmitButton>
-    </form>
-  );
-}
-
-/**
- * The time is on the timesheet already, entered by hand: take the call off
- * the list as logged, without booking the hour a second time.
- */
-export function AlreadyLoggedButton({
-  id,
-  className = "btn-ghost btn-sm",
-  onDone,
-}: {
-  id: string;
-  className?: string;
-  onDone?: () => void;
-}) {
-  const [state, action] = useActionState(
-    async (prev: { error?: string }, formData: FormData) => {
-      const result = await markMeetingsLoggedAction(prev, formData);
-      if (!result.error) onDone?.();
-      return result;
-    },
-    {} as { error?: string },
-  );
-  return (
-    <form action={action}>
-      <input type="hidden" name="id" value={id} />
-      <SubmitButton
-        pendingLabel="…"
-        className={className}
-        title="You've already put this time on the timesheet yourself. Clears it as logged, without adding the time again."
-      >
-        Already logged
-      </SubmitButton>
-      <ErrorNote message={state?.error} />
     </form>
   );
 }

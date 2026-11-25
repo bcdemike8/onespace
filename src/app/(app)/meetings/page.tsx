@@ -28,6 +28,7 @@ import { UnmappedDomains } from "./UnmappedDomains";
 import { ClearBacklog } from "./ClearBacklog";
 import { AllMeetings, type AllMeetingRow, type MeetingWeek } from "./AllMeetings";
 import { timesheetOnDay } from "@/lib/timesheet-on-day";
+import { meetingsFromBound, meetingsFromDay, onOrAfterStart } from "@/lib/meetings-start";
 
 export const dynamic = "force-dynamic";
 
@@ -53,7 +54,7 @@ function durationValue(minutes: number): string {
 export default async function MeetingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ who?: string; range?: string; weeks?: string }>;
+  searchParams: Promise<{ who?: string; range?: string; weeks?: string; removed?: string }>;
 }) {
   const user = await requireUser();
   const admin = isAdmin(user);
@@ -65,17 +66,26 @@ export default async function MeetingsPage({
   const range = RANGES.find((r) => r.value === params.range) ?? RANGES[0];
   const rangeFrom =
     range.days === null ? null : new Date(Date.now() - range.days * 86_400_000);
+  // Nothing before the tab's start date (1 November) is listed, counted or
+  // offered to clear. A day early for the query; each list then checks the
+  // day in the org's zone.
+  const startBound = meetingsFromBound();
+  const startDay = meetingsFromDay();
+  const fromBound = rangeFrom && rangeFrom > startBound ? rangeFrom : startBound;
   // All is a different page in all but name: not the to-do list but the
   // record of every call, week by week, logged or not. It reads back a few
   // weeks at a time, because a year of seven people's calendars is not a
   // list anybody scrolls.
   const isAll = range.days === null;
   const weeksShown = Math.min(Math.max(Number(params.weeks) || 8, 1), 104);
-  const hrefFor = (next: { who?: boolean; range?: string }) => {
+  // Removed meetings - blocks, appointments - are out of All unless asked for.
+  const showRemoved = isAll && params.removed === "1";
+  const hrefFor = (next: { who?: boolean; range?: string; removed?: boolean }) => {
     const q = new URLSearchParams();
     if (next.who ?? everyone) q.set("who", "all");
     const r = next.range ?? range.value;
     if (r !== RANGES[0].value) q.set("range", r);
+    if (r === "all" && (next.removed ?? showRemoved)) q.set("removed", "1");
     const qs = q.toString();
     return qs ? `/meetings?${qs}` : "/meetings";
   };
@@ -86,7 +96,11 @@ export default async function MeetingsPage({
     calendarWindowLabel(),
     recentLabel(),
   ]);
-  const allFromDay = addDays(weekStart(today(zone)), -7 * (weeksShown - 1));
+  // Never further back than the week the start date falls in.
+  const requestedFrom = addDays(weekStart(today(zone)), -7 * (weeksShown - 1));
+  const allFromDay =
+    requestedFrom < weekStart(startDay) ? weekStart(startDay) : requestedFrom;
+  const notRemoved = { OR: [{ setAside: null }, { setAside: { not: "REMOVED" as const } }] };
 
   const [
     pending,
@@ -100,6 +114,7 @@ export default async function MeetingsPage({
     skippedTotal,
     upcoming,
     waiting,
+    removedCount,
   ] = await Promise.all([
     // Only calls that have happened. The sync reads a fortnight ahead, and
     // now that calendar blocks and internal meetings come in too, the
@@ -109,7 +124,7 @@ export default async function MeetingsPage({
       where: {
         status: "PENDING",
         ...(everyone ? {} : { userId: user.id }),
-        startsAt: { ...(rangeFrom ? { gte: rangeFrom } : {}), lte: new Date() },
+        startsAt: { gte: fromBound, lte: new Date() },
       },
       orderBy: [{ startsAt: "desc" }],
       take: isAll ? 0 : 200,
@@ -150,7 +165,11 @@ export default async function MeetingsPage({
       },
     }),
     db.meeting.findMany({
-      where: { status: "ACCEPTED", ...(everyone ? {} : { userId: user.id }) },
+      where: {
+        status: "ACCEPTED",
+        startsAt: { gte: startBound },
+        ...(everyone ? {} : { userId: user.id }),
+      },
       orderBy: [{ updatedAt: "desc" }],
       take: 10,
       select: {
@@ -168,6 +187,7 @@ export default async function MeetingsPage({
       where: {
         ...(everyone ? {} : { userId: user.id }),
         startsAt: { gte: addDays(allFromDay, -1), lte: new Date() },
+        ...(showRemoved ? {} : notRemoved),
       },
       orderBy: [{ startsAt: "desc" }],
       take: isAll ? 5000 : 0,
@@ -180,6 +200,7 @@ export default async function MeetingsPage({
         actualMinutes: true,
         status: true,
         loggedByHand: true,
+        setAside: true,
         suggestedProjectId: true,
         project: { select: { name: true } },
         timeEntry: {
@@ -193,7 +214,8 @@ export default async function MeetingsPage({
     db.meeting.count({
       where: {
         ...(everyone ? {} : { userId: user.id }),
-        startsAt: { lt: addDays(allFromDay, -1) },
+        startsAt: { lt: addDays(allFromDay, -1), gte: startBound },
+        ...(showRemoved ? {} : notRemoved),
       },
     }),
     db.project.findMany({
@@ -250,12 +272,20 @@ export default async function MeetingsPage({
     db.meeting.findMany({
       where: {
         status: "PENDING",
-        startsAt: { lte: new Date() },
+        startsAt: { lte: new Date(), gte: startBound },
         ...(everyone ? {} : { userId: user.id }),
       },
       select: { startsAt: true, user: { select: { name: true } } },
     }),
+    db.meeting.count({
+      where: {
+        setAside: "REMOVED",
+        startsAt: { gte: startBound },
+        ...(everyone ? {} : { userId: user.id }),
+      },
+    }),
   ]);
+  const waitingFromStart = waiting.filter((m) => onOrAfterStart(m.startsAt, zone));
 
   const options: ProjectOption[] = projects.map((p) => ({
     id: p.id,
@@ -278,7 +308,9 @@ export default async function MeetingsPage({
     zone,
   );
 
-  const rows: MeetingRow[] = pending.map((m) => {
+  const rows: MeetingRow[] = pending
+    .filter((m) => onOrAfterStart(m.startsAt, zone))
+    .map((m) => {
     const day = dayInZone(m.startsAt, zone);
     const attendees = Array.isArray(m.attendees)
       ? (m.attendees as Attendee[]).map((a) => ({
@@ -315,12 +347,16 @@ export default async function MeetingsPage({
       commitments: m.commitments,
       timesheetNote: handLogged(m.userId, m.startsAt),
     };
-  });
+    });
 
   const weekGroups = new Map<string, MeetingWeek>();
+  // The timesheet line goes on the first open call of each person's day,
+  // not under every one: on a seven-meeting day it was the same line seven
+  // times.
+  const notedDays = new Set<string>();
   for (const m of history) {
     const day = dayInZone(m.startsAt, zone);
-    if (day < allFromDay) continue;
+    if (day < allFromDay || day < startDay) continue;
     const monday = weekStart(day);
     const key = toISODate(monday);
     let week = weekGroups.get(key);
@@ -340,7 +376,14 @@ export default async function MeetingsPage({
       minutes: entry?.minutes ?? m.actualMinutes ?? m.minutes,
       status: m.status,
       loggedByHand: m.loggedByHand,
-      timesheetNote: m.status === "ACCEPTED" ? null : handLogged(m.userId, m.startsAt),
+      setAside: m.setAside,
+      timesheetNote: (() => {
+        if (m.status === "ACCEPTED" || m.setAside === "REMOVED") return null;
+        const k = `${m.userId}|${toISODate(day)}`;
+        if (notedDays.has(k)) return null;
+        notedDays.add(k);
+        return handLogged(m.userId, m.startsAt);
+      })(),
       projectName:
         entry?.project.name ??
         m.project?.name ??
@@ -353,27 +396,31 @@ export default async function MeetingsPage({
     week.rows.push(row);
   }
   const weeks = [...weekGroups.values()];
+  // From the rows actually shown, so the header adds up to the weeks below.
+  const shown = weeks.flatMap((w) => w.rows);
   const allCounts = {
-    logged: history.filter((m) => m.status === "ACCEPTED").length,
-    notBillable: history.filter((m) => m.status === "DISMISSED").length,
-    waiting: history.filter((m) => m.status === "PENDING").length,
+    logged: shown.filter((r) => r.status === "ACCEPTED").length,
+    notBillable: shown.filter((r) => r.status === "DISMISSED" && r.setAside === null).length,
+    cleared: shown.filter((r) => r.setAside === "BACKLOG").length,
+    waiting: shown.filter((r) => r.status === "PENDING").length,
   };
   const moreHref =
     earlier > 0
       ? `${hrefFor({ range: "all" })}&weeks=${weeksShown + 8}`
       : null;
+  const removedHref = hrefFor({ range: "all", removed: !showRemoved });
 
 
   // The backlog control only shows when something of yours is older than the
   // fortnight My Work counts; anything newer is still live work.
   const backlogFrom = toISODate(addDays(today(zone), -14));
-  const waitingDays = waiting.map((m) => ({
+  const waitingDays = waitingFromStart.map((m) => ({
     day: toISODate(dayInZone(m.startsAt, zone)),
     person: m.user.name,
   }));
   const hasBacklog = waitingDays.some((d) => d.day < backlogFrom);
   const olderWaiting = rangeFrom
-    ? waiting.filter((m) => m.startsAt < rangeFrom).length
+    ? waitingFromStart.filter((m) => m.startsAt < rangeFrom).length
     : 0;
   // Everyone but an admin now gets their internal meetings too, so the count
   // jumped. Saying how many have no client behind them makes that legible
@@ -404,9 +451,9 @@ export default async function MeetingsPage({
         title="Meetings"
         subtitle={
           isAll
-            ? `Every meeting, week by week · ${allCounts.logged} logged · ${allCounts.notBillable} not billable${
-                allCounts.waiting > 0 ? ` · ${allCounts.waiting} not logged yet` : ""
-              }`
+            ? `Every meeting since ${formatMedium(startDay)}, week by week · ${allCounts.logged} logged · ${allCounts.notBillable} not billable${
+                allCounts.cleared > 0 ? ` · ${allCounts.cleared} cleared` : ""
+              }${allCounts.waiting > 0 ? ` · ${allCounts.waiting} not logged yet` : ""}`
             : rows.length === 0
             ? "Your calendar, waiting to become time entries."
             : `${rows.length} meeting${rows.length === 1 ? "" : "s"} to deal with${
@@ -510,7 +557,13 @@ export default async function MeetingsPage({
       />
 
       {isAll ? (
-        <AllMeetings weeks={weeks} moreHref={moreHref} />
+        <AllMeetings
+          weeks={weeks}
+          moreHref={moreHref}
+          removedCount={removedCount}
+          showingRemoved={showRemoved}
+          removedHref={removedHref}
+        />
       ) : rows.length === 0 ? (
         <EmptyState
           title="Nothing waiting"
@@ -605,7 +658,8 @@ export default async function MeetingsPage({
           <Link href={hrefFor({ range: "all" })} className="underline">
             All
           </Link>
-          , week by week, where you can change either.
+          , week by week, where you can change either. The tab starts on{" "}
+          {formatMedium(startDay)}; earlier calls aren&apos;t shown.
         </p>
       ) : null}
 

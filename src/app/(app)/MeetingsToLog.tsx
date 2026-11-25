@@ -6,7 +6,7 @@ import { dismissMeetingAction, dismissMeetingsAction } from "@/app/actions/googl
 import { SubmitButton } from "@/components/SubmitButton";
 import { ErrorNote } from "@/components/ui";
 import { CappedList } from "@/components/CappedList";
-import { AlreadyLoggedButton } from "./meetings/MeetingCard";
+import { AlreadyLoggedButton } from "./meetings/MeetingButtons";
 
 type State = { error?: string; ok?: boolean; message?: string };
 

@@ -149,7 +149,7 @@ async function deleteEntry(id: string) {
   await db.$transaction([
     db.meeting.updateMany({
       where: { timeEntryId: id },
-      data: { status: "PENDING", timeEntryId: null, loggedByHand: false },
+      data: { status: "PENDING", timeEntryId: null, loggedByHand: false, setAside: null },
     }),
     db.timeEntry.delete({ where: { id } }),
   ]);

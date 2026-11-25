@@ -62,7 +62,7 @@ export function ClearBacklog({
             if (
               count === 0 ||
               !window.confirm(
-                `Set aside ${count} meeting${count === 1 ? "" : "s"} from before ${before}?${who}`,
+                `Clear ${count} meeting${count === 1 ? "" : "s"} from before ${before}?${who}`,
               )
             ) {
               e.preventDefault();
@@ -71,7 +71,7 @@ export function ClearBacklog({
           className="flex flex-wrap items-center gap-2"
         >
           <input type="hidden" name="scope" value={everyone ? "all" : "me"} />
-          <span>Clear the backlog: set aside {whose} from before</span>
+          <span>Clear the backlog: {whose} from before</span>
           <input
             type="date"
             name="before"
@@ -80,18 +80,19 @@ export function ClearBacklog({
             className="input w-auto py-1 text-sm"
             required
           />
-          <SubmitButton pendingLabel="Setting aside…" className="btn-secondary btn-sm">
+          <SubmitButton pendingLabel="Clearing…" className="btn-secondary btn-sm">
             {count === 0
               ? "Nothing before then"
-              : `Set aside ${count} meeting${count === 1 ? "" : "s"}`}
+              : `Clear ${count} meeting${count === 1 ? "" : "s"}`}
           </SubmitButton>
           {everyone && count > 0 ? (
             <span className="w-full text-xs text-ink-600">{breakdown}</span>
           ) : null}
           <span className="w-full text-xs text-ink-500">
-            Nothing is deleted. They show as Not billable under All
-            {everyone ? " on each person's Meetings tab" : ""}, and any of them
-            can still be logged with &ldquo;Log it after all&rdquo;.
+            Nothing is deleted. They show as Cleared under All
+            {everyone ? " on each person's Meetings tab" : ""} - kept apart from
+            calls someone marked Not billable - and any of them can still be
+            marked Already logged or logged with &ldquo;Log it after all&rdquo;.
           </span>
         </form>
       ) : null}
