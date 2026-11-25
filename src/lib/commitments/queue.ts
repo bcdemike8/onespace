@@ -51,30 +51,59 @@ function contentWords(text: string): Set<string> {
   return new Set(normalTask(text).split(" ").filter((w) => w.length > 1 && !STOP.has(w)));
 }
 
-function overlap(a: string, b: string): number {
+function compare(a: string, b: string): { shared: number; overlap: number } {
   const x = contentWords(a);
   const y = contentWords(b);
-  if (x.size === 0 || y.size === 0) return 0;
+  if (x.size === 0 || y.size === 0) return { shared: 0, overlap: 0 };
   let shared = 0;
   for (const w of x) if (y.has(w)) shared += 1;
-  return shared / (x.size + y.size - shared);
+  return { shared, overlap: shared / (x.size + y.size - shared) };
 }
 
 /**
- * Is this the same undertaking as one somebody already ruled on?
+ * Is this the same undertaking as another?
  *
- * Asked when a call is read again. Claude rarely words a title the same way
- * twice, so exact matching let dismissed items come back reworded. The quote
- * is the steadier signal - it's the sentence as said - so either the quotes
- * or the titles being mostly the same words is enough.
+ * Asked when a source is read again (so a dismissed item doesn't come back
+ * reworded), when My work shows a row (so one promise said twice is one
+ * row), and against what the person already added or dismissed.
+ *
+ * Same when the titles are the same, or nearly all the same words. Or when
+ * the quotes are mostly the same words AND the titles share at least two -
+ * one sentence can hold two promises ("I'll send the deck and book the
+ * training"), and the shared quote alone mustn't make them one.
  */
 export function sameUndertaking(
   a: { title: string; quote?: string | null },
   b: { title: string; quote?: string | null },
 ): boolean {
   if (normalTask(a.title) === normalTask(b.title)) return true;
-  if (a.quote && b.quote && overlap(a.quote, b.quote) >= 0.6) return true;
-  return overlap(a.title, b.title) >= 0.6;
+  const titles = compare(a.title, b.title);
+  if (titles.overlap >= 0.8) return true;
+  if (a.quote && b.quote && compare(a.quote, b.quote).overlap >= 0.6) {
+    return titles.shared >= 2;
+  }
+  return false;
+}
+
+/**
+ * The records, less anything this person already added or dismissed.
+ *
+ * Per source that's handled when it's read. This catches the same promise
+ * arriving from somewhere else - said on Tuesday's call, added as a task,
+ * then written again in Wednesday's recap.
+ */
+export function withoutDecided<T extends { title: string; quote: string; projectId: string | null }>(
+  records: T[],
+  decided: { title: string; quote: string; projectId: string | null }[],
+): T[] {
+  return records.filter(
+    (r) =>
+      !decided.some(
+        (d) =>
+          (d.projectId === null || r.projectId === null || d.projectId === r.projectId) &&
+          sameUndertaking(r, d),
+      ),
+  );
 }
 
 // ------------------------------------------------------------ grouping
@@ -98,10 +127,6 @@ export interface QueueRecord {
   originHref: string | null;
   /** The project the call or thread is filed against, or suggested for. */
   projectId: string | null;
-  /** A name was given that matched nobody - the host is holding it. */
-  ownerUnrecognised: boolean;
-  /** The name as given, shown when it couldn't be matched. */
-  speaker: string | null;
 }
 
 /** One row on screen - possibly several stored items said more than once. */
@@ -120,8 +145,6 @@ export interface QueueItem {
   /** How many calls or threads it came up on. */
   calls: number;
   projectId: string | null;
-  ownerUnrecognised: boolean;
-  speaker: string | null;
 }
 
 export interface QueueGroup {
@@ -160,7 +183,7 @@ export function groupQueue(
   });
 
   const groups = new Map<string, QueueGroup>();
-  const rows = new Map<string, { item: QueueItem; origins: Set<string> }>();
+  const rows = new Map<string, { item: QueueItem; origins: Set<string> }[]>();
 
   for (const r of sorted) {
     const info = r.projectId ? projects.get(r.projectId) : undefined;
@@ -179,14 +202,16 @@ export function groupQueue(
       groups.set(key, group);
     }
 
-    const rowKey = `${key}|${normalTask(r.title)}`;
-    const existing = rows.get(rowKey);
+    // One promise said twice - on two calls, or a call and its recap - is
+    // one row, if it's recognisably the same undertaking.
+    const inGroup = rows.get(key) ?? [];
+    const existing = inGroup.find((row) =>
+      sameUndertaking({ title: r.title, quote: r.quote }, { title: row.item.title, quote: row.item.quote }),
+    );
     if (existing) {
       existing.item.ids.push(r.id);
       existing.origins.add(r.originKey);
       existing.item.calls = existing.origins.size;
-      // Held by the host only while every copy is unplaced.
-      existing.item.ownerUnrecognised &&= r.ownerUnrecognised;
       continue;
     }
 
@@ -202,10 +227,9 @@ export function groupQueue(
       originHref: r.originHref,
       calls: 1,
       projectId,
-      ownerUnrecognised: r.ownerUnrecognised,
-      speaker: r.speaker,
     };
-    rows.set(rowKey, { item, origins: new Set([r.originKey]) });
+    inGroup.push({ item, origins: new Set([r.originKey]) });
+    rows.set(key, inGroup);
     group.items.push(item);
   }
 

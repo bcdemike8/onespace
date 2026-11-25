@@ -26,7 +26,7 @@ import { LogTimeForm, type LoggableProject } from "@/components/LogTimeForm";
 import { TaskListItem, type TaskListItemData } from "@/components/TaskListItem";
 import { deleteTimeEntryAction } from "@/app/actions/time";
 import { queueSince } from "@/lib/recency";
-import { groupQueue, type QueueRecord } from "@/lib/commitments/queue";
+import { groupQueue, withoutDecided, type QueueRecord } from "@/lib/commitments/queue";
 import { DayQueue } from "./DayQueue";
 
 export const dynamic = "force-dynamic";
@@ -88,7 +88,7 @@ export default async function MyWorkPage() {
     pendingCommitments,
     awaitingReply,
     meetingsToLog,
-    people,
+    decidedCommitments,
   ] = await Promise.all([
       db.task.findMany({
         where: { assigneeId: user.id, status: { not: "DONE" } },
@@ -160,9 +160,10 @@ export default async function MyWorkPage() {
         orderBy: [{ dueDate: "asc" }, { name: "asc" }],
       }),
       // What this person undertook, on any call or in any recap, and hasn't
-      // said yes or no to yet. Theirs because they're its owner - whoever
-      // hosted the call - or, for items with no owner on record, because
-      // it's their call or their thread.
+      // said yes or no to yet. Theirs only because they're its recorded
+      // owner - whoever hosted the call or whose mailbox it was in. An item
+      // whose owner couldn't be established is on nobody's list: it stays
+      // on the call's own page, for whoever reads it to decide.
       //
       // Filtered on when it was SAID, not on when the row was written. Those
       // are the same thing day to day and wildly different after a re-read,
@@ -177,13 +178,7 @@ export default async function MyWorkPage() {
                 { mailMessage: { sentAt: { gte: said } } },
               ],
             },
-            {
-              OR: [
-                { ownerId: user.id },
-                { ownerId: null, meeting: { userId: user.id } },
-                { ownerId: null, mailMessage: { thread: { userId: user.id } } },
-              ],
-            },
+            { ownerId: user.id },
           ],
         },
         orderBy: [{ dueDate: "asc" }, { createdAt: "desc" }],
@@ -199,7 +194,6 @@ export default async function MyWorkPage() {
           source: true,
           dueDate: true,
           dueStated: true,
-          ownerUnrecognised: true,
           meeting: {
             select: {
               id: true,
@@ -236,11 +230,21 @@ export default async function MyWorkPage() {
       db.meeting.count({
         where: { userId: user.id, status: "PENDING", startsAt: { lte: new Date() } },
       }),
-      // Who an item can be handed to, when its owner couldn't be placed.
-      db.user.findMany({
-        where: { isActive: true },
-        select: { id: true, name: true },
-        orderBy: { name: "asc" },
+      // What this person already added or dismissed lately, so the same
+      // promise arriving again from another call or recap isn't offered twice.
+      db.commitment.findMany({
+        where: {
+          ownerId: user.id,
+          status: { in: ["ACCEPTED", "DISMISSED"] },
+          createdAt: { gte: addDays(now, -30) },
+        },
+        select: {
+          suggestedTask: true,
+          text: true,
+          meeting: { select: { projectId: true, suggestedProjectId: true } },
+          mailMessage: { select: { thread: { select: { projectId: true } } } },
+        },
+        take: 500,
       }),
     ]);
 
@@ -296,7 +300,9 @@ export default async function MyWorkPage() {
         quote: c.text,
         detail: c.detail,
         source: c.source,
-        dueDate: c.dueDate,
+        // A date only if one was actually given. Older items carry a
+        // calculated three-working-day date; it isn't shown as if promised.
+        dueDate: c.dueStated ? c.dueDate : null,
         dueStated: c.dueStated,
         saidAt,
         originKey: meeting ? `m:${meeting.id}` : `t:${mail!.thread.id}`,
@@ -309,14 +315,22 @@ export default async function MyWorkPage() {
         projectId: meeting
           ? (meeting.projectId ?? meeting.suggestedProjectId)
           : mail!.thread.projectId,
-        ownerUnrecognised: c.ownerUnrecognised,
-        speaker: c.speaker,
       },
     ];
   });
 
+  const decided = decidedCommitments.map((d) => ({
+    title: d.suggestedTask,
+    quote: d.text,
+    projectId:
+      d.meeting?.projectId ??
+      d.meeting?.suggestedProjectId ??
+      d.mailMessage?.thread.projectId ??
+      null,
+  }));
+
   const queueGroups = groupQueue(
-    queueRecords,
+    withoutDecided(queueRecords, decided),
     new Map(
       projects.map((p) => [p.id, { name: p.name, clientName: p.client?.name ?? null }]),
     ),
@@ -373,12 +387,7 @@ export default async function MyWorkPage() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">
-          <DayQueue
-            groups={queueGroups}
-            projects={queueProjects}
-            people={people}
-            viewerId={user.id}
-          />
+          <DayQueue groups={queueGroups} projects={queueProjects} />
 
           {awaitingReply.length > 0 ? (
             <section className="mb-6">

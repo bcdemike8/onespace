@@ -5,16 +5,15 @@ import { findThreadIds, getThread, type GmailMessage } from "@/lib/google/gmail"
 import { GoogleApiError, GoogleAuthError, googleConfigured } from "@/lib/google/auth";
 import { buildWeights, matchMeeting, type MatchCandidate } from "@/lib/google/match";
 import { looksLikeRecap, ownWords } from "@/lib/mail/recap";
+import { buildNameIndex, type NameIndex } from "@/lib/commitments/owner";
 import {
-  buildNameIndex,
-  ourActionItems,
-  type NameIndex,
-  type Ownership,
-} from "@/lib/commitments/owner";
+  promisedDate,
+  recapSender,
+  vetActionItems,
+  type Person,
+} from "@/lib/commitments/pipeline";
 import { sameUndertaking } from "@/lib/commitments/queue";
-import { aiConfigured, readRecap, type AiActionItem } from "@/lib/ai/summarise";
-import { dueFor } from "@/lib/when";
-import { backfillDueDates } from "@/lib/commitments/backfill";
+import { aiConfigured, readRecap } from "@/lib/ai/summarise";
 
 export const MAIL_FROM_KEY = "google.mailFrom";
 export const DEFAULT_MAIL_FROM = "2026-08-01";
@@ -109,20 +108,19 @@ export async function syncMail(options?: {
   });
   if (domainRows.length === 0) return outcome;
 
-  // Commitments found before dates existed have none. Once per sync, not
-  // once per thread, and cheap enough to leave running.
-  await backfillDueDates();
 
   const clientByDomain = new Map(domainRows.map((d) => [d.domain, d.clientId]));
   // Who a recap's "Marcus will build the dashboard" means. Once per sync.
   const ours = await db.user.findMany({
     where: { isActive: true },
-    select: { id: true, name: true },
+    select: { id: true, name: true, email: true },
     orderBy: { name: "asc" },
   });
   const team: RecapTeam = {
     index: buildNameIndex(ours),
     names: ours.map((u) => u.name),
+    people: ours.map((u) => ({ id: u.id, name: u.name })),
+    byEmail: new Map(ours.map((u) => [u.email.toLowerCase(), u])),
     // Claude takes seconds per recap. A sync runs inside one web request,
     // so it reads what fits and leaves the rest for the next sync.
     reads: RECAP_READS_PER_SYNC,
@@ -310,6 +308,9 @@ export async function syncMail(options?: {
 interface RecapTeam {
   index: NameIndex;
   names: string[];
+  people: Person[];
+  /** Active OneSpace people by email - how a message's sender is known. */
+  byEmail: Map<string, { id: string; name: string }>;
   reads: number;
   until: number;
 }
@@ -341,10 +342,11 @@ async function readRecaps(
       id: true,
       sentAt: true,
       body: true,
+      fromEmail: true,
       thread: {
         select: {
           subject: true,
-          user: { select: { name: true } },
+          userId: true,
           client: { select: { name: true } },
         },
       },
@@ -356,44 +358,76 @@ async function readRecaps(
   let recaps = 0;
   let items = 0;
 
+  const markRead = (id: string) =>
+    db.mailMessage.update({ where: { id }, data: { recapReadAt: new Date() } });
+
   for (const message of unread) {
-    const isRecap = looksLikeRecap(message.thread.subject, message.body);
-
-    let found: (AiActionItem & Ownership)[] = [];
-
-    if (isRecap && aiConfigured()) {
-      const left = team.until - Date.now();
-      if (team.reads <= 0 || left < 10_000) continue; // next sync
-      team.reads -= 1;
-      let read;
-      try {
-        read = await readRecap(
-          ownWords(message.body).join("\n"),
-          {
-            subject: message.thread.subject,
-            sentAt: message.sentAt,
-            sender: message.thread.user.name,
-            client: message.thread.client?.name ?? null,
-            team: team.names,
-          },
-          Math.min(RECAP_READ_MS, left),
-        );
-      } catch (e) {
-        console.error("Couldn't read a recap with Claude:", e);
-        continue; // left unread - tried again next sync
-      }
-      found = ourActionItems(read.items ?? [], team.index);
+    // Marked read whether or not it was a recap: a message that isn't one
+    // now never will be, and re-testing every message on every sync is work
+    // that grows with the mailbox.
+    if (!looksLikeRecap(message.thread.subject, message.body)) {
+      await markRead(message.id);
+      continue;
     }
 
+    // Whose words these are: the person who actually sent this message,
+    // not whoever's mailbox it was found in. A colleague's recap that you
+    // were copied on is theirs. And it's read once, from the sender's own
+    // mailbox - the copy in yours is passed over, or the same email would be
+    // read twice and its items offered twice.
+    const sender = recapSender(message.fromEmail, message.thread.userId, team.byEmail);
+    if (!sender) {
+      await markRead(message.id);
+      continue;
+    }
+
+    // Not connected, or this sync's reading time is spent: left unread, so
+    // the next sync reads it. Never marked read without having been read.
+    if (!aiConfigured()) continue;
+    const left = team.until - Date.now();
+    if (team.reads <= 0 || left < 10_000) continue;
+    team.reads -= 1;
+
+    const text = ownWords(message.body).join("\n");
+    let read;
+    try {
+      read = await readRecap(
+        text,
+        {
+          subject: message.thread.subject,
+          sentAt: message.sentAt,
+          sender: sender.name,
+          client: message.thread.client?.name ?? null,
+          team: team.names,
+        },
+        Math.min(RECAP_READ_MS, left),
+      );
+    } catch (e) {
+      // An API error or a timeout: left unread, tried again next sync.
+      console.error("Couldn't read a recap with Claude:", e);
+      continue;
+    }
+    if (read.items === null) {
+      // An answer that didn't parse is tried again; one Claude declined, or
+      // cut off for length, would only come back the same way.
+      if (!read.retry) await markRead(message.id);
+      continue;
+    }
+
+    // The same checks as a call. In an email the owner has to be the sender
+    // or named in it, and anything whose owner can't be established is
+    // dropped: an email has no page of its own to hold it for someone.
+    const vetted = vetActionItems(read.items, team.index, team.people, {
+      text,
+      presentIds: new Set([sender.id]),
+    });
+
     await db.$transaction(async (tx) => {
-      // Marked whether or not it was a recap: a message that isn't one now
-      // never will be, and re-testing every message on every sync is work
-      // that grows with the mailbox.
       await tx.mailMessage.update({
         where: { id: message.id },
         data: { recapReadAt: new Date() },
       });
-      if (found.length === 0) return;
+      if (vetted.owned.length === 0) return;
 
       // A message read again keeps what somebody already decided about it:
       // nothing already a task or dismissed comes back, reworded or not.
@@ -401,7 +435,7 @@ async function readRecaps(
         where: { mailMessageId: message.id, status: { in: ["ACCEPTED", "DISMISSED"] } },
         select: { suggestedTask: true, text: true },
       });
-      const fresh = found.filter(
+      const fresh = vetted.owned.filter(
         (item) =>
           !decided.some((d) =>
             sameUndertaking(
@@ -414,27 +448,27 @@ async function readRecaps(
 
       await tx.commitment.createMany({
         data: fresh.map((item) => {
-          // Anchored to the day the recap went out, so "by Friday" in a
-          // mail from last week means that Friday.
-          const due = dueFor(item.when ?? item.quote, message.sentAt);
+          // Only a deadline that was actually written, read against the day
+          // the recap went out. None written, none stored.
+          const due = promisedDate(item.when, message.sentAt);
           return {
             mailMessageId: message.id,
             source: "RECAP_EMAIL" as const,
-            text: item.quote || item.task,
+            text: item.quote,
             speaker: item.owner,
             suggestedTask: item.title.slice(0, 200),
             detail: item.task,
             ownerId: item.ownerId,
-            ownerUnrecognised: item.ownerUnrecognised,
-            dueDate: due.date,
-            dueStated: due.stated,
+            ownerUnrecognised: false,
+            dueDate: due,
+            dueStated: due !== null,
           };
         }),
       });
       items += fresh.length;
     });
 
-    if (isRecap) recaps += 1;
+    recaps += 1;
   }
 
   return { recaps, items };

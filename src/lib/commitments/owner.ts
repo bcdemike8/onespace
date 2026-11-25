@@ -48,7 +48,7 @@ export function buildNameIndex(people: NamedPerson[]): NameIndex {
   // Full name and first-plus-last. Shared by two people means nobody.
   const byFull = new Map<string, string | null>();
   // First name alone - "Marcus", "Marcus C" - only ever as a last resort.
-  const byFirst = new Map<string, { id: string; last: string } | null>();
+  const byFirst = new Map<string, { id: string; last: string }[]>();
 
   for (const p of people) {
     for (const key of fullKeys(p.name)) {
@@ -58,7 +58,7 @@ export function buildNameIndex(people: NamedPerson[]): NameIndex {
     if (parts.length === 0) continue;
     const first = parts[0];
     const last = parts.length > 1 ? parts[parts.length - 1] : "";
-    byFirst.set(first, byFirst.has(first) ? null : { id: p.id, last });
+    byFirst.set(first, [...(byFirst.get(first) ?? []), { id: p.id, last }]);
   }
 
   return {
@@ -70,55 +70,18 @@ export function buildNameIndex(people: NamedPerson[]): NameIndex {
 
       const parts = clean(name).split(" ").filter(Boolean);
       if (parts.length === 0) return undefined;
-      const hit = byFirst.get(parts[0]);
-      if (hit === undefined) return undefined;
-      if (hit === null) return null;
+      const hits = byFirst.get(parts[0]) ?? [];
+      if (hits.length === 0) return undefined;
 
-      // "Marcus" on its own, or "Marcus C" / "Marcus Call" where what
-      // follows is the start of their surname. "Marcus Brown" is somebody
-      // else who happens to share a first name with one of ours.
-      if (parts.length === 1) return hit.id;
+      // "Marcus" on its own: ours if only one of ours is called that.
+      if (parts.length === 1) return hits.length === 1 ? hits[0].id : null;
+
+      // "Marcus C" / "Marcus Call": whoever's surname that starts. "Marcus
+      // Brown" is somebody else who happens to share a first name with ours.
       const rest = parts[parts.length - 1];
-      return hit.last && hit.last.startsWith(rest) ? hit.id : undefined;
+      const fits = hits.filter((h) => h.last && h.last.startsWith(rest));
+      if (fits.length === 0) return undefined;
+      return fits.length === 1 ? fits[0].id : null;
     },
   };
-}
-
-/** Who an item is assigned to, and whether the name was one we could place. */
-export interface Ownership {
-  ownerId: string | null;
-  ownerUnrecognised: boolean;
-}
-
-/**
- * The owner of something Claude says a RevOptics person undertook.
- *
- * Matched: theirs. Named but not matched - a Zoom display name like "iPhone",
- * or two of ours with that name - goes to the host, marked so the host can
- * hand it on. Claude is asked to always name the owner; an item without one
- * isn't a RevOptics undertaking anybody can be held to, so it's dropped.
- */
-export function aiOwnership(index: NameIndex, owner: string | null): Ownership | null {
-  const name = owner?.trim();
-  if (!name) return null;
-  const id = index.match(name);
-  return id ? { ownerId: id, ownerUnrecognised: false } : { ownerId: null, ownerUnrecognised: true };
-}
-
-/**
- * Which of a reading's action items are RevOptics', and whose.
- *
- * The step after Claude, for calls and recap emails alike: only items Claude
- * marked as ours, only with a named owner, matched to a OneSpace person where
- * possible. Everything the client owes, or nobody took on, stops here.
- */
-export function ourActionItems<T extends { owner: string | null; ours: boolean }>(
-  items: T[],
-  index: NameIndex,
-): (T & Ownership)[] {
-  return items.flatMap((item) => {
-    if (!item.ours) return [];
-    const owner = aiOwnership(index, item.owner);
-    return owner ? [{ ...item, ...owner }] : [];
-  });
 }

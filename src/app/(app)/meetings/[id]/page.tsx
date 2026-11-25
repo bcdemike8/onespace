@@ -73,6 +73,7 @@ export default async function MeetingPage({
           atSeconds: true,
           suggestedTask: true,
           fromSummary: true,
+          ownerUnrecognised: true,
           source: true,
           status: true,
           dueDate: true,
@@ -170,6 +171,7 @@ export default async function MeetingPage({
       atSeconds: c.atSeconds,
       suggestedTask: c.suggestedTask,
       fromSummary: c.fromSummary,
+      ownerUnrecognised: c.ownerUnrecognised,
     })),
   };
 

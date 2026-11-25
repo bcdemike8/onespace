@@ -92,6 +92,7 @@ export default async function MeetingsPage({
             atSeconds: true,
             suggestedTask: true,
             fromSummary: true,
+            ownerUnrecognised: true,
           },
         },
       },
