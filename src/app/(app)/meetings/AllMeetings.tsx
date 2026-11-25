@@ -28,6 +28,11 @@ export interface AllMeetingRow {
   hasEntry: boolean;
   /** Marked "Already logged": the time went on the timesheet by hand. */
   loggedByHand: boolean;
+  /**
+   * Nobody from a client was in the invite. A set-aside call like that reads
+   * Internal rather than Not billable - same bucket, truer word.
+   */
+  noClient: boolean;
   /** Waiting or set aside: what the owner has on the timesheet that day. */
   timesheetNote: string | null;
   /**
@@ -105,9 +110,9 @@ export function AllMeetings({
 
 function Week({ week }: { week: MeetingWeek }) {
   const logged = week.rows.filter((r) => r.status === "ACCEPTED");
-  const notBillable = week.rows.filter(
-    (r) => r.status === "DISMISSED" && r.setAside === null,
-  ).length;
+  const setAsideByHand = week.rows.filter((r) => r.status === "DISMISSED" && r.setAside === null);
+  const internal = setAsideByHand.filter((r) => r.noClient).length;
+  const notBillable = setAsideByHand.length - internal;
   const cleared = week.rows.filter((r) => r.setAside === "BACKLOG").length;
   const removed = week.rows.filter((r) => r.setAside === "REMOVED").length;
   const waiting = week.rows.filter((r) => r.status === "PENDING").length;
@@ -116,23 +121,16 @@ function Week({ week }: { week: MeetingWeek }) {
   const loggedMinutes = logged
     .filter((r) => r.hasEntry)
     .reduce((sum, r) => sum + r.minutes, 0);
-  const byHand = logged.filter((r) => r.loggedByHand).length;
+  const manual = logged.filter((r) => r.loggedByHand).length;
 
   return (
     <section>
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-sm font-semibold text-ink-900">{week.label}</h2>
         <span className="text-xs text-ink-500">
-          {logged.length} logged
-          {loggedMinutes > 0 || byHand > 0
-            ? ` (${[
-                loggedMinutes > 0 ? formatMinutes(loggedMinutes) : null,
-                byHand > 0 ? `${byHand} by hand` : null,
-              ]
-                .filter(Boolean)
-                .join(", ")})`
-            : ""}{" "}
-          ·{" "}
+          {logged.length - manual} logged
+          {loggedMinutes > 0 ? ` (${formatMinutes(loggedMinutes)})` : ""}
+          {manual > 0 ? ` · ${manual} manually logged` : ""} · {internal} internal ·{" "}
           {notBillable} not billable
           {cleared > 0 ? ` · ${cleared} cleared` : ""}
           {removed > 0 ? ` · ${removed} removed` : ""}
@@ -150,18 +148,35 @@ function Week({ week }: { week: MeetingWeek }) {
   );
 }
 
-type Label = "LOGGED" | "NOT_BILLABLE" | "CLEARED" | "REMOVED" | "WAITING";
+type Label =
+  | "LOGGED"
+  | "MANUAL"
+  | "INTERNAL"
+  | "NOT_BILLABLE"
+  | "CLEARED"
+  | "REMOVED"
+  | "WAITING";
 
 const LABELS: Record<Label, { label: string; className: string; title: string }> = {
   LOGGED: {
     label: "Logged",
     className: "bg-good-50 text-good-700",
-    title: "On the timesheet",
+    title: "Logged from the meeting: its time is on the project and the timesheet",
+  },
+  MANUAL: {
+    label: "Manually logged",
+    className: "bg-good-50 text-good-700 ring-1 ring-inset ring-good-500/40",
+    title: "The time was already on the timesheet, entered by hand - nothing was added from here",
+  },
+  INTERNAL: {
+    label: "Internal",
+    className: "bg-brand-50 text-brand-700",
+    title: "No client in the invite, and no time logged from it",
   },
   NOT_BILLABLE: {
     label: "Not billable",
     className: "bg-ink-100 text-ink-600",
-    title: "Somebody looked at this call and decided it isn't billable",
+    title: "A client call somebody decided not to bill",
   },
   CLEARED: {
     label: "Cleared",
@@ -181,11 +196,11 @@ const LABELS: Record<Label, { label: string; className: string; title: string }>
 };
 
 function labelFor(row: AllMeetingRow): Label {
-  if (row.status === "ACCEPTED") return "LOGGED";
+  if (row.status === "ACCEPTED") return row.loggedByHand ? "MANUAL" : "LOGGED";
   if (row.status === "PENDING") return "WAITING";
   if (row.setAside === "BACKLOG") return "CLEARED";
   if (row.setAside === "REMOVED") return "REMOVED";
-  return "NOT_BILLABLE";
+  return row.noClient ? "INTERNAL" : "NOT_BILLABLE";
 }
 
 function Row({ row }: { row: AllMeetingRow }) {
@@ -208,7 +223,6 @@ function Row({ row }: { row: AllMeetingRow }) {
             {row.whenLabel} · {formatMinutes(row.minutes)}
             {row.projectName ? ` · ${row.projectName}` : ""}
             {row.nonBillableEntry ? " · non-billable time" : ""}
-            {row.loggedByHand ? " · logged by hand" : ""}
             {row.ownerName ? ` · ${row.ownerName}` : ""}
           </span>
         </Link>
@@ -222,23 +236,24 @@ function Row({ row }: { row: AllMeetingRow }) {
             <form action={dismissMeetingAction}>
               <input type="hidden" name="id" value={row.id} />
               <SubmitButton pendingLabel="…" className="btn-ghost btn-sm">
-                Not billable
+                {row.noClient ? "Internal" : "Not billable"}
               </SubmitButton>
             </form>
             <RemoveButton id={row.id} />
           </>
         ) : null}
 
-        {which === "NOT_BILLABLE" || which === "CLEARED" ? (
+        {which === "NOT_BILLABLE" || which === "INTERNAL" || which === "CLEARED" ? (
           <>
             <AlreadyLoggedButton id={row.id} />
             {which === "CLEARED" ? (
-              // Confirming what the bulk clear assumed: a plain Not billable.
+              // Confirming what the bulk clear assumed: Internal, or Not
+              // billable for a client call.
               <form action={action}>
                 <input type="hidden" name="id" value={row.id} />
                 <input type="hidden" name="intent" value="not-billable" />
                 <SubmitButton pendingLabel="…" className="btn-ghost btn-sm">
-                  Not billable
+                  {row.noClient ? "Internal" : "Not billable"}
                 </SubmitButton>
               </form>
             ) : null}
@@ -276,7 +291,7 @@ function Row({ row }: { row: AllMeetingRow }) {
                 if (
                   row.hasEntry &&
                   !window.confirm(
-                    `Mark "${row.title}" as not billable? Its ${formatMinutes(row.minutes)} comes off the timesheet.`,
+                    `Mark "${row.title}" as ${row.noClient ? "internal" : "not billable"}? Its ${formatMinutes(row.minutes)} comes off the timesheet.`,
                   )
                 ) {
                   e.preventDefault();
@@ -286,7 +301,7 @@ function Row({ row }: { row: AllMeetingRow }) {
               <input type="hidden" name="id" value={row.id} />
               <input type="hidden" name="intent" value="not-billable" />
               <SubmitButton pendingLabel="…" className="btn-ghost btn-sm">
-                Mark not billable
+                {row.noClient ? "Mark internal" : "Mark not billable"}
               </SubmitButton>
             </form>
           )

@@ -34,7 +34,7 @@ export function AlreadyLoggedButton({
       <SubmitButton
         pendingLabel="…"
         className={className}
-        title="You've already put this time on the timesheet yourself. Clears it as logged, without adding the time again."
+        title="You've already put this time on the timesheet yourself. Labels it Manually logged, without adding the time again."
       >
         Already logged
       </SubmitButton>

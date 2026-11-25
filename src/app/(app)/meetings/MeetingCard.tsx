@@ -299,7 +299,7 @@ export function MeetingCard({
         }`}
       >
         <AlreadyLoggedButton id={meeting.id} />
-        <DismissButton id={meeting.id} />
+        <DismissButton id={meeting.id} internal={meeting.noClient} />
         <RemoveButton id={meeting.id} />
       </div>
 
@@ -324,12 +324,24 @@ export function MeetingCard({
   );
 }
 
-function DismissButton({ id }: { id: string }) {
+/**
+ * Set aside with no time logged. One bucket, two words: "Internal" when no
+ * client was in the invite, "Not billable work" for a client call.
+ */
+function DismissButton({ id, internal }: { id: string; internal: boolean }) {
   return (
     <form action={dismissMeetingAction}>
       <input type="hidden" name="id" value={id} />
-      <SubmitButton pendingLabel="…" className="btn-ghost btn-sm">
-        Not billable work
+      <SubmitButton
+        pendingLabel="…"
+        className="btn-ghost btn-sm"
+        title={
+          internal
+            ? "An internal call with no time to log from here. Labelled Internal under All."
+            : "A client call that isn't billable. Labelled Not billable under All."
+        }
+      >
+        {internal ? "Internal" : "Not billable work"}
       </SubmitButton>
     </form>
   );

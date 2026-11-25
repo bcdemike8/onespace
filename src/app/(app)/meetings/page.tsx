@@ -201,6 +201,7 @@ export default async function MeetingsPage({
         status: true,
         loggedByHand: true,
         setAside: true,
+        noClient: true,
         suggestedProjectId: true,
         project: { select: { name: true } },
         timeEntry: {
@@ -376,6 +377,7 @@ export default async function MeetingsPage({
       minutes: entry?.minutes ?? m.actualMinutes ?? m.minutes,
       status: m.status,
       loggedByHand: m.loggedByHand,
+      noClient: m.noClient,
       setAside: m.setAside,
       timesheetNote: (() => {
         if (m.status === "ACCEPTED" || m.setAside === "REMOVED") return null;
@@ -398,9 +400,12 @@ export default async function MeetingsPage({
   const weeks = [...weekGroups.values()];
   // From the rows actually shown, so the header adds up to the weeks below.
   const shown = weeks.flatMap((w) => w.rows);
+  const decidedAside = shown.filter((r) => r.status === "DISMISSED" && r.setAside === null);
   const allCounts = {
-    logged: shown.filter((r) => r.status === "ACCEPTED").length,
-    notBillable: shown.filter((r) => r.status === "DISMISSED" && r.setAside === null).length,
+    logged: shown.filter((r) => r.status === "ACCEPTED" && !r.loggedByHand).length,
+    manual: shown.filter((r) => r.loggedByHand).length,
+    internal: decidedAside.filter((r) => r.noClient).length,
+    notBillable: decidedAside.filter((r) => !r.noClient).length,
     cleared: shown.filter((r) => r.setAside === "BACKLOG").length,
     waiting: shown.filter((r) => r.status === "PENDING").length,
   };
@@ -451,7 +456,9 @@ export default async function MeetingsPage({
         title="Meetings"
         subtitle={
           isAll
-            ? `Every meeting since ${formatMedium(startDay)}, week by week · ${allCounts.logged} logged · ${allCounts.notBillable} not billable${
+            ? `Every meeting since ${formatMedium(startDay)}, week by week · ${allCounts.logged} logged${
+                allCounts.manual > 0 ? ` · ${allCounts.manual} manually logged` : ""
+              } · ${allCounts.internal} internal · ${allCounts.notBillable} not billable${
                 allCounts.cleared > 0 ? ` · ${allCounts.cleared} cleared` : ""
               }${allCounts.waiting > 0 ? ` · ${allCounts.waiting} not logged yet` : ""}`
             : rows.length === 0
