@@ -427,3 +427,139 @@ test("vague timing is no date; specific timing is kept", () => {
   assert.equal(promisedDate("by the end of next week", said)?.toISOString().slice(0, 10), "2026-11-27");
   assert.equal(promisedDate("tomorrow", said)?.toISOString().slice(0, 10), "2026-11-17");
 });
+
+// ------------------------------- what was said: accepted, declined, or done
+
+/** One request from the customer, then one reply from Priya. */
+const reply = (answer: string) => ({
+  kind: "call" as const,
+  text: `\nJordan Lee: Can you send the field mapping?\nPriya Shah: ${answer}\nJordan Lee: Thanks.`,
+  presentIds: new Set(["priya"]),
+});
+const answered = (answer: string, when: string | null = null) =>
+  vetActionItems(
+    [item({ title: "Send Northwind the field mapping", quote: `Can you send the field mapping? ${answer}`, when })],
+    team,
+    people,
+    reply(answer),
+  );
+
+test("'I'll send the mapping tomorrow' is a commitment, dated", () => {
+  const out = answered("I'll send the mapping tomorrow.", "tomorrow");
+  assert.equal(out.owned[0]?.ownerId, "priya");
+  assert.equal(out.owned[0]?.when, "tomorrow");
+});
+
+test("'I can take care of that.' after a request is a commitment, not a fragment", () => {
+  assert.equal(answered("I can take care of that.").owned[0]?.ownerId, "priya");
+});
+
+test("'Sure, will do.' after a request is a commitment", () => {
+  assert.equal(answered("Sure, will do.").owned[0]?.ownerId, "priya");
+});
+
+test("'I can't take care of that.' is not", () => {
+  const out = answered("I can't take care of that.");
+  assert.equal(out.owned.length, 0);
+  assert.equal(out.rejected[0].reason, "declined, already done, or not a commitment");
+});
+
+test("'I already sent the mapping.' is work already done, not a commitment", () => {
+  assert.equal(answered("I already sent the mapping.").owned.length, 0);
+});
+
+test("'I'll see whether that's possible.' is only exploring", () => {
+  assert.equal(answered("I'll see whether that's possible.").owned.length, 0);
+});
+
+test("...but finding out and promising the answer back is a commitment", () => {
+  const out = answered("I'll see whether the API supports it and let you know by Friday.", "by Friday");
+  assert.equal(out.owned[0]?.ownerId, "priya");
+});
+
+test("'I can't today, but I'll send it tomorrow' commits to tomorrow", () => {
+  const out = answered("I can't do it today, but I'll send it tomorrow.", "tomorrow");
+  assert.equal(out.owned[0]?.when, "tomorrow");
+});
+
+test("a bare 'Sure.' that answers nothing commits to nothing", () => {
+  const out = vetActionItems(
+    [item({ title: "Send Northwind the field mapping", quote: "Sure." })],
+    team,
+    people,
+    { kind: "call", text: "\nPriya Shah: The mapping looks right to me.\nJordan Lee: Great.\nPriya Shah: Sure.", presentIds: new Set(["priya"]) },
+  );
+  assert.equal(out.owned.length, 0);
+});
+
+// ---------------------------------------------- an email describing others
+
+test("'I spoke with Ethan, and his team will configure the field' isn't the sender's", () => {
+  const text = "Hi Ethan,\n\nI spoke with Ethan, and his team will configure the field.\n\nThanks";
+  const out = vetActionItems(
+    [item({ title: "Configure the Region field", quote: "I spoke with Ethan, and his team will configure the field." })],
+    team,
+    people,
+    { kind: "email", text, presentIds: new Set(["priya"]), senderId: "priya" },
+  );
+  assert.equal(out.owned.length, 0);
+});
+
+// --------------------------------------------- which speaker said the quote
+
+const shared = `
+Sam Ortiz: I'll send you the notes from last week.
+Jordan Lee: Can you also send the field mapping?
+Priya Shah: Sure, I'll send you the field mapping tomorrow.
+Jordan Lee: Great.
+`;
+
+test("a phrase someone else also said doesn't move the quote to them", () => {
+  const out = vetActionItems(
+    [item({ title: "Send Northwind the field mapping", owner: "Sam Ortiz", quote: "Sure, I'll send you the field mapping tomorrow." })],
+    team,
+    people,
+    { kind: "call", text: shared, presentIds: new Set(["priya", "sam"]) },
+  );
+  assert.equal(out.owned.length, 0);
+});
+
+const repeated = `
+Priya Shah: Sounds good, will do.
+Jordan Lee: Can you send the field mapping?
+Sam Ortiz: Sounds good, will do.
+Jordan Lee: Thanks.
+`;
+
+test("the same short answer said twice belongs to whoever answered the request", () => {
+  const quote = "Can you send the field mapping? Sounds good, will do.";
+  const src = { kind: "call" as const, text: repeated, presentIds: new Set(["priya", "sam"]) };
+  assert.equal(vetActionItems([item({ owner: "Sam Ortiz", quote })], team, people, src).owned[0]?.ownerId, "sam");
+  assert.equal(vetActionItems([item({ owner: "Priya Shah", quote })], team, people, src).owned.length, 0);
+});
+
+test("an unpunctuated request and answer is still placed, and dated", () => {
+  const text = "\nJordan Lee: so can you send the field mapping over\nPriya Shah: sure I'll send the field mapping tomorrow\nJordan Lee: great thanks";
+  const out = vetActionItems(
+    [item({ quote: "can you send the field mapping over sure I'll send the field mapping tomorrow", when: "tomorrow" })],
+    team,
+    people,
+    { kind: "call", text, presentIds: new Set(["priya"]) },
+  );
+  assert.equal(out.owned[0]?.ownerId, "priya");
+  assert.equal(out.owned[0]?.when, "tomorrow");
+});
+
+// ------------------------------------------------------- whose deadline
+
+test("the customer's deadline in the same quote isn't the consultant's", () => {
+  const text = "\nJordan Lee: We'll send the export by Friday.\nSam Ortiz: Once it's in, I'll run the historical import.\nJordan Lee: Perfect.";
+  const out = vetActionItems(
+    [item({ title: "Run Northwind's historical import", owner: "Sam Ortiz", quote: "We'll send the export by Friday. Once it's in, I'll run the historical import.", when: "by Friday" })],
+    team,
+    people,
+    { kind: "call", text, presentIds: new Set(["priya", "sam"]) },
+  );
+  assert.equal(out.owned[0]?.ownerId, "sam");
+  assert.equal(out.owned[0]?.when, null);
+});

@@ -119,21 +119,98 @@ export function turnsOf(transcript: string): Turn[] {
   return turns;
 }
 
+/** A quote's sentences, each judged on its own. */
+function sentencesOf(quote: string): string[] {
+  return quote
+    .split(/(?<=[.!?])\s+/)
+    .map((x) => x.trim())
+    .filter((x) => normalText(x).length > 0);
+}
+
 /**
- * The turns a quote is drawn from.
- *
- * A quote for an accepted request runs across two speakers - the customer
- * asking, the consultant agreeing - so it's matched turn by turn: a turn
- * counts if it holds a run of three of the quote's words in a row.
+ * An unpunctuated quote cut into the consecutive turns it came from: the
+ * longest run of its words found in one turn, then the rest from a later
+ * turn, and so on. Null unless every piece - at least two words each - is
+ * found, in order.
  */
-function turnsOfQuote(quote: string, turns: Turn[]): Turn[] {
-  const words = normalText(quote).split(" ").filter(Boolean);
-  const span = Math.min(3, words.length);
-  const runs: string[] = [];
-  for (let i = 0; i + span <= words.length; i += 1) runs.push(words.slice(i, i + span).join(" "));
-  return turns.filter((t) => {
-    const said = ` ${normalText(t.text)} `;
-    return runs.some((r) => said.includes(` ${r} `));
+function splitAtTurns(
+  normalised: string,
+  said: string[],
+): { text: string; turn: number }[] | null {
+  const words = normalised.split(" ");
+  const out: { text: string; turn: number }[] = [];
+  let from = 0;
+  let after = -1;
+  while (from < words.length) {
+    let found: { end: number; turn: number } | null = null;
+    for (let end = words.length; end - from >= 2 && !found; end -= 1) {
+      const piece = ` ${words.slice(from, end).join(" ")} `;
+      const turn = said.findIndex((t, i) => i > after && t.includes(piece));
+      if (turn !== -1) found = { end, turn };
+    }
+    if (!found) return null;
+    out.push({ text: words.slice(from, found.end).join(" "), turn: found.turn });
+    after = found.turn;
+    from = found.end;
+  }
+  return out.length > 1 ? out : null;
+}
+
+/** One sentence of a quote, and the transcript turn it was said in. */
+interface Located {
+  sentence: string;
+  turn: number;
+}
+
+/**
+ * Where each sentence of a quote was said.
+ *
+ * Pinned sentence by sentence, not by shared phrases: "I'll send you the" is
+ * said by everyone, and matching on runs like that once credited Priya's
+ * promise to Sam because Sam had said "I'll send you the notes" earlier. A
+ * sentence is placed in the turn that holds it whole (or, failing that,
+ * nearly all of it); the longest sentence said in exactly one turn is the
+ * anchor, and a sentence said in more than one turn - "Sounds good, will
+ * do" - is placed in the turn nearest the anchor, after it if it's a tie,
+ * because a reply follows what it answers. A quote that can't be anchored
+ * isn't placed at all, and so shows nobody taking anything on.
+ */
+function locate(quote: string, turns: Turn[]): Located[] {
+  const said = turns.map((t) => ` ${normalText(t.text)} `);
+  const options = sentencesOf(quote).flatMap((sentence) => {
+    const n = normalText(sentence);
+    let where = said.flatMap((t, i) => (t.includes(` ${n} `) ? [i] : []));
+    if (where.length === 0) {
+      const words = n.split(" ");
+      const span = Math.min(3, words.length);
+      const runs: string[] = [];
+      for (let i = 0; i + span <= words.length; i += 1) runs.push(words.slice(i, i + span).join(" "));
+      const hits = said.map((t) => runs.filter((r) => t.includes(` ${r} `)).length);
+      const best = Math.max(0, ...hits);
+      if (runs.length > 0 && best / runs.length >= 0.6 && hits.filter((h) => h === best).length === 1) {
+        where = [hits.indexOf(best)];
+      }
+    }
+    if (where.length === 0) {
+      // Zoom doesn't always punctuate, so a request and its answer can
+      // arrive as one long "sentence". Split it where the speaker changes.
+      const pieces = splitAtTurns(n, said);
+      if (pieces) return pieces.map((p) => ({ sentence: p.text, where: [p.turn], words: p.text.split(" ").length }));
+    }
+    return [{ sentence, where, words: n.split(" ").length }];
+  });
+
+  const anchor = options
+    .filter((o) => o.where.length === 1)
+    .sort((x, y) => y.words - x.words)[0];
+  if (!anchor) return [];
+  const at = anchor.where[0];
+
+  return options.flatMap((o) => {
+    const near = o.where
+      .filter((i) => Math.abs(i - at) <= 4)
+      .sort((x, y) => Math.abs(x - at) - Math.abs(y - at) || y - x);
+    return near.length > 0 ? [{ sentence: o.sentence, turn: near[0] }] : [];
   });
 }
 
@@ -143,8 +220,15 @@ const DANGLING = new Set([
   "on", "in", "at", "by", "from", "that", "if", "so", "as", "into", "about",
 ]);
 
-/** A cut-off piece of a sentence rather than the whole thing. */
+/**
+ * A cut-off piece of a sentence rather than the whole thing.
+ *
+ * Text that ends a sentence properly - "I can take care of that." - is
+ * whole, whatever its last word. Without the full stop, ending on "a",
+ * "whether" or "to" means it was cut off mid-thought.
+ */
 export function looksLikeFragment(text: string): boolean {
+  if (/[.!?]["'’”)]*\s*$/.test(text.trim())) return false;
   const words = normalText(text).split(" ").filter(Boolean);
   if (words.length === 0) return true;
   return DANGLING.has(words[words.length - 1]);
@@ -176,22 +260,72 @@ export function namedAsDoer(name: string, text: string): boolean {
   ).test(t);
 }
 
-/** Words only the person writing uses about themselves. */
-const FIRST_PERSON = /\b(i|i'?ll|i'?m|i'?ve|i'?d|me|my|myself)\b/i;
+/**
+ * Words that take something on, in the speaker's own voice: "I'll...",
+ * "I'm going to...", "I can take care of that", "leave it with me", "will
+ * do". Not "I" on its own - "I spoke with Ethan, and his team will configure
+ * the field" is the sender describing the customer's work, not committing to
+ * any.
+ */
+const TAKES_IT_ON =
+  /\b(i'?ll|i will|i'?m going to|i am going to|i'?m gonna|i can (take|handle|do|own|get|send|share|look|set|build|put|run|grab|sort|pick|work|follow|reach|update|fix|configure|draft|schedule|book)|i'?m on it|i'?ll own|i own|i'?m taking|i'?m handling|let me (take|handle|get|send|own|grab|sort)|leave it with me|i'?ve got (it|this|that)|will do|on it)\b/;
+
+/** A short yes that only commits in answer to a request. */
+const AGREES = /^(sure|yes|yep|yeah|absolutely|of course|definitely|no problem|happy to|sounds good|ok|okay|will do)\b/;
+
+/** Turning it down. */
+const DECLINES =
+  /\b(can'?t|cannot|won'?t|will not|unable|not able|not going to|don'?t think (i|we) can|no bandwidth|not something (i|we) can)\b/;
+
+/** Only finding out, with nothing promised back: "I'll see whether that's possible". */
+const ONLY_EXPLORING =
+  /\b(see (whether|if)|check (whether|if) (it'?s|that'?s|this is|it is|that is) possible|think about|consider|look at whether)\b/;
+
+/** ...unless the result is promised back to the customer. */
+const REPORTS_BACK =
+  /\b(let (you|them|him|her) know|get back to|come back to|report back|share (my |the )?(findings|results|answer)|send (you )?(my |the )?(findings|results|answer)|follow up with)\b/;
+
+/** Clauses of one sentence: "I can't today, but I'll send it Friday" is two. */
+function clausesOf(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[’‘]/g, "'")
+    .split(/[;,]\s*but\s+|\s+but\s+|;\s*/)
+    .map((c) => c.trim())
+    .filter(Boolean);
+}
+
+/** Does this part commit to doing something, rather than decline or wonder? */
+function commits(part: string, answersRequest: boolean, ownerName: string | null): boolean {
+  return clausesOf(part).some((c) => {
+    if (DECLINES.test(c)) return false;
+    if (ONLY_EXPLORING.test(c) && !REPORTS_BACK.test(c)) return false;
+    if (TAKES_IT_ON.test(c)) return true;
+    if (ownerName && namedAsDoer(ownerName, c)) return true;
+    return answersRequest && AGREES.test(c);
+  });
+}
 
 /**
- * Does the quote show this person taking the work on?
+ * Does the quote show this person taking the work on - and is it a
+ * commitment at all?
  *
- * Being named, or being on the call, isn't ownership. On a call the quote has
- * to include the owner's own words, or a RevOptics colleague naming them as
- * the one doing it ("Sam will...") - a customer saying "Sam will sort it"
- * doesn't make it Sam's until Sam agrees, and "I'll ask Sam about it" isn't
- * Sam's at all. In an email the sender has to be writing about themselves
- * ("I'll..."), or naming the colleague they're committing.
+ * Being named, or being on the call, isn't ownership. On a call the owner's
+ * part of the quote is what they said themselves, plus anything a RevOptics
+ * colleague said naming them as the one doing it ("Sam will..."); a customer
+ * saying "Sam will sort it" doesn't count, and "I'll ask Sam about it" isn't
+ * Sam's. In an email it's the sender's own commitments ("I'll..."), or the
+ * colleague the sender names as doing it.
  *
- * "ours" when a RevOptics person said or wrote the quote at all, so a quote
+ * Then that part has to commit: "I'll send it tomorrow", "I can take care of
+ * that", or "Sure" in answer to a request - not "I can't take care of
+ * that", not "I already sent it", not "I'll see whether that's possible"
+ * unless the answer is promised back.
+ *
+ * "ours" when a RevOptics person said or wrote any of the quote, so a quote
  * that's entirely the customer's can be told apart from one that names the
- * wrong one of us.
+ * wrong one of us. "said" is the owner's part, which is where a promised
+ * deadline has to be.
  */
 export function quoteSupports(
   quote: string,
@@ -199,21 +333,42 @@ export function quoteSupports(
   ownerName: string,
   source: SourceEvidence,
   index: NameIndex,
-): { owner: boolean; ours: boolean } {
+): { owner: boolean; ours: boolean; commits: boolean; said: string } {
   if (source.kind === "email") {
-    const byOwner = ownerId === source.senderId && FIRST_PERSON.test(quote.replace(/[’‘]/g, "'"));
-    return { owner: byOwner || namedAsDoer(ownerName, quote), ours: true };
+    const theirs = sentencesOf(quote).filter((s) => {
+      const c = s.toLowerCase().replace(/[’‘]/g, "'");
+      return (ownerId === source.senderId && TAKES_IT_ON.test(c)) || namedAsDoer(ownerName, s);
+    });
+    const said = theirs.join(" ");
+    return {
+      owner: theirs.length > 0,
+      ours: true,
+      commits: theirs.length > 0 && commits(said, false, ownerName),
+      said,
+    };
   }
-  const turns = turnsOfQuote(quote, turnsOf(source.text));
+
+  const turns = turnsOf(source.text);
+  const placed = locate(quote, turns);
   let ours = false;
-  let owner = false;
-  for (const t of turns) {
-    const id = index.match(t.speaker);
+  const theirs: Located[] = [];
+  for (const p of placed) {
+    const id = index.match(turns[p.turn].speaker);
     if (!id) continue;
     ours = true;
-    if (id === ownerId || namedAsDoer(ownerName, t.text)) owner = true;
+    if (id === ownerId || namedAsDoer(ownerName, p.sentence)) theirs.push(p);
   }
-  return { owner, ours };
+  const said = theirs.map((p) => p.sentence).join(" ");
+  // "Sure" commits only in answer to a request - a question asked, before
+  // it, in somebody else's turn.
+  const first = theirs[0]?.turn ?? -1;
+  const answersRequest = placed.some((p) => p.turn < first && /\?\s*$/.test(p.sentence));
+  return {
+    owner: theirs.length > 0,
+    ours,
+    commits: theirs.length > 0 && commits(said, answersRequest, ownerName),
+    said,
+  };
 }
 
 /** A timing phrase too loose to be a date anyone promised. */
@@ -318,7 +473,13 @@ export function vetActionItems<T extends Candidate>(
       });
       continue;
     }
-    out.owned.push({ ...item, ownerId: id, when: promisedWhen(item.when, item.quote) });
+    if (!support.commits) {
+      out.rejected.push({ item, reason: "declined, already done, or not a commitment" });
+      continue;
+    }
+    // A deadline counts only if it's in the owner's own words - not the
+    // customer's half of the quote, not another person's sentence.
+    out.owned.push({ ...item, ownerId: id, when: promisedWhen(item.when, support.said) });
   }
 
   return out;

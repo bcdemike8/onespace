@@ -11,7 +11,7 @@
  * would reach each consultant's My work with what should.
  *
  * Needs ANTHROPIC_API_KEY (in .env or the environment). Costs roughly one
- * call write-up per case - about twenty. Reads nothing from the database.
+ * call write-up per case - about twenty-five. Reads nothing from the database.
  * Every name and company here is made up; this file is in a public repository.
  */
 import "./load-env";
@@ -344,6 +344,54 @@ Jordan Lee: Thank you, Sam.
 Priya Shah: Great, that's settled.`,
     expect: [{ owner: "sam", about: ["dashboard"] }],
   },
+  {
+    name: "Call: a consultant declines a request",
+    kind: "call",
+    by: "priya",
+    text: `
+Jordan Lee: Could you also build the territory reports for the regional leads?
+Priya Shah: I can't take that on in this phase - it's outside the scope we agreed.
+Jordan Lee: Understood, we'll look at it internally.
+Priya Shah: Happy to scope it for the next phase if useful.
+Jordan Lee: Let's talk about that later.`,
+    expect: [],
+  },
+  {
+    name: "Call: work described as already done",
+    kind: "call",
+    by: "priya",
+    text: `
+Jordan Lee: Did the field mapping go over?
+Priya Shah: Yes, I already sent the mapping yesterday, and I updated the stage values too.
+Jordan Lee: Great, I'll check my inbox.
+Priya Shah: Let me know if anything looks off.
+Jordan Lee: Will do.`,
+    expect: [],
+  },
+  {
+    name: "Call: only looking into it, nothing promised back",
+    kind: "call",
+    by: "priya",
+    text: `
+Jordan Lee: Is it possible to sync the custom objects too?
+Priya Shah: I'll see whether that's possible. It depends a lot on your Salesforce edition.
+Jordan Lee: Okay, no rush on that one.
+Priya Shah: Sure. Let's focus on the core objects first.
+Jordan Lee: Agreed.`,
+    expect: [],
+  },
+  {
+    name: "Recap: the sender describes the customer's work in the first person",
+    kind: "recap",
+    by: "priya",
+    text: `Hi Ethan,
+
+Following up on today. I spoke with Jordan, and his team will configure the Region field this week. I also confirmed with your admin that the sandbox refresh is scheduled.
+
+Thanks,
+Priya`,
+    expect: [],
+  },
 ];
 
 async function readCase(c: Case): Promise<AiActionItem[]> {
@@ -373,8 +421,12 @@ async function main() {
   }
 
   let passed = 0;
+  let correct = 0;
   let falsePositives = 0;
   let falseNegatives = 0;
+  let wrongOwner = 0;
+  let wrongDeadline = 0;
+  let unread = 0;
 
   for (const c of cases) {
     let items: AiActionItem[];
@@ -382,6 +434,7 @@ async function main() {
       items = await readCase(c);
     } catch (e) {
       console.log(`\n✗ ${c.name}\n    Claude couldn't read it: ${e instanceof Error ? e.message : e}`);
+      unread += 1;
       continue;
     }
 
@@ -405,28 +458,38 @@ async function main() {
     const extra: string[] = [];
     for (const o of out.owned) {
       const hay = `${o.title} ${o.task}`.toLowerCase();
-      const i = left.findIndex(
-        (e) => e.owner === o.ownerId && e.about.some((w) => hay.includes(w.toLowerCase())),
-      );
+      const about = (e: Expected) => e.about.some((w) => hay.includes(w.toLowerCase()));
+      const i = left.findIndex((e) => e.owner === o.ownerId && about(e));
       if (i === -1) {
-        extra.push(`${o.ownerId}: ${o.title}`);
+        // The right task on the wrong person is its own kind of mistake.
+        const j = left.findIndex(about);
+        if (j !== -1) {
+          wrongOwner += 1;
+          extra.push(`wrong owner: ${o.ownerId} has "${o.title}" (should be ${left[j].owner})`);
+          left.splice(j, 1);
+        } else {
+          falsePositives += 1;
+          extra.push(`shouldn't be there: ${o.ownerId} - ${o.title}`);
+        }
         continue;
       }
       const e = left.splice(i, 1)[0];
       const dated = promisedDate(o.when, new Date()) !== null;
       if (Boolean(e.dated) !== dated) {
-        extra.push(`${o.ownerId}: ${o.title} - deadline ${dated ? "invented" : "missed"} (when: ${o.when ?? "none"})`);
+        wrongDeadline += 1;
+        extra.push(`deadline ${dated ? "invented" : "missed"}: ${o.title} (when: ${o.when ?? "none"})`);
+      } else {
+        correct += 1;
       }
     }
+    falseNegatives += left.length;
 
     const ok = extra.length === 0 && left.length === 0;
     if (ok) passed += 1;
-    falsePositives += extra.length;
-    falseNegatives += left.length;
 
     console.log(`\n${ok ? "✓" : "✗"} ${c.name}`);
     for (const o of out.owned) console.log(`    → ${o.ownerId}: ${o.title}\n      "${o.quote}"`);
-    for (const x of extra) console.log(`    ✗ shouldn't be there: ${x}`);
+    for (const x of extra) console.log(`    ✗ ${x}`);
     for (const m of left) console.log(`    ✗ missed: ${m.owner} - ${m.about.join("/")}`);
     for (const u of out.unidentified) console.log(`    · held back (owner): ${u.item.title} - ${u.reason}`);
     for (const r of out.rejected) {
@@ -434,9 +497,19 @@ async function main() {
     }
   }
 
-  console.log(
-    `\n${passed}/${cases.length} cases right · ${falsePositives} wrong item(s) shown · ${falseNegatives} real commitment(s) missed`,
-  );
+  const expected = cases.reduce((n, c) => n + c.expect.length, 0);
+  console.log(`
+${passed}/${cases.length} cases fully right
+  ${correct}/${expected} real commitments found, right owner and deadline
+  ${falsePositives} wrong item(s) shown (false positives)
+  ${falseNegatives} real commitment(s) missed (false negatives)
+  ${wrongOwner} on the wrong person
+  ${wrongDeadline} with a wrong deadline`);
+  if (unread > 0) {
+    console.log(`
+  ${unread} case(s) NOT READ by Claude - the numbers above don't cover them.
+  This is not an accuracy result until every case has been read.`);
+  }
   process.exit(passed === cases.length ? 0 : 1);
 }
 
