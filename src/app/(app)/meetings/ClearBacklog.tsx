@@ -81,9 +81,9 @@ export function ClearBacklog({
             <span className="w-full text-xs text-ink-600">{breakdown}</span>
           ) : null}
           <span className="w-full text-xs text-ink-500">
-            Nothing is deleted. They move to &ldquo;meetings you set aside&rdquo;
-            {everyone ? " on each person's Meetings tab" : " below"}, and any of
-            them can still be logged with &ldquo;Billable after all&rdquo;.
+            Nothing is deleted. They show as Not billable under All
+            {everyone ? " on each person's Meetings tab" : ""}, and any of them
+            can still be logged with &ldquo;Log it after all&rdquo;.
           </span>
         </form>
       ) : null}

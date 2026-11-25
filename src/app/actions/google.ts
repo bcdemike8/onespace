@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { isAdmin, requireAdmin, requireUser } from "@/lib/auth";
@@ -261,8 +262,74 @@ export async function dismissMeetingsBeforeAction(
     ok: true,
     message: `Set aside ${ids.length} meeting${ids.length === 1 ? "" : "s"}${
       everyone ? " across the team" : ""
-    }. They're under "meetings you set aside" if any turn out to be billable.`,
+    }. They're under All, marked not billable, if any turn out to be billable after all.`,
   };
+}
+
+/**
+ * Change a meeting's outcome from the All view, the running list of every
+ * call and what became of it.
+ *
+ * - "not-billable": a waiting call is set aside; a logged one loses its time
+ *   entry and is set aside, so the hour isn't left behind on the timesheet.
+ *   A closed month refuses, same as anywhere else that deletes time.
+ * - "log": a set-aside call goes back to waiting and you land on its page to
+ *   log it. Straight there, because a call from two months ago put back in
+ *   the list would otherwise be out of sight of the Last 2 weeks view.
+ */
+export async function setMeetingOutcomeAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+  const id = String(formData.get("id") ?? "");
+  const intent = String(formData.get("intent") ?? "");
+
+  const meeting = await db.meeting.findUnique({
+    where: { id },
+    select: {
+      userId: true,
+      status: true,
+      timeEntryId: true,
+      timeEntry: { select: { date: true } },
+    },
+  });
+  if (!meeting) return { error: "That meeting no longer exists." };
+  if (meeting.userId !== user.id && !isAdmin(user)) {
+    return { error: "Only its owner or an admin can change this meeting." };
+  }
+
+  if (intent === "not-billable") {
+    if (meeting.status === "DISMISSED") return { ok: true };
+    if (meeting.timeEntry) {
+      try {
+        await assertUnlocked(meeting.timeEntry.date);
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : "That month is closed." };
+      }
+    }
+    await db.$transaction(async (tx) => {
+      await tx.meeting.update({
+        where: { id },
+        data: { status: "DISMISSED", timeEntryId: null },
+      });
+      if (meeting.timeEntryId) {
+        await tx.timeEntry.delete({ where: { id: meeting.timeEntryId } });
+      }
+    });
+    refresh();
+    return { ok: true };
+  }
+
+  if (intent === "log") {
+    if (meeting.status === "DISMISSED") {
+      await db.meeting.update({ where: { id }, data: { status: "PENDING" } });
+      refresh();
+    }
+    redirect(`/meetings/${id}`);
+  }
+
+  return { error: "Unknown change." };
 }
 
 /**
