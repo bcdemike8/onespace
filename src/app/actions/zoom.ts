@@ -84,123 +84,181 @@ export async function syncZoomAction(
 }
 
 /**
- * The person whose call or recap it is, or an admin.
+ * The action items behind a row, if this person may act on them.
  *
- * A commitment hangs off exactly one of the two: a meeting, or the recap
- * email it was written in. Both know whose it is, and both know a date to
- * anchor the task's description to.
+ * A row on My work can stand for several stored items - the same undertaking
+ * said on two calls - so everything here takes a list. Each item hangs off
+ * exactly one of a meeting or the recap email it was written in; both know
+ * who the host is and a date to anchor the task's description to.
+ *
+ * Allowed: the person who undertook it, the host of the call or thread (who
+ * holds anything whose owner couldn't be placed), or an admin.
  */
-async function ownCommitment(id: string) {
+async function ownCommitments(ids: string[]) {
   const user = await requireUser();
-  const row = await db.commitment.findUnique({
-    where: { id },
+  if (ids.length === 0) throw new Error("Nothing was chosen.");
+
+  const rows = await db.commitment.findMany({
+    where: { id: { in: ids } },
     include: {
-      meeting: { select: { userId: true, projectId: true, startsAt: true } },
+      meeting: { select: { userId: true, startsAt: true } },
       mailMessage: {
         select: {
           sentAt: true,
-          thread: { select: { userId: true, projectId: true } },
+          thread: { select: { userId: true } },
         },
       },
     },
   });
-  if (!row) throw new Error("That commitment is no longer here.");
-
-  const origin = row.meeting
-    ? {
-        userId: row.meeting.userId,
-        projectId: row.meeting.projectId,
-        on: row.meeting.startsAt,
-        where: "call",
-      }
-    : row.mailMessage
-      ? {
-          userId: row.mailMessage.thread.userId,
-          projectId: row.mailMessage.thread.projectId,
-          on: row.mailMessage.sentAt,
-          where: "recap",
-        }
-      : null;
-
-  // Neither: the meeting or the mail it came from has been deleted under it.
-  if (!origin) throw new Error("Whatever this came from is no longer here.");
-
-  if (origin.userId !== user.id && !isAdmin(user)) {
-    throw new Error(`That's someone else's ${origin.where}.`);
+  if (rows.length !== ids.length) {
+    throw new Error("Some of those are no longer here - refresh the page.");
   }
-  return { user, row, origin };
+
+  const items = rows.map((row) => {
+    const origin = row.meeting
+      ? { userId: row.meeting.userId, on: row.meeting.startsAt, where: "call" }
+      : row.mailMessage
+        ? {
+            userId: row.mailMessage.thread.userId,
+            on: row.mailMessage.sentAt,
+            where: "recap",
+          }
+        : null;
+
+    // Neither: the meeting or the mail it came from has been deleted under it.
+    if (!origin) throw new Error("Whatever this came from is no longer here.");
+
+    const mayAct =
+      row.ownerId === user.id || origin.userId === user.id || isAdmin(user);
+    if (!mayAct) throw new Error(`That's someone else's ${origin.where}.`);
+    return { row, origin };
+  });
+
+  // In the order asked for: the first id is the row as shown.
+  items.sort((a, b) => ids.indexOf(a.row.id) - ids.indexOf(b.row.id));
+  return { user, items };
 }
 
+const idsFrom = (formData: FormData) => [
+  ...new Set(formData.getAll("id").map(String).filter(Boolean)),
+];
+
 /**
- * Turn a commitment into a real task on the project.
+ * Turn an action item into a real task on the project.
  *
- * Assigned to whoever made the promise, which is the whole point - the person
- * who said it on the call is the person it lands on.
+ * Assigned to the person who undertook it - several consultants on one
+ * project each confirm their own. An item whose owner couldn't be placed is
+ * assigned to whoever the host picks, or to the host.
  */
 export async function acceptCommitmentAction(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const id = String(formData.get("id") ?? "");
+  const ids = idsFrom(formData);
   const name = String(formData.get("name") ?? "").trim();
   const projectId = String(formData.get("projectId") ?? "").trim();
+  const assignTo = String(formData.get("assignTo") ?? "").trim();
 
   let ctx;
   try {
-    ctx = await ownCommitment(id);
+    ctx = await ownCommitments(ids);
   } catch (e) {
     return { error: e instanceof Error ? e.message : "You can't accept that." };
   }
   if (!name) return { error: "Give the task a name." };
-  if (!projectId) {
-    return {
-      error:
-        ctx.origin.where === "call"
-          ? "File this meeting to a project first, then the task has somewhere to go."
-          : "File this email thread to a project first, then the task has somewhere to go.",
-    };
+  if (!projectId) return { error: "Choose the project this goes on." };
+
+  const pending = ctx.items.filter((i) => i.row.status === "PENDING");
+  if (pending.length === 0) return { error: "That's already been dealt with." };
+  const first = pending[0];
+
+  const project = await db.project.findUnique({
+    where: { id: projectId },
+    select: { id: true },
+  });
+  if (!project) return { error: "That project is no longer here." };
+
+  let assigneeId = first.row.ownerId ?? first.origin.userId;
+  if (first.row.ownerUnrecognised && assignTo) {
+    const person = await db.user.findFirst({
+      where: { id: assignTo, isActive: true },
+      select: { id: true },
+    });
+    if (!person) return { error: "That person can't be assigned work." };
+    assigneeId = person.id;
   }
-  if (ctx.row.status === "ACCEPTED") return { error: "That's already a task." };
 
   // A date typed on the card wins over the one that was read out of the
   // sentence - the person is looking at it and knows better.
   const typed = String(formData.get("dueDate") ?? "").trim();
-  const dueDate = typed ? dayStart(typed) : ctx.row.dueDate;
+  const dueDate = /^\d{4}-\d{2}-\d{2}$/.test(typed) ? dayStart(typed) : first.row.dueDate;
 
-  const said = ctx.origin.on.toISOString().slice(0, 10);
-  const from = ctx.origin.where === "call" ? "the call on" : "the recap sent on";
+  const said = first.origin.on.toISOString().slice(0, 10);
+  const from = first.origin.where === "call" ? "the call on" : "the recap sent on";
+  // The full instruction, then the sentence and where it was said, so
+  // anyone wondering where this came from can check rather than guess.
+  const description = [
+    first.row.detail,
+    `From ${from} ${said}: "${first.row.text}"`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
   await db.$transaction(async (tx) => {
     const task = await tx.task.create({
       data: {
         projectId,
         name: name.slice(0, 200),
-        assigneeId: ctx.origin.userId,
+        assigneeId,
         dueDate,
-        // The description carries the sentence and where it was said, so
-        // anyone wondering where this came from can check rather than guess.
-        description: `From ${from} ${said}: "${ctx.row.text}"`,
+        description,
       },
     });
     await tx.commitment.update({
-      where: { id },
+      where: { id: first.row.id },
       data: { status: "ACCEPTED", taskId: task.id },
     });
+    // The same undertaking said on another call is the same task.
+    const copies = pending.slice(1).map((i) => i.row.id);
+    if (copies.length > 0) {
+      await tx.commitment.updateMany({
+        where: { id: { in: copies } },
+        data: { status: "ACCEPTED" },
+      });
+    }
   });
 
   refresh();
   return { ok: true };
 }
 
-export async function dismissCommitmentAction(formData: FormData): Promise<void> {
-  const id = String(formData.get("id") ?? "");
+/**
+ * Not a task - for one row, or for every row in a project group at once.
+ *
+ * Dismissed rather than deleted: a re-read of the call recognises it and
+ * doesn't offer it again. Says so when it can't, instead of doing nothing.
+ */
+export async function dismissCommitmentsAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const ids = idsFrom(formData);
   try {
-    await ownCommitment(id);
-  } catch {
-    return;
+    await ownCommitments(ids);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "That couldn't be cleared." };
   }
-  await db.commitment.update({ where: { id }, data: { status: "DISMISSED" } });
+  const done = await db.commitment.updateMany({
+    where: { id: { in: ids }, status: "PENDING" },
+    data: { status: "DISMISSED" },
+  });
   refresh();
+  return { ok: true, message: `${done.count} cleared.` };
+}
+
+/** The same, for the meetings page, which posts a plain form. */
+export async function dismissCommitmentAction(formData: FormData): Promise<void> {
+  await dismissCommitmentsAction({}, formData);
 }
 
 /**

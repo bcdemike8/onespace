@@ -25,8 +25,9 @@ import {
 import { LogTimeForm, type LoggableProject } from "@/components/LogTimeForm";
 import { TaskListItem, type TaskListItemData } from "@/components/TaskListItem";
 import { deleteTimeEntryAction } from "@/app/actions/time";
-import { recentSince } from "@/lib/recency";
-import { DayQueue, type QueueCommitment, type QueueProject } from "./DayQueue";
+import { queueSince } from "@/lib/recency";
+import { groupQueue, type QueueRecord } from "@/lib/commitments/queue";
+import { DayQueue } from "./DayQueue";
 
 export const dynamic = "force-dynamic";
 
@@ -70,9 +71,9 @@ export default async function MyWorkPage() {
   const user = await requireUser();
   const now = today();
   const lockState = await getLockState();
-  // How far back a suggestion is still worth offering. The same number the
-  // Zoom sync uses to decide how far back a call is worth writing up.
-  const said = await recentSince();
+  // How far back "You said you'd do this" reaches: a fortnight, and never
+  // before the clean start on 16 November. See lib/commitments/queue.
+  const said = await queueSince();
   const weekFrom = weekStart(now);
   const weekTo = weekEnd(now);
 
@@ -87,6 +88,7 @@ export default async function MyWorkPage() {
     pendingCommitments,
     awaitingReply,
     meetingsToLog,
+    people,
   ] = await Promise.all([
       db.task.findMany({
         where: { assigneeId: user.id, status: { not: "DONE" } },
@@ -157,40 +159,55 @@ export default async function MyWorkPage() {
         },
         orderBy: [{ dueDate: "asc" }, { name: "asc" }],
       }),
-      // What recent calls and recaps produced and nobody has said yes or no
-      // to yet. Older than the window and the moment has passed: it either
-      // got done or it didn't, and a stale suggestion is noise.
+      // What this person undertook, on any call or in any recap, and hasn't
+      // said yes or no to yet. Theirs because they're its owner - whoever
+      // hosted the call - or, for items with no owner on record, because
+      // it's their call or their thread.
       //
       // Filtered on when it was SAID, not on when the row was written. Those
-      // are the same thing day to day and wildly different after a catch-up
-      // sync, which creates today's rows for calls six weeks old - so the
-      // queue filled with things promised in early August and looked, quite
-      // reasonably, like the app inventing work.
+      // are the same thing day to day and wildly different after a re-read,
+      // which creates today's rows for calls weeks old.
       db.commitment.findMany({
         where: {
           status: "PENDING",
-          OR: [
-            { meeting: { userId: user.id, startsAt: { gte: said } } },
+          AND: [
             {
-              mailMessage: {
-                sentAt: { gte: said },
-                thread: { userId: user.id },
-              },
+              OR: [
+                { meeting: { startsAt: { gte: said } } },
+                { mailMessage: { sentAt: { gte: said } } },
+              ],
+            },
+            {
+              OR: [
+                { ownerId: user.id },
+                { ownerId: null, meeting: { userId: user.id } },
+                { ownerId: null, mailMessage: { thread: { userId: user.id } } },
+              ],
             },
           ],
         },
         orderBy: [{ dueDate: "asc" }, { createdAt: "desc" }],
-        take: 30,
+        // A safety ceiling, not a page size: two weeks of one person's
+        // commitments is a few dozen at most, and every one is shown.
+        take: 500,
         select: {
           id: true,
           text: true,
           suggestedTask: true,
+          detail: true,
           speaker: true,
           source: true,
           dueDate: true,
           dueStated: true,
+          ownerUnrecognised: true,
           meeting: {
-            select: { id: true, title: true, startsAt: true, projectId: true },
+            select: {
+              id: true,
+              title: true,
+              startsAt: true,
+              projectId: true,
+              suggestedProjectId: true,
+            },
           },
           mailMessage: {
             select: {
@@ -218,6 +235,12 @@ export default async function MyWorkPage() {
       // Meetings that happened and haven't been turned into time yet.
       db.meeting.count({
         where: { userId: user.id, status: "PENDING", startsAt: { lte: new Date() } },
+      }),
+      // Who an item can be handed to, when its owner couldn't be placed.
+      db.user.findMany({
+        where: { isActive: true },
+        select: { id: true, name: true },
+        orderBy: { name: "asc" },
       }),
     ]);
 
@@ -261,28 +284,45 @@ export default async function MyWorkPage() {
     assigneeName: null,
   }));
 
-  const queue: QueueCommitment[] = pendingCommitments.map((c) => {
+  const queueRecords: QueueRecord[] = pendingCommitments.flatMap((c) => {
     const meeting = c.meeting;
     const mail = c.mailMessage;
-    return {
-      id: c.id,
-      text: c.text,
-      suggestedTask: c.suggestedTask,
-      speaker: c.speaker,
-      source: c.source,
-      dueDate: c.dueDate ? toISODate(c.dueDate) : null,
-      dueStated: c.dueStated,
-      originLabel: meeting
-        ? `${meeting.title} · ${formatMedium(dayStart(meeting.startsAt))}`
-        : mail
-          ? `${mail.thread.subject} · ${formatMedium(dayStart(mail.sentAt))}`
-          : "Source removed",
-      originHref: meeting ? "/meetings" : mail ? `/inbox/${mail.thread.id}` : null,
-      projectId: meeting?.projectId ?? mail?.thread.projectId ?? null,
-    };
+    if (!meeting && !mail) return [];
+    const saidAt = meeting ? meeting.startsAt : mail!.sentAt;
+    return [
+      {
+        id: c.id,
+        title: c.suggestedTask,
+        quote: c.text,
+        detail: c.detail,
+        source: c.source,
+        dueDate: c.dueDate,
+        dueStated: c.dueStated,
+        saidAt,
+        originKey: meeting ? `m:${meeting.id}` : `t:${mail!.thread.id}`,
+        originLabel: meeting
+          ? `${meeting.title} · ${formatMedium(dayStart(meeting.startsAt))}`
+          : `${mail!.thread.subject} · ${formatMedium(dayStart(mail!.sentAt))}`,
+        originHref: meeting ? `/meetings/${meeting.id}` : `/inbox/${mail!.thread.id}`,
+        // Filed, or failing that what the matcher suggested - the person can
+        // change it before adding, and it decides which group it sits in.
+        projectId: meeting
+          ? (meeting.projectId ?? meeting.suggestedProjectId)
+          : mail!.thread.projectId,
+        ownerUnrecognised: c.ownerUnrecognised,
+        speaker: c.speaker,
+      },
+    ];
   });
 
-  const queueProjects: QueueProject[] = projects.map((p) => ({
+  const queueGroups = groupQueue(
+    queueRecords,
+    new Map(
+      projects.map((p) => [p.id, { name: p.name, clientName: p.client?.name ?? null }]),
+    ),
+  );
+
+  const queueProjects = projects.map((p) => ({
     id: p.id,
     name: p.name,
     clientName: p.client?.name ?? null,
@@ -333,7 +373,12 @@ export default async function MyWorkPage() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">
-          <DayQueue items={queue} projects={queueProjects} />
+          <DayQueue
+            groups={queueGroups}
+            projects={queueProjects}
+            people={people}
+            viewerId={user.id}
+          />
 
           {awaitingReply.length > 0 ? (
             <section className="mb-6">

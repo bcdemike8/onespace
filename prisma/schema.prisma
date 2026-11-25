@@ -233,6 +233,9 @@ model User {
   statusUpdates     StatusUpdate[]   @relation("StatusUpdateAuthor")
   meetings          Meeting[]
   mailThreads       MailThread[]
+  /// Action items this person undertook, whoever's call or thread they
+  /// came from.
+  ownedCommitments  Commitment[]     @relation("CommitmentOwner")
 
   // The CRM. Salesforce spread ownership across five different fields and
   // all five pointed at the same eight people.
@@ -1552,6 +1555,21 @@ model Commitment {
   /// get that over to you tomorrow" is a promise but a poor task title.
   suggestedTask String
 
+  /// The fuller instruction behind the short title - what to do, for whom,
+  /// and what it depends on. Carried into the task description on accept.
+  detail String?
+
+  /// The RevOptics person who undertook it. They see it on My work and the
+  /// task is assigned to them, whoever hosted the call or owns the thread.
+  /// Null for items written before owners were recorded, and for items whose
+  /// owner couldn't be matched to anyone: both fall back to the host.
+  ownerId String?
+  owner   User?   @relation("CommitmentOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  /// True when an owner was named but matched nobody in OneSpace - a Zoom
+  /// display name like "iPhone". The host sees it with an Assign to picker.
+  ownerUnrecognised Boolean @default(false)
+
   /// Where it came from: the transcript, or Zoom's own AI summary.
   fromSummary Boolean @default(false)
 
@@ -1566,6 +1584,7 @@ model Commitment {
   @@index([meetingId, status])
   @@index([mailMessageId])
   @@index([status, dueDate])
+  @@index([ownerId, status])
 }
 
 /// Small key/value store for things there will only ever be one of. Right now

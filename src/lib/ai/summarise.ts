@@ -8,8 +8,8 @@ import Anthropic from "@anthropic-ai/sdk";
  * a model reading the conversation: they can't tell "I'll send the spec"
  * from "I'll send the spec if Dana signs off", they have no idea who Dana
  * is, and they produced thirty pieces of small talk on the first real call
- * they met. They stay as the fallback for when this isn't configured, and
- * that is all they are for now.
+ * they met. They are no longer a fallback: a call Claude can't read gets
+ * no action items rather than guessed ones, and says why on the call.
  *
  * What crosses the wire, and what comes back, is the whole design question
  * here. The transcript goes to Anthropic for the length of one request and
@@ -25,7 +25,9 @@ export const aiConfigured = () => Boolean(process.env.ANTHROPIC_API_KEY);
 const MODEL = "claude-opus-5";
 
 export interface AiActionItem {
-  /** The task, as an instruction. */
+  /** A short task title - a dozen words, starting with a verb. */
+  title: string;
+  /** The task, as a full instruction. */
   task: string;
   /** Who owes it, as the transcript names them. */
   owner: string | null;
@@ -100,8 +102,13 @@ const SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["task", "owner", "ours", "when", "quote"],
+        required: ["title", "task", "owner", "ours", "when", "quote"],
         properties: {
+          title: {
+            type: "string",
+            description:
+              "A short task title: at most 12 words, starting with a verb, naming the deliverable and who it's for. 'Send Canopy the research-agent field mapping'. The detail belongs in task, not here.",
+          },
           task: {
             type: "string",
             description:
@@ -113,12 +120,13 @@ const SCHEMA = {
           // request rather than the one field.
           owner: {
             anyOf: [{ type: "string" }, { type: "null" }],
-            description: "Who owes it, as the transcript names them.",
+            description:
+              "The one person who took it on. For RevOptics, their full name exactly as it appears in the list of RevOptics people. Null only when no single person can be named.",
           },
           ours: {
             type: "boolean",
             description:
-              "True when a RevOptics person owes it, false when the client does.",
+              "True only when the owner is on the list of RevOptics people. False when the client owes it.",
           },
           when: {
             anyOf: [{ type: "string" }, { type: "null" }],
@@ -154,7 +162,7 @@ OUTLINE. Three to five groups following the shape of the call, in the order
 things came up. Finer grained than the sections, and it may cover the same
 ground from a different angle.
 
-ACTION ITEMS. What people undertook to do afterwards.
+ACTION ITEMS. What specific people undertook to do after the call.
 
 Throughout:
 
@@ -167,19 +175,44 @@ Name who said or did what, using the names in the transcript.
 
 Write complete sentences, not fragments. Past tense for what happened.
 
-Action items are instructions, not descriptions - start with a verb and carry
-enough detail to act on cold. "Submit an Outreach support request explaining
-that the research agents run but their custom fields don't appear in layout
-configuration" rather than "Submit a ticket". Where one depends on something
-else, say so: "After receiving the updated configuration, import it in
-Outreach before the Tuesday check-in."
+Action items. A RevOptics action item ("ours": true) is something one named
+RevOptics person agreed to deliver to the client, or to do on the client's
+behalf: "I'll send you the updated sequence spec by Friday", "Marcus will
+raise a support case with Outreach for you". The message lists the RevOptics
+people; anyone not on that list is the client's side. Each RevOptics item
+needs:
+- owner: the one RevOptics person who took it on, written exactly as their
+  name appears in that list. If you can't tell which single RevOptics person
+  took it on, leave the item out.
+- title: at most 12 words, starting with a verb - "Send Canopy the
+  research-agent field mapping". It goes on a to-do list, so keep it short.
+- task: the full instruction, with enough detail to act on cold. "Submit an
+  Outreach support request explaining that the research agents run but their
+  custom fields don't appear in layout configuration" rather than "Submit a
+  ticket". Where it depends on something else, say so.
 
-Record both sides. Set "ours" false for the client's own commitments - real
-and worth seeing, but not RevOptics work.
+Not action items, on either side - leave all of these out:
+- ideas, plans and possibilities: "we'll want to create a custom field",
+  "we should look at", "it might be worth", "the next phase will";
+- things said by "we" with nobody taking them on;
+- RevOptics' own housekeeping that isn't for the client;
+- anything done during the call itself, and narration of the agenda;
+- anything hedged into meaninglessness.
 
-Leave out anything done during the call itself, narration of the agenda,
-aims rather than undertakings, and anything hedged into meaninglessness. If
-nothing was undertaken, return an empty list; that is a useful answer.`;
+Also record the client's own commitments, with "ours" false and the client
+person as owner - real and worth seeing in the write-up, but not RevOptics
+work. Fewer, real commitments are worth more than a long list: if nothing
+was undertaken, return an empty list; that is a useful answer.`;
+
+/**
+ * The title as asked for, or the start of the instruction when the answer
+ * left it out or ran long - a to-do list row has to stay one line.
+ */
+export function shortTitle(title: string | undefined, task: string): string {
+  const words = (title?.trim() || task.trim()).split(/\s+/).filter(Boolean);
+  const cut = words.slice(0, 14).join(" ").replace(/[.,;:]+$/, "");
+  return words.length > 14 ? `${cut}…` : cut;
+}
 
 /** The write-up as text, for pasting into a recap email. */
 export function renderSummary(read: {
@@ -253,7 +286,13 @@ async function runOrExplain<T>(timeoutMs: number, run: () => Promise<T>): Promis
 
 export async function readTranscript(
   transcript: string,
-  context: { title: string; when: Date; client: string | null },
+  context: {
+    title: string;
+    when: Date;
+    client: string | null;
+    /** Everyone at RevOptics, by full name, so owners can be named exactly. */
+    team?: string[];
+  },
   /**
    * How long this one read may take.
    *
@@ -269,7 +308,7 @@ export async function readTranscript(
     return {
       read: null,
       reason:
-        "Claude isn't connected on this service, so no write-up was made - the call was scanned with the old pattern rules instead. Set ANTHROPIC_API_KEY in Railway on both the app service and the cron service, then use Re-read transcripts on the meetings list.",
+        "Claude isn't connected on this service, so no write-up or action items were made. Set ANTHROPIC_API_KEY in Railway on both the app service and the cron service, then use Re-read transcripts on the meetings list.",
     };
   }
 
@@ -291,6 +330,9 @@ export async function readTranscript(
     `Meeting: ${context.title}`,
     `Date: ${context.when.toISOString().slice(0, 10)}`,
     context.client ? `Client: ${context.client}` : null,
+    context.team && context.team.length > 0
+      ? `RevOptics people: ${context.team.join(", ")}`
+      : null,
   ]
     .filter(Boolean)
     .join("\n");
@@ -362,6 +404,7 @@ export async function readTranscript(
     sections?: { heading?: string; bullets?: string[] }[];
     outline?: { heading?: string; bullets?: string[] }[];
     action_items?: {
+      title?: string;
       task?: string;
       owner?: string | null;
       ours?: boolean;
@@ -391,6 +434,7 @@ export async function readTranscript(
   const actionItems: AiActionItem[] = (parsed.action_items ?? [])
     .filter((i) => typeof i.task === "string" && i.task.trim().length > 2)
     .map((i) => ({
+      title: shortTitle(i.title, i.task!),
       task: i.task!.trim().slice(0, 400),
       owner: i.owner?.trim() || null,
       ours: i.ours !== false,
