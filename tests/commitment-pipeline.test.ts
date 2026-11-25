@@ -62,7 +62,7 @@ need to address.
 
 Thanks again, and looking forward to getting these final items wrapped up!`;
 
-const fromPriya = { text: recap, presentIds: new Set(["priya"]) };
+const fromPriya = { kind: "email" as const, text: recap, presentIds: new Set(["priya"]), senderId: "priya" };
 
 test("the 16 Nov recap: Claude's correct answer (all the client's) puts nothing on My work", () => {
   const out = vetActionItems(
@@ -120,7 +120,7 @@ I'll investigate why completed Outreach tasks aren't associating with Salesforce
     ],
     team,
     people,
-    { text: withMine, presentIds: new Set(["priya"]) },
+    { kind: "email" as const, text: withMine, presentIds: new Set(["priya"]), senderId: "priya" },
   );
   assert.equal(out.owned.length, 1);
   assert.equal(out.owned[0].ownerId, "priya");
@@ -142,7 +142,7 @@ Priya Shah: We already completed the configuration of the BDR profile earlier.
 `;
 
 // Priya hosted; Sam joined; Jordan is the customer.
-const onCall = { text: call, presentIds: new Set(["priya"]) };
+const onCall = { kind: "call" as const, text: call, presentIds: new Set(["priya"]) };
 
 test("a consultant accepting a customer request owns it, with the promised date", () => {
   const out = vetActionItems(
@@ -169,7 +169,7 @@ test("a commitment made on a colleague's call goes to the person who made it", (
     team,
     people,
     // Sam isn't the host - he's known to be there because he spoke.
-    { text: call, presentIds: new Set(["priya", "sam"]) },
+    { kind: "call" as const, text: call, presentIds: new Set(["priya", "sam"]) },
   );
   assert.equal(out.owned.length, 1);
   assert.equal(out.owned[0].ownerId, "sam");
@@ -183,7 +183,7 @@ test("two consultants on one call each get their own commitment", () => {
     ],
     team,
     people,
-    { text: call, presentIds: new Set(["priya", "sam"]) },
+    { kind: "call" as const, text: call, presentIds: new Set(["priya", "sam"]) },
   );
   assert.deepEqual(out.owned.map((o) => o.ownerId), ["priya", "sam"]);
 });
@@ -193,7 +193,7 @@ test("a commitment that waits on the customer is kept, with what it waits on", (
     [item({ title: "Run the historical import after the export", task: "Run the historical import once Jordan at Northwind sends the export.", owner: "Sam Ortiz", quote: "Once Jordan sends the export, I'll run the historical import." })],
     team,
     people,
-    { text: call, presentIds: new Set(["priya", "sam"]) },
+    { kind: "call" as const, text: call, presentIds: new Set(["priya", "sam"]) },
   );
   assert.match(out.owned[0].task, /once Jordan .* sends the export/);
 });
@@ -240,7 +240,7 @@ test("an owner who wasn't on the call and isn't mentioned in it is on nobody's M
   assert.equal(out.unidentified.length, 1);
 });
 
-test("an item with no single owner - talk of next steps - is dropped", () => {
+test("an item with no individual owner is held for review, on nobody's list", () => {
   const out = vetActionItems(
     [item({ title: "Look at the dashboard filters", owner: null, quote: "Could someone look at the dashboard filters at some point?" })],
     team,
@@ -248,7 +248,7 @@ test("an item with no single owner - talk of next steps - is dropped", () => {
     onCall,
   );
   assert.equal(out.owned.length, 0);
-  assert.equal(out.rejected[0].reason, "no single RevOptics owner named");
+  assert.equal(out.unidentified[0].reason, "a RevOptics commitment with no individual owner");
 });
 
 test("a quote that isn't in the source is never evidence", () => {
@@ -296,4 +296,134 @@ test("a recap is read only from its sender's own mailbox, as theirs", () => {
   assert.equal(recapSender("priya@revoptics.example", "sam", byEmail), null);
   // Somebody who isn't a OneSpace person: nobody's.
   assert.equal(recapSender("intern@revoptics.example", "priya", byEmail), null);
+});
+
+// ------------------------------------------------ owner must be in the quote
+
+test("a quote running from the customer's request into the acceptance is evidence", () => {
+  const out = vetActionItems(
+    [
+      item({
+        title: "Send Northwind the updated sequences",
+        quote: "Can you send us the updated sequence templates? Sure, I'll get the updated sequences over to you by Friday.",
+        when: "by Friday",
+      }),
+    ],
+    team,
+    people,
+    onCall,
+  );
+  assert.equal(out.owned.length, 1);
+  assert.equal(out.owned[0].ownerId, "priya");
+});
+
+const sortedByCustomer = `
+Jordan Lee: The sync errors are back. Sam will sort that out, I'm sure.
+Priya Shah: Let's look at the rollout plan first.
+Jordan Lee: Fine by me.
+`;
+
+test("a customer saying a consultant will do it doesn't make it theirs", () => {
+  const out = vetActionItems(
+    [item({ title: "Sort out Northwind's sync errors", owner: "Sam Ortiz", quote: "Sam will sort that out, I'm sure." })],
+    team,
+    people,
+    { kind: "call", text: sortedByCustomer, presentIds: new Set(["priya", "sam"]) },
+  );
+  assert.equal(out.owned.length, 0);
+  assert.equal(out.rejected[0].reason, "nobody at RevOptics said it");
+});
+
+const mentions = `
+Priya Shah: I'll ask Sam about the historical import and come back to you.
+Jordan Lee: Thanks.
+Priya Shah: And Sam will take care of the BDR configuration this week.
+`;
+
+test("being mentioned isn't ownership - 'I'll ask Sam' isn't Sam's", () => {
+  const out = vetActionItems(
+    [item({ title: "Run Northwind's historical import", owner: "Sam Ortiz", quote: "I'll ask Sam about the historical import and come back to you." })],
+    team,
+    people,
+    { kind: "call", text: mentions, presentIds: new Set(["priya", "sam"]) },
+  );
+  assert.equal(out.owned.length, 0);
+  assert.match(out.unidentified[0].reason, /doesn't show Sam Ortiz taking it on/);
+});
+
+test("a colleague assigning it by name - 'Sam will take care of' - is Sam's", () => {
+  const out = vetActionItems(
+    [item({ title: "Configure Northwind's BDR setup", owner: "Sam Ortiz", quote: "Sam will take care of the BDR configuration this week." })],
+    team,
+    people,
+    { kind: "call", text: mentions, presentIds: new Set(["priya", "sam"]) },
+  );
+  assert.equal(out.owned[0]?.ownerId, "sam");
+});
+
+// --------------------------------------------------- team-level in an email
+
+const teamRecap = `Hi Jordan,
+
+Recap of today:
+- On our side, we'll build the pipeline dashboard for your leadership team.
+- I'll send over the sequence templates by Friday.
+
+Thanks,
+Priya`;
+const fromPriyaTeam = { kind: "email" as const, text: teamRecap, presentIds: new Set(["priya"]), senderId: "priya" };
+
+test("'on our side, we'll build...' is the team's - held, not given to the sender", () => {
+  const out = vetActionItems(
+    [item({ title: "Build Northwind's pipeline dashboard", owner: null, quote: "On our side, we'll build the pipeline dashboard for your leadership team." })],
+    team,
+    people,
+    fromPriyaTeam,
+  );
+  assert.equal(out.owned.length, 0);
+  assert.equal(out.unidentified.length, 1);
+});
+
+test("even if Claude gives the team's commitment to the sender, it isn't hers", () => {
+  const out = vetActionItems(
+    [item({ title: "Build Northwind's pipeline dashboard", owner: "Priya Shah", quote: "On our side, we'll build the pipeline dashboard for your leadership team." })],
+    team,
+    people,
+    fromPriyaTeam,
+  );
+  assert.equal(out.owned.length, 0);
+});
+
+test("the sender's own 'I'll...' in the same email is hers", () => {
+  const out = vetActionItems(
+    [item({ title: "Send Northwind the sequence templates", quote: "I'll send over the sequence templates by Friday.", when: "by Friday" })],
+    team,
+    people,
+    fromPriyaTeam,
+  );
+  assert.equal(out.owned[0]?.ownerId, "priya");
+  assert.equal(out.owned[0]?.when, "by Friday");
+});
+
+// ------------------------------------------------------------- deadlines
+
+test("a deadline that isn't in the commitment's own words is dropped", () => {
+  // The customer's "by Friday" elsewhere in the call isn't the consultant's.
+  const out = vetActionItems(
+    [item({ title: "Run the historical import after the export", task: "Run the historical import once Jordan sends the export.", owner: "Sam Ortiz", quote: "Once Jordan sends the export, I'll run the historical import.", when: "by Friday" })],
+    team,
+    people,
+    { kind: "call", text: call, presentIds: new Set(["priya", "sam"]) },
+  );
+  assert.equal(out.owned[0].when, null);
+});
+
+test("vague timing is no date; specific timing is kept", () => {
+  const said = new Date("2026-11-16T00:00:00Z"); // a Monday
+  for (const vague of ["next week", "sometime next week", "early next week", "in a couple of days", "soon", "in a few days", "by next week"]) {
+    assert.equal(promisedDate(vague, said), null, vague);
+  }
+  assert.equal(promisedDate("by Friday", said)?.toISOString().slice(0, 10), "2026-11-20");
+  assert.equal(promisedDate("by the end of next week", said)?.toISOString().slice(0, 10), "2026-11-27");
+  assert.equal(promisedDate("tomorrow", said)?.toISOString().slice(0, 10), "2026-11-17");
 });

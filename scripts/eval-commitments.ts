@@ -11,7 +11,7 @@
  * would reach each consultant's My work with what should.
  *
  * Needs ANTHROPIC_API_KEY (in .env or the environment). Costs roughly one
- * call write-up per case - about fifteen. Reads nothing from the database.
+ * call write-up per case - about twenty. Reads nothing from the database.
  * Every name and company here is made up; this file is in a public repository.
  */
 import "./load-env";
@@ -254,6 +254,96 @@ Sam Brown: It'll be with you by end of day.
 Priya Shah: Perfect, thanks Sam.`,
     expect: [],
   },
+
+  // ---------------------------------- ownership and dates, the harder cases
+  {
+    name: "Recap: a team-level commitment isn't the sender's",
+    kind: "recap",
+    by: "priya",
+    text: `Hi Jordan,
+
+Recap of today:
+- On our side, we'll build the pipeline dashboard for your leadership team.
+- Your team will confirm the stage definitions before we start.
+
+Thanks,
+Priya`,
+    expect: [],
+  },
+  {
+    name: "Recap: the sender commits a named colleague, with a deadline",
+    kind: "recap",
+    by: "sam",
+    text: `Hi Jordan,
+
+Thanks for today. Next steps:
+- Priya will share the reporting templates by Thursday.
+- Jordan to send the list of report owners.
+
+Best,
+Sam`,
+    expect: [{ owner: "priya", about: ["report", "template"], dated: true }],
+  },
+  {
+    name: "Call: the customer says a consultant will do it; the consultant never agrees",
+    kind: "call",
+    by: "priya",
+    text: `
+Jordan Lee: The sync errors are back again this morning. Sam will sort that out, I'm sure.
+Priya Shah: Let's look at the rollout plan first and come back to the sync.
+Jordan Lee: Fine by me. The rollout is more urgent anyway.
+Priya Shah: Agreed. Let's walk through the rollout dates.
+Jordan Lee: Sounds good.`,
+    expect: [],
+  },
+  {
+    name: "Call: mentioning a colleague isn't giving them the work",
+    kind: "call",
+    by: "priya",
+    text: `
+Jordan Lee: When can the historical import run?
+Priya Shah: I'll check with Sam on the import timing and get back to you tomorrow.
+Jordan Lee: Great, thanks.
+Priya Shah: Sam knows that part of the setup best.
+Jordan Lee: Makes sense.`,
+    expect: [{ owner: "priya", about: ["import", "timing", "back"], dated: true }],
+  },
+  {
+    name: "Call: a customer's deadline doesn't become the consultant's",
+    kind: "call",
+    by: "priya",
+    text: `
+Jordan Lee: We'll send the Salesforce export by Friday.
+Sam Ortiz: Once it's in, I'll run the historical import and confirm the record counts.
+Jordan Lee: Perfect.
+Priya Shah: Great, that closes out the data side.
+Jordan Lee: Thanks both.`,
+    expect: [{ owner: "sam", about: ["import"] }],
+  },
+  {
+    name: "Call: vague timing stays undated",
+    kind: "call",
+    by: "priya",
+    text: `
+Jordan Lee: Is the revised playbook coming?
+Priya Shah: Yes, I'll send the revised playbook sometime next week.
+Jordan Lee: That works for us.
+Priya Shah: I'll include the new objection handling section too.
+Jordan Lee: Great, thank you.`,
+    expect: [{ owner: "priya", about: ["playbook"] }],
+  },
+  {
+    name: "Call: a request bounced between speakers, then one consultant takes it",
+    kind: "call",
+    by: "priya",
+    text: `
+Jordan Lee: Could someone rebuild the BDR dashboard? The filters are wrong.
+Priya Shah: That one's tricky - Sam, is that something you could look at?
+Sam Ortiz: Yes, I can take care of that. I'll rebuild the BDR dashboard with the corrected filters.
+Jordan Lee: Thank you, Sam.
+Priya Shah: Great, that's settled.`,
+    expect: [{ owner: "sam", about: ["dashboard"] }],
+  },
 ];
 
 async function readCase(c: Case): Promise<AiActionItem[]> {
@@ -304,7 +394,12 @@ async function main() {
         if (id) present.add(id);
       }
     }
-    const out = vetActionItems(items, team, people, { text: c.text, presentIds: present });
+    const out = vetActionItems(items, team, people, {
+      kind: c.kind === "call" ? "call" : "email",
+      text: c.text,
+      presentIds: present,
+      senderId: c.kind === "recap" ? c.by : undefined,
+    });
 
     const left = [...c.expect];
     const extra: string[] = [];

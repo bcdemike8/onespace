@@ -30,10 +30,18 @@ export interface Candidate {
 
 /** What the reading was of, and who is known to have been part of it. */
 export interface SourceEvidence {
+  /**
+   * A call transcript, as "Name: words" turns, or an email from one sender.
+   * It decides how the quote is tied to a person: by who spoke it, or by the
+   * sender writing it.
+   */
+  kind: "call" | "email";
   /** The text Claude read - the transcript, or the email's own words. */
   text: string;
   /** OneSpace people known to be in it: host, invitees, speakers; the sender. */
   presentIds: Set<string>;
+  /** For an email, the OneSpace person who sent it. */
+  senderId?: string;
 }
 
 export interface Person {
@@ -90,6 +98,45 @@ export function quoteInSource(quote: string, source: string): boolean {
   return found / total >= 0.8;
 }
 
+/** One speaker's turn in a transcript. */
+export interface Turn {
+  speaker: string | null;
+  text: string;
+}
+
+const SPEAKER = /^\s*([^:\n]{1,60}):\s+(.*)$/;
+
+/** A transcript as Claude receives it, back into who said what. */
+export function turnsOf(transcript: string): Turn[] {
+  const turns: Turn[] = [];
+  for (const line of transcript.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const m = SPEAKER.exec(line);
+    if (m) turns.push({ speaker: m[1].trim(), text: m[2] });
+    else if (turns.length > 0) turns[turns.length - 1].text += ` ${line}`;
+    else turns.push({ speaker: null, text: line });
+  }
+  return turns;
+}
+
+/**
+ * The turns a quote is drawn from.
+ *
+ * A quote for an accepted request runs across two speakers - the customer
+ * asking, the consultant agreeing - so it's matched turn by turn: a turn
+ * counts if it holds a run of three of the quote's words in a row.
+ */
+function turnsOfQuote(quote: string, turns: Turn[]): Turn[] {
+  const words = normalText(quote).split(" ").filter(Boolean);
+  const span = Math.min(3, words.length);
+  const runs: string[] = [];
+  for (let i = 0; i + span <= words.length; i += 1) runs.push(words.slice(i, i + span).join(" "));
+  return turns.filter((t) => {
+    const said = ` ${normalText(t.text)} `;
+    return runs.some((r) => said.includes(` ${r} `));
+  });
+}
+
 /** Words a whole title or sentence doesn't end on. */
 const DANGLING = new Set([
   "a", "an", "the", "to", "of", "and", "or", "but", "whether", "for", "with",
@@ -109,6 +156,88 @@ export function namedIn(name: string, text: string): boolean {
   const full = normalText(name);
   const first = full.split(" ")[0];
   return (full.length > 0 && t.includes(` ${full} `)) || (first.length > 1 && t.includes(` ${first} `));
+}
+
+/**
+ * Is this person named as the one doing something - "Sam will...", "Sam to
+ * build...", "Sam's going to...", "Sam can take..." - rather than just
+ * mentioned ("I'll ask Sam about it")?
+ */
+export function namedAsDoer(name: string, text: string): boolean {
+  const t = normalText(text);
+  const full = normalText(name);
+  const first = full.split(" ")[0];
+  const who = [full, first].filter((n) => n.length > 1).join("|");
+  if (!who) return false;
+  return new RegExp(
+    // Apostrophes are gone by now: "Sam's going to" reads "sams going to",
+    // "Sam'll" reads "samll".
+    `\\b(${who})(s| [a-z-]+)? (will|going to|is going to|to|can|owns|is taking|takes|is handling|handles)\\b|\\b(${who})ll\\b`,
+  ).test(t);
+}
+
+/** Words only the person writing uses about themselves. */
+const FIRST_PERSON = /\b(i|i'?ll|i'?m|i'?ve|i'?d|me|my|myself)\b/i;
+
+/**
+ * Does the quote show this person taking the work on?
+ *
+ * Being named, or being on the call, isn't ownership. On a call the quote has
+ * to include the owner's own words, or a RevOptics colleague naming them as
+ * the one doing it ("Sam will...") - a customer saying "Sam will sort it"
+ * doesn't make it Sam's until Sam agrees, and "I'll ask Sam about it" isn't
+ * Sam's at all. In an email the sender has to be writing about themselves
+ * ("I'll..."), or naming the colleague they're committing.
+ *
+ * "ours" when a RevOptics person said or wrote the quote at all, so a quote
+ * that's entirely the customer's can be told apart from one that names the
+ * wrong one of us.
+ */
+export function quoteSupports(
+  quote: string,
+  ownerId: string,
+  ownerName: string,
+  source: SourceEvidence,
+  index: NameIndex,
+): { owner: boolean; ours: boolean } {
+  if (source.kind === "email") {
+    const byOwner = ownerId === source.senderId && FIRST_PERSON.test(quote.replace(/[’‘]/g, "'"));
+    return { owner: byOwner || namedAsDoer(ownerName, quote), ours: true };
+  }
+  const turns = turnsOfQuote(quote, turnsOf(source.text));
+  let ours = false;
+  let owner = false;
+  for (const t of turns) {
+    const id = index.match(t.speaker);
+    if (!id) continue;
+    ours = true;
+    if (id === ownerId || namedAsDoer(ownerName, t.text)) owner = true;
+  }
+  return { owner, ours };
+}
+
+/** A timing phrase too loose to be a date anyone promised. */
+const VAGUE_WHEN =
+  /\b(some ?time|around|roughly|approximately|early|mid|couple|few|several|soon|asap|shortly|hopefully|ideally|maybe|probably|at some point|whenever|eventually|later)\b/i;
+
+/**
+ * The deadline phrase, if it is one this commitment actually carries.
+ *
+ * It has to be in the commitment's own quote - so the customer's "by Friday"
+ * elsewhere in the conversation, or the meeting's own date, can't attach to
+ * it - and it has to be specific. "Next week", "in a few days" and "soon" are
+ * left blank rather than turned into a day nobody named; "by the end of next
+ * week" is kept.
+ */
+export function promisedWhen(when: string | null, quote: string): string | null {
+  const phrase = when?.trim();
+  if (!phrase) return null;
+  if (!` ${normalText(quote)} `.includes(` ${normalText(phrase)} `)) return null;
+  if (VAGUE_WHEN.test(phrase)) return null;
+  if (/\b(next|this) week\b/i.test(phrase) && !/\bend of (the )?(next|this) week\b/i.test(phrase)) {
+    return null;
+  }
+  return phrase;
 }
 
 /**
@@ -132,7 +261,11 @@ export function vetActionItems<T extends Candidate>(
       out.rejected.push({ item, reason: "the customer's, or nobody's" });
       continue;
     }
-    if (!quoteInSource(item.quote, source.text)) {
+    // Speaker names aren't words anyone said: a quote running from the
+    // customer's request into the consultant's reply is matched without them.
+    const spoken =
+      source.kind === "call" ? turnsOf(source.text).map((t) => t.text).join("\n") : source.text;
+    if (!quoteInSource(item.quote, spoken)) {
       out.rejected.push({ item, reason: "its quote isn't in the source" });
       continue;
     }
@@ -147,7 +280,10 @@ export function vetActionItems<T extends Candidate>(
     }
     const owner = item.owner?.trim();
     if (!owner) {
-      out.rejected.push({ item, reason: "no single RevOptics owner named" });
+      // A real RevOptics commitment made for the team - "on our side, we'll
+      // build the dashboard" - is nobody's in particular. Held for review,
+      // never put on whoever happened to say or send it.
+      out.unidentified.push({ item, reason: "a RevOptics commitment with no individual owner" });
       continue;
     }
     const id = index.match(owner);
@@ -170,7 +306,19 @@ export function vetActionItems<T extends Candidate>(
       });
       continue;
     }
-    out.owned.push({ ...item, ownerId: id });
+    const support = quoteSupports(item.quote, id, nameOf.get(id) ?? owner, source, index);
+    if (!support.ours) {
+      out.rejected.push({ item, reason: "nobody at RevOptics said it" });
+      continue;
+    }
+    if (!support.owner) {
+      out.unidentified.push({
+        item,
+        reason: `the quote doesn't show ${owner} taking it on`,
+      });
+      continue;
+    }
+    out.owned.push({ ...item, ownerId: id, when: promisedWhen(item.when, item.quote) });
   }
 
   return out;
@@ -186,7 +334,11 @@ export function vetActionItems<T extends Candidate>(
  */
 export function promisedDate(when: string | null, said: Date): Date | null {
   const phrase = when?.trim();
-  return phrase ? parseWhen(phrase, said) : null;
+  if (!phrase || VAGUE_WHEN.test(phrase)) return null;
+  if (/\b(next|this) week\b/i.test(phrase) && !/\bend of (the )?(next|this) week\b/i.test(phrase)) {
+    return null;
+  }
+  return parseWhen(phrase, said);
 }
 
 /**

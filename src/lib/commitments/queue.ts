@@ -47,8 +47,25 @@ export function normalTask(text: string): string {
     .trim();
 }
 
+/**
+ * A word without its common ending, so "sequences" and "sequence", "syncing"
+ * and "sync", count as the same word. Deliberately light - just enough that
+ * a call and its recap, worded a little differently, read as one promise.
+ */
+function stem(word: string): string {
+  if (word.length > 5 && word.endsWith("ing")) return word.slice(0, -3);
+  if (word.length > 4 && word.endsWith("ed")) return word.slice(0, -2);
+  if (word.length > 3 && word.endsWith("s") && !word.endsWith("ss")) return word.slice(0, -1);
+  return word;
+}
+
 function contentWords(text: string): Set<string> {
-  return new Set(normalTask(text).split(" ").filter((w) => w.length > 1 && !STOP.has(w)));
+  return new Set(
+    normalTask(text)
+      .split(" ")
+      .filter((w) => w.length > 1 && !STOP.has(w))
+      .map(stem),
+  );
 }
 
 function compare(a: string, b: string): { shared: number; overlap: number } {

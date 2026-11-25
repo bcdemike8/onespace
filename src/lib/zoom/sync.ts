@@ -16,7 +16,12 @@ import { pickTranscript, type TranscriptPick } from "@/lib/zoom/files";
 import { readFromZoomSummary } from "@/lib/zoom/zoom-summary";
 import { parseVtt } from "@/lib/zoom/commitments";
 import { buildNameIndex, type NameIndex } from "@/lib/commitments/owner";
-import { promisedDate, vetActionItems, type Person } from "@/lib/commitments/pipeline";
+import {
+  promisedDate,
+  promisedWhen,
+  vetActionItems,
+  type Person,
+} from "@/lib/commitments/pipeline";
 import { normalTask, sameUndertaking } from "@/lib/commitments/queue";
 import {
   aiConfigured,
@@ -869,6 +874,7 @@ function callItems(
     if (id) there.add(id);
   }
   const vetted = vetActionItems(items, people.index, people.people, {
+    kind: "call",
     text,
     presentIds: there,
   });
@@ -884,7 +890,9 @@ function callItems(
   });
   return [
     ...vetted.owned.map((i) => found(i, i.ownerId)),
-    ...vetted.unidentified.map(({ item }) => found(item, null)),
+    ...vetted.unidentified.map(({ item }) =>
+      found({ ...item, when: promisedWhen(item.when, item.quote) }, null),
+    ),
   ];
 }
 
