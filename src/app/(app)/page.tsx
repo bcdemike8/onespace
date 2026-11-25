@@ -29,6 +29,8 @@ import { deleteTimeEntryAction } from "@/app/actions/time";
 import { queueSince } from "@/lib/recency";
 import { groupQueue, withoutDecided, type QueueRecord } from "@/lib/commitments/queue";
 import { orgTimezone } from "@/lib/google/sync";
+import { updateDue, updateDueLabel } from "@/lib/update-due";
+import { StatusCell } from "./projects/StatusCell";
 import { DayQueue } from "./DayQueue";
 import { AwaitingReply, type AwaitingThread } from "./AwaitingReply";
 
@@ -157,8 +159,15 @@ export default async function MyWorkPage() {
           status: true,
           dueDate: true,
           budgetHours: true,
+          createdAt: true,
           client: { select: { name: true } },
           _count: { select: { tasks: true } },
+          // The latest status update, for the weekly-update alert.
+          statusUpdates: {
+            orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+            take: 1,
+            select: { health: true, note: true, date: true },
+          },
         },
         orderBy: [{ dueDate: "asc" }, { name: "asc" }],
       }),
@@ -293,6 +302,24 @@ export default async function MyWorkPage() {
         : null,
     };
   });
+
+  // Weekly status updates: written Friday, in by end of day Monday. Judged
+  // against the org's calendar, so Monday evening in Chicago is still Monday.
+  const orgToday = today(zone);
+  const ownedDue = new Map(
+    ownedProjects.map((p) => [
+      p.id,
+      updateDue({
+        today: orgToday,
+        lastUpdate: p.statusUpdates[0]?.date ?? null,
+        projectCreated: p.createdAt,
+        active: p.status === "ACTIVE",
+      }),
+    ]),
+  );
+  const updatesOverdue = [...ownedDue.values()].filter((d) => d.state === "overdue").length;
+  const updatesDue = [...ownedDue.values()].filter((d) => d.state === "due");
+  const updatesDueToday = updatesDue.some((d) => d.dueToday);
 
   const ownedIds = ownedProjects.map((p) => p.id);
   const [ownedMinutes, ownedOpen] = await Promise.all([
@@ -457,6 +484,38 @@ export default async function MyWorkPage() {
                 </span>
               </div>
 
+              {updatesOverdue > 0 || updatesDue.length > 0 ? (
+                <p
+                  role="status"
+                  className={`mb-3 rounded-lg border px-4 py-2.5 text-sm ${
+                    updatesOverdue > 0
+                      ? "border-bad-500/30 bg-bad-50 text-bad-700"
+                      : "border-warn-500/30 bg-warn-50 text-warn-700"
+                  }`}
+                >
+                  {updatesOverdue > 0 ? (
+                    <>
+                      <span className="font-medium">
+                        {updatesOverdue} {updatesOverdue === 1 ? "project is" : "projects are"} missing
+                        this week&apos;s status update.
+                      </span>{" "}
+                      Updates were due by end of day Monday.
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-medium">
+                        {updatesDue.length} {updatesDue.length === 1 ? "project needs" : "projects need"} a
+                        status update
+                      </span>{" "}
+                      {updatesDueToday
+                        ? "by end of day today."
+                        : "— post it today if you can, and by end of day Monday at the latest."}
+                    </>
+                  )}{" "}
+                  Click a project&apos;s status to post one.
+                </p>
+              ) : null}
+
               <div className="card overflow-hidden">
                 <ul className="divide-y divide-ink-100">
                   {ownedProjects.map((project) => {
@@ -464,11 +523,19 @@ export default async function MyWorkPage() {
                     const open = ownedOpenBy.get(project.id) ?? 0;
                     const overdue =
                       project.dueDate && project.dueDate < now && open > 0;
+                    const due = ownedDue.get(project.id)!;
+                    const latest = project.statusUpdates[0] ?? null;
 
                     return (
                       <li
                         key={project.id}
-                        className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 hover:bg-ink-50/60"
+                        className={`flex flex-wrap items-center gap-x-4 gap-y-2 border-l-4 px-4 py-3 hover:bg-ink-50/60 ${
+                          due.state === "overdue"
+                            ? "border-l-bad-500"
+                            : due.state === "due"
+                              ? "border-l-warn-500"
+                              : "border-l-transparent"
+                        }`}
                       >
                         <div className="min-w-[14rem] flex-1">
                           <Link
@@ -510,6 +577,24 @@ export default async function MyWorkPage() {
                               {formatHours(minutes)}h logged
                             </span>
                           )}
+                        </div>
+
+                        <div className="w-48 shrink-0">
+                          <StatusCell
+                            projectId={project.id}
+                            projectName={project.name}
+                            health={latest?.health ?? null}
+                            note={latest?.note ?? null}
+                            today={toISODate(orgToday)}
+                            subtitle={updateDueLabel(due, orgToday)}
+                            subtitleTone={
+                              due.state === "overdue"
+                                ? "bad"
+                                : due.state === "due"
+                                  ? "warn"
+                                  : undefined
+                            }
+                          />
                         </div>
 
                         <ProjectStatusChip status={project.status} />

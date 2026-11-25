@@ -12,6 +12,8 @@ import { StatusCell } from "./StatusCell";
 import { ProjectTable } from "./ProjectTable";
 import { searchText } from "@/lib/search";
 import { setProjectOwnerAction } from "@/app/actions/projects";
+import { orgTimezone } from "@/lib/google/sync";
+import { updateDue, updateDueLabel } from "@/lib/update-due";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +40,7 @@ const HEALTH_FILTERS: { value: string; label: string }[] = [
   { value: "OFF_TRACK", label: "Off track" },
   { value: "AT_RISK", label: "At risk" },
   { value: "ON_TRACK", label: "On track" },
+  { value: "owed", label: "Weekly update owed" },
   { value: "none", label: "No update yet" },
   { value: "attention", label: "At risk or off track" },
 ];
@@ -116,6 +119,7 @@ export default async function ProjectsPage({
         partner: { select: { name: true } },
         ownerId: true,
         owner: { select: { name: true } },
+        createdAt: true,
         _count: { select: { tasks: true } },
       },
     }),
@@ -183,6 +187,9 @@ export default async function ProjectsPage({
     openTaskCounts.map((r) => [r.projectId, r._count._all]),
   );
   const now = today();
+  // Weekly updates are due by end of day Monday in the org's time zone;
+  // see lib/update-due.
+  const orgToday = today(await orgTimezone());
   // Default for the "as of" field in the status dialog on every row.
   const todayISO = toISODate(now);
 
@@ -200,10 +207,23 @@ export default async function ProjectsPage({
       health: update?.health ?? null,
       healthDate: update?.date ?? null,
       healthNote: update?.note ?? null,
+      due: updateDue({
+        today: orgToday,
+        lastUpdate: update?.date ?? null,
+        projectCreated: p.createdAt,
+        active: p.status === "ACTIVE",
+      }),
     };
   });
 
-  if (health === "none") rows = rows.filter((r) => r.health === null);
+  // Counted before any filtering, so the header says how many are owed
+  // across the tab, not just among the rows a filter left showing.
+  const updatesOverdue = rows.filter((r) => r.due.state === "overdue").length;
+  const updatesDue = rows.filter((r) => r.due.state === "due").length;
+
+  if (health === "owed")
+    rows = rows.filter((r) => r.due.state === "overdue" || r.due.state === "due");
+  else if (health === "none") rows = rows.filter((r) => r.health === null);
   else if (health === "attention")
     rows = rows.filter(
       (r) => r.health === "AT_RISK" || r.health === "OFF_TRACK",
@@ -294,6 +314,32 @@ export default async function ProjectsPage({
           </Link>
         }
       />
+
+      {updatesOverdue > 0 || (updatesDue > 0 && health !== "owed") ? (
+        <p
+          role="status"
+          className={`mb-4 rounded-lg border px-4 py-2.5 text-sm ${
+            updatesOverdue > 0
+              ? "border-bad-500/30 bg-bad-50 text-bad-700"
+              : "border-warn-500/30 bg-warn-50 text-warn-700"
+          }`}
+        >
+          <span className="font-medium">
+            {updatesOverdue > 0
+              ? `${updatesOverdue} active ${updatesOverdue === 1 ? "project is" : "projects are"} missing this week's status update`
+              : `${updatesDue} active ${updatesDue === 1 ? "project needs" : "projects need"} a status update by end of day Monday`}
+          </span>
+          {updatesOverdue > 0 && updatesDue > 0
+            ? `, and ${updatesDue} more ${updatesDue === 1 ? "is" : "are"} due by end of day Monday`
+            : ""}
+          .{" "}
+          {health !== "owed" ? (
+            <Link href={query({ health: "owed" })} className="font-medium underline">
+              Show only those
+            </Link>
+          ) : null}
+        </p>
+      ) : null}
 
       <div className="mb-4 flex flex-wrap gap-1">
         {STATUS_TABS.map((tab) => (
@@ -608,19 +654,28 @@ export default async function ProjectsPage({
                       health={project.health}
                       note={project.healthNote}
                       today={todayISO}
+                      subtitleTone={
+                        project.due.state === "overdue"
+                          ? "bad"
+                          : project.due.state === "due"
+                            ? "warn"
+                            : undefined
+                      }
                       subtitle={
-                        [
-                          project.healthDate
-                            ? `as of ${formatMedium(project.healthDate)}`
-                            : null,
-                          // The workflow state only earns space when it
-                          // isn't the default.
-                          project.status !== "ACTIVE"
-                            ? project.status.replace("_", " ").toLowerCase()
-                            : null,
-                        ]
-                          .filter(Boolean)
-                          .join(" · ") || "Click to post an update"
+                        project.due.state === "overdue" || project.due.state === "due"
+                          ? updateDueLabel(project.due, orgToday)
+                          : [
+                              project.healthDate
+                                ? `as of ${formatMedium(project.healthDate)}`
+                                : null,
+                              // The workflow state only earns space when it
+                              // isn't the default.
+                              project.status !== "ACTIVE"
+                                ? project.status.replace("_", " ").toLowerCase()
+                                : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ") || "Click to post an update"
                       }
                     />
                   </td>
