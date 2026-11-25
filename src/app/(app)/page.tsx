@@ -256,9 +256,18 @@ export default async function MyWorkPage() {
           },
         },
       }),
-      // Meetings that happened and haven't been turned into time yet.
+      // Client meetings from the last fortnight that haven't been turned into
+      // time yet. Not every waiting meeting: counting the whole backlog, months
+      // of internal calls included, gave a number in the hundreds that never
+      // went down and that nobody acted on. Older ones and internal ones still
+      // wait on the Meetings tab, which has a control to clear the backlog.
       db.meeting.count({
-        where: { userId: user.id, status: "PENDING", startsAt: { lte: new Date() } },
+        where: {
+          userId: user.id,
+          status: "PENDING",
+          noClient: false,
+          startsAt: { lte: new Date(), gte: new Date(Date.now() - 14 * 86_400_000) },
+        },
       }),
       // What this person already added or dismissed lately, so the same
       // promise arriving again from another call or recap isn't offered twice.
@@ -470,7 +479,8 @@ export default async function MyWorkPage() {
 
           {meetingsToLog > 0 ? (
             <p className="mb-6 rounded-lg border border-ink-200 bg-ink-50 px-4 py-2.5 text-sm text-ink-600">
-              {meetingsToLog} meeting{meetingsToLog === 1 ? "" : "s"} still to log.{" "}
+              {meetingsToLog} client meeting{meetingsToLog === 1 ? "" : "s"} from the
+              last two weeks still to log.{" "}
               <Link href="/meetings" className="font-medium text-brand-700 hover:underline">
                 Deal with {meetingsToLog === 1 ? "it" : "them"}
               </Link>

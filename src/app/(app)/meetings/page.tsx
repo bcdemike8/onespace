@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { isAdmin, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { dayInZone, formatMedium, timeInZone } from "@/lib/dates";
+import { addDays, dayInZone, formatMedium, timeInZone, toISODate, today } from "@/lib/dates";
 import { getLockState } from "@/lib/lock";
 import { isLocked } from "@/lib/periods";
 import { calendarWindowLabel, orgTimezone } from "@/lib/google/sync";
@@ -15,6 +15,7 @@ import { MeetingCard, type MeetingRow, type ProjectOption } from "./MeetingCard"
 import { SyncButton } from "./SyncButton";
 import { ReopenButton } from "./ReopenButton";
 import { UnmappedDomains } from "./UnmappedDomains";
+import { ClearBacklog } from "./ClearBacklog";
 
 export const dynamic = "force-dynamic";
 
@@ -58,6 +59,7 @@ export default async function MeetingsPage({
     clientOptions,
     skippedMeetings,
     skippedTotal,
+    myWaiting,
   ] = await Promise.all([
     db.meeting.findMany({
       where: { status: "PENDING", ...(everyone ? {} : { userId: user.id }) },
@@ -173,6 +175,12 @@ export default async function MeetingsPage({
       },
     }),
     db.skippedMeeting.count(),
+    // Your own waiting calls, all of them and nothing else, for the backlog
+    // control. The list above is capped and may be everyone's.
+    db.meeting.findMany({
+      where: { userId: user.id, status: "PENDING", startsAt: { lte: new Date() } },
+      select: { startsAt: true },
+    }),
   ]);
 
   const options: ProjectOption[] = projects.map((p) => ({
@@ -226,6 +234,12 @@ export default async function MeetingsPage({
     });
 
   const upcoming = pending.length - rows.length;
+
+  // The backlog control only shows when something of yours is older than the
+  // fortnight My Work counts; anything newer is still live work.
+  const backlogFrom = toISODate(addDays(today(zone), -14));
+  const myDays = myWaiting.map((m) => toISODate(dayInZone(m.startsAt, zone)));
+  const hasBacklog = myDays.some((d) => d < backlogFrom);
   // Everyone but an admin now gets their internal meetings too, so the count
   // jumped. Saying how many have no client behind them makes that legible
   // rather than alarming — and they're the ones nobody is paying for.
@@ -332,6 +346,8 @@ export default async function MeetingsPage({
           </Link>
         </div>
       ) : null}
+
+      {hasBacklog ? <ClearBacklog days={myDays} defaultBefore={backlogFrom} /> : null}
 
       {rows.length === 0 ? (
         <EmptyState
