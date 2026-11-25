@@ -5,6 +5,7 @@ import { useActionState } from "react";
 import { dismissMeetingAction, setMeetingOutcomeAction } from "@/app/actions/google";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ErrorNote } from "@/components/ui";
+import { AlreadyLoggedButton } from "./MeetingCard";
 
 type State = { error?: string; ok?: boolean; message?: string };
 
@@ -19,6 +20,12 @@ export interface AllMeetingRow {
   projectName: string | null;
   /** Logged as non-billable time (an internal project, say). */
   nonBillableEntry: boolean;
+  /** Logged with an entry of its own, which is what the hours total counts. */
+  hasEntry: boolean;
+  /** Marked "Already logged": the time went on the timesheet by hand. */
+  loggedByHand: boolean;
+  /** Waiting or set aside: what the owner has on the timesheet that day. */
+  timesheetNote: string | null;
   /** Logged in a closed month, so the entry can't be taken back. */
   locked: boolean;
   ownerName: string | null;
@@ -65,14 +72,28 @@ function Week({ week }: { week: MeetingWeek }) {
   const logged = week.rows.filter((r) => r.status === "ACCEPTED");
   const notBillable = week.rows.filter((r) => r.status === "DISMISSED").length;
   const waiting = week.rows.filter((r) => r.status === "PENDING").length;
-  const loggedMinutes = logged.reduce((sum, r) => sum + r.minutes, 0);
+  // Only calls with an entry of their own: a call logged by hand has its
+  // hours on the timesheet under whatever was typed there, not here.
+  const loggedMinutes = logged
+    .filter((r) => r.hasEntry)
+    .reduce((sum, r) => sum + r.minutes, 0);
+  const byHand = logged.filter((r) => r.loggedByHand).length;
 
   return (
     <section>
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-sm font-semibold text-ink-900">{week.label}</h2>
         <span className="text-xs text-ink-500">
-          {logged.length} logged{logged.length > 0 ? ` (${formatMinutes(loggedMinutes)})` : ""} ·{" "}
+          {logged.length} logged
+          {loggedMinutes > 0 || byHand > 0
+            ? ` (${[
+                loggedMinutes > 0 ? formatMinutes(loggedMinutes) : null,
+                byHand > 0 ? `${byHand} by hand` : null,
+              ]
+                .filter(Boolean)
+                .join(", ")})`
+            : ""}{" "}
+          ·{" "}
           {notBillable} not billable
           {waiting > 0 ? (
             <span className="font-medium text-warn-700"> · {waiting} not dealt with</span>
@@ -111,6 +132,7 @@ function Row({ row }: { row: AllMeetingRow }) {
             {row.whenLabel} · {formatMinutes(row.minutes)}
             {row.projectName ? ` · ${row.projectName}` : ""}
             {row.nonBillableEntry ? " · non-billable time" : ""}
+            {row.loggedByHand ? " · logged by hand" : ""}
             {row.ownerName ? ` · ${row.ownerName}` : ""}
           </span>
         </Link>
@@ -120,6 +142,7 @@ function Row({ row }: { row: AllMeetingRow }) {
             <Link href={`/meetings/${row.id}`} className="btn-secondary btn-sm">
               Log
             </Link>
+            <AlreadyLoggedButton id={row.id} />
             <form action={dismissMeetingAction}>
               <input type="hidden" name="id" value={row.id} />
               <SubmitButton pendingLabel="…" className="btn-ghost btn-sm">
@@ -130,13 +153,16 @@ function Row({ row }: { row: AllMeetingRow }) {
         ) : null}
 
         {row.status === "DISMISSED" ? (
-          <form action={action}>
-            <input type="hidden" name="id" value={row.id} />
-            <input type="hidden" name="intent" value="log" />
-            <SubmitButton pendingLabel="Opening…" className="btn-ghost btn-sm">
-              Log it after all
-            </SubmitButton>
-          </form>
+          <>
+            <AlreadyLoggedButton id={row.id} />
+            <form action={action}>
+              <input type="hidden" name="id" value={row.id} />
+              <input type="hidden" name="intent" value="log" />
+              <SubmitButton pendingLabel="Opening…" className="btn-ghost btn-sm">
+                Log it after all
+              </SubmitButton>
+            </form>
+          </>
         ) : null}
 
         {row.status === "ACCEPTED" ? (
@@ -148,7 +174,10 @@ function Row({ row }: { row: AllMeetingRow }) {
             <form
               action={action}
               onSubmit={(e) => {
+                // Nothing comes off the timesheet for a call with no entry
+                // of its own, so there is nothing to warn about.
                 if (
+                  row.hasEntry &&
                   !window.confirm(
                     `Mark "${row.title}" as not billable? Its ${formatMinutes(row.minutes)} comes off the timesheet.`,
                   )
@@ -166,6 +195,11 @@ function Row({ row }: { row: AllMeetingRow }) {
           )
         ) : null}
       </div>
+      {row.timesheetNote ? (
+        <p className="mt-1 text-xs text-ink-500">
+          On the timesheet that day: <span className="text-ink-700">{row.timesheetNote}</span>
+        </p>
+      ) : null}
       <ErrorNote message={state?.error} />
     </li>
   );

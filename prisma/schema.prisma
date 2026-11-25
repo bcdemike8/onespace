@@ -1366,6 +1366,12 @@ model Meeting {
   timeEntryId String?    @unique
   timeEntry   TimeEntry? @relation(fields: [timeEntryId], references: [id], onDelete: SetNull)
 
+  /// Accepted without a time entry of its own, because the person had
+  /// already put the hour on the timesheet by hand. It counts as logged, not
+  /// as "not billable", and nothing is booked a second time. No entry is
+  /// linked, so taking it back never deletes time somebody typed in.
+  loggedByHand Boolean @default(false)
+
   source MeetingSource @default(CALENDAR)
 
   /// Zoom's numeric meeting id, and the per-occurrence UUID. The id is lifted

@@ -139,10 +139,26 @@ export async function updateTimeEntryAction(
   return { ok: true };
 }
 
+/**
+ * Delete an entry, and if a meeting was logged as it, put that meeting back
+ * on the list. Left alone, the meeting stayed "Logged" with no time behind
+ * it - shown as logged on the Meetings tab, and never offered again because
+ * the sync leaves anything already decided alone.
+ */
+async function deleteEntry(id: string) {
+  await db.$transaction([
+    db.meeting.updateMany({
+      where: { timeEntryId: id },
+      data: { status: "PENDING", timeEntryId: null, loggedByHand: false },
+    }),
+    db.timeEntry.delete({ where: { id } }),
+  ]);
+}
+
 export async function deleteTimeEntryAction(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   await assertCanEditEntry(id);
-  await db.timeEntry.delete({ where: { id } });
+  await deleteEntry(id);
   refresh();
 }
 
@@ -159,7 +175,7 @@ export async function removeTimeEntryAction(
   } catch (e) {
     return { error: e instanceof Error ? e.message : "You can't delete that." };
   }
-  await db.timeEntry.delete({ where: { id } });
+  await deleteEntry(id);
   refresh();
   return { ok: true };
 }

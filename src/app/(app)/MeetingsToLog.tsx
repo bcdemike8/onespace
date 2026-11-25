@@ -6,6 +6,7 @@ import { dismissMeetingAction, dismissMeetingsAction } from "@/app/actions/googl
 import { SubmitButton } from "@/components/SubmitButton";
 import { ErrorNote } from "@/components/ui";
 import { CappedList } from "@/components/CappedList";
+import { AlreadyLoggedButton } from "./meetings/MeetingCard";
 
 type State = { error?: string; ok?: boolean; message?: string };
 
@@ -113,6 +114,8 @@ function Row({ meeting }: { meeting: MeetingToLog }) {
       <Link href={`/meetings/${meeting.id}`} className="btn-secondary btn-sm">
         Log
       </Link>
+
+      <AlreadyLoggedButton id={meeting.id} onDone={() => setGone(true)} />
 
       <form
         action={async (formData) => {

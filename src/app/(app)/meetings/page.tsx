@@ -27,6 +27,7 @@ import { ReopenButton } from "./ReopenButton";
 import { UnmappedDomains } from "./UnmappedDomains";
 import { ClearBacklog } from "./ClearBacklog";
 import { AllMeetings, type AllMeetingRow, type MeetingWeek } from "./AllMeetings";
+import { timesheetOnDay } from "@/lib/timesheet-on-day";
 
 export const dynamic = "force-dynamic";
 
@@ -109,6 +110,7 @@ export default async function MeetingsPage({
       take: isAll ? 0 : 200,
       select: {
         id: true,
+        userId: true,
         title: true,
         startsAt: true,
         minutes: true,
@@ -166,11 +168,13 @@ export default async function MeetingsPage({
       take: isAll ? 5000 : 0,
       select: {
         id: true,
+        userId: true,
         title: true,
         startsAt: true,
         minutes: true,
         actualMinutes: true,
         status: true,
+        loggedByHand: true,
         suggestedProjectId: true,
         project: { select: { name: true } },
         timeEntry: {
@@ -249,6 +253,19 @@ export default async function MeetingsPage({
     tasks: p.tasks,
   }));
 
+  // What each person already has on the timesheet on the day of each call
+  // still open, so "Already logged" can be pressed knowing it's true rather
+  // than from memory. Only for the calls that can still take that button.
+  const handLogged = await timesheetOnDay(
+    [
+      ...pending.map((m) => ({ userId: m.userId, startsAt: m.startsAt })),
+      ...history
+        .filter((m) => m.status !== "ACCEPTED")
+        .map((m) => ({ userId: m.userId, startsAt: m.startsAt })),
+    ],
+    zone,
+  );
+
   const now = Date.now();
   const rows: MeetingRow[] = pending
     // A meeting that hasn't happened yet isn't time anyone has spent.
@@ -288,6 +305,7 @@ export default async function MeetingsPage({
         transcriptRead: m.transcriptReadAt !== null,
         hasZoom: m.zoomUuid !== null,
         commitments: m.commitments,
+        timesheetNote: handLogged(m.userId, m.startsAt),
       };
     });
 
@@ -313,11 +331,14 @@ export default async function MeetingsPage({
       whenLabel: `${formatWeekday(day)}, ${formatShort(day)} · ${timeInZone(m.startsAt, zone)}`,
       minutes: entry?.minutes ?? m.actualMinutes ?? m.minutes,
       status: m.status,
+      loggedByHand: m.loggedByHand,
+      timesheetNote: m.status === "ACCEPTED" ? null : handLogged(m.userId, m.startsAt),
       projectName:
         entry?.project.name ??
         m.project?.name ??
         (m.suggestedProjectId ? (options.find((o) => o.id === m.suggestedProjectId)?.name ?? null) : null),
       nonBillableEntry: entry ? !entry.billable : false,
+      hasEntry: entry !== null,
       locked: entry ? isLocked(entry.date, lock) : false,
       ownerName: everyone ? m.user.name : null,
     };
@@ -474,9 +495,12 @@ export default async function MeetingsPage({
         </div>
       </div>
 
-      {hasBacklog ? (
-        <ClearBacklog days={waitingDays} defaultBefore={backlogFrom} everyone={everyone} />
-      ) : null}
+      <ClearBacklog
+        show={hasBacklog}
+        days={waitingDays}
+        defaultBefore={backlogFrom}
+        everyone={everyone}
+      />
 
       {isAll ? (
         <AllMeetings weeks={weeks} moreHref={moreHref} />

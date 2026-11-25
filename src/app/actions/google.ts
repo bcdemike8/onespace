@@ -164,6 +164,7 @@ export async function acceptMeetingAction(
         projectId: parsed.data.projectId,
         taskId: parsed.data.taskId || null,
         timeEntryId: entry.id,
+        loggedByHand: false,
       },
     });
   });
@@ -213,7 +214,7 @@ export async function dismissMeetingsAction(
  * day. The backlog this clears ran to a hundred-odd calls, months old, that
  * nobody was ever going to log one at a time - and while they sat there the
  * count on My Work meant nothing. They go where "Not billable work" puts
- * things, not away: each can still be brought back with "Billable after all".
+ * things, not away: each can still be brought back with "Log it after all".
  *
  * Your own by default. An admin may pass scope=all to do it for the whole
  * team - the one-off retroactive clean-up, so everybody starts from the last
@@ -267,6 +268,41 @@ export async function dismissMeetingsBeforeAction(
 }
 
 /**
+ * "Already logged": the time for these calls is on the timesheet already,
+ * put there by hand, so take them off the list as logged - not as "not
+ * billable", which is what people were pressing for want of anything else.
+ *
+ * No time entry is created (that would book the hour twice) and none is
+ * linked, so undoing it later can never delete time somebody typed in.
+ * Waiting calls and set-aside ones both qualify; a call already logged
+ * through the card is left as it is. Your own, or anyone's for an admin,
+ * same as Not billable.
+ */
+export async function markMeetingsLoggedAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+  const ids = formData.getAll("id").map(String).filter(Boolean);
+  if (ids.length === 0) return { ok: true };
+
+  const { count } = await db.meeting.updateMany({
+    where: {
+      id: { in: ids },
+      status: { in: ["PENDING", "DISMISSED"] },
+      ...(isAdmin(user) ? {} : { userId: user.id }),
+    },
+    data: { status: "ACCEPTED", loggedByHand: true, timeEntryId: null },
+  });
+  refresh();
+  if (count === 0) return { error: "Nothing changed - it may already be logged." };
+  return {
+    ok: true,
+    message: `Marked ${count} meeting${count === 1 ? "" : "s"} as already logged.`,
+  };
+}
+
+/**
  * Change a meeting's outcome from the All view, the running list of every
  * call and what became of it.
  *
@@ -311,7 +347,7 @@ export async function setMeetingOutcomeAction(
     await db.$transaction(async (tx) => {
       await tx.meeting.update({
         where: { id },
-        data: { status: "DISMISSED", timeEntryId: null },
+        data: { status: "DISMISSED", timeEntryId: null, loggedByHand: false },
       });
       if (meeting.timeEntryId) {
         await tx.timeEntry.delete({ where: { id: meeting.timeEntryId } });
@@ -355,7 +391,7 @@ export async function reopenMeetingAction(formData: FormData): Promise<void> {
   await db.$transaction(async (tx) => {
     await tx.meeting.update({
       where: { id },
-      data: { status: "PENDING", timeEntryId: null },
+      data: { status: "PENDING", timeEntryId: null, loggedByHand: false },
     });
     if (meeting.timeEntryId) {
       await tx.timeEntry.delete({ where: { id: meeting.timeEntryId } });
