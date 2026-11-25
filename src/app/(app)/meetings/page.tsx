@@ -98,13 +98,18 @@ export default async function MeetingsPage({
     clientOptions,
     skippedMeetings,
     skippedTotal,
+    upcoming,
     waiting,
   ] = await Promise.all([
+    // Only calls that have happened. The sync reads a fortnight ahead, and
+    // now that calendar blocks and internal meetings come in too, the
+    // upcoming ones alone can fill the cap - newest-first, they were taking
+    // every one of the 200 places before a single past call was read.
     db.meeting.findMany({
       where: {
         status: "PENDING",
         ...(everyone ? {} : { userId: user.id }),
-        ...(rangeFrom ? { startsAt: { gte: rangeFrom } } : {}),
+        startsAt: { ...(rangeFrom ? { gte: rangeFrom } : {}), lte: new Date() },
       },
       orderBy: [{ startsAt: "desc" }],
       take: isAll ? 0 : 200,
@@ -232,6 +237,13 @@ export default async function MeetingsPage({
       },
     }),
     db.skippedMeeting.count(),
+    db.meeting.count({
+      where: {
+        status: "PENDING",
+        ...(everyone ? {} : { userId: user.id }),
+        startsAt: { gt: new Date() },
+      },
+    }),
     // Every waiting call in view - yours, or the team's on Everyone - for the
     // backlog control and the "older ones under All" note. The list above is
     // capped and filtered to the range; this is neither.
@@ -266,48 +278,44 @@ export default async function MeetingsPage({
     zone,
   );
 
-  const now = Date.now();
-  const rows: MeetingRow[] = pending
-    // A meeting that hasn't happened yet isn't time anyone has spent.
-    .filter((m) => m.startsAt.getTime() <= now)
-    .map((m) => {
-      const day = dayInZone(m.startsAt, zone);
-      const attendees = Array.isArray(m.attendees)
-        ? (m.attendees as Attendee[]).map((a) => ({
-            email: a.email ?? "",
-            name: a.name ?? null,
-          }))
-        : [];
+  const rows: MeetingRow[] = pending.map((m) => {
+    const day = dayInZone(m.startsAt, zone);
+    const attendees = Array.isArray(m.attendees)
+      ? (m.attendees as Attendee[]).map((a) => ({
+          email: a.email ?? "",
+          name: a.name ?? null,
+        }))
+      : [];
 
-      return {
-        id: m.id,
-        title: m.title,
-        dayLabel: formatMedium(day),
-        timeLabel: timeInZone(m.startsAt, zone),
-        minutes: m.minutes,
-        durationValue: durationValue(m.actualMinutes ?? m.minutes),
-        attendees,
-        externalDomains: m.externalDomains,
-        noClient: m.noClient,
-        suggestedProjectId: m.suggestedProjectId,
-        suggestedTaskId: m.taskId,
-        matchReason: m.matchReason,
-        confidence: m.confidence,
-        lockedNote: isLocked(day, lock)
-          ? `${formatMedium(day)} is in a closed month. Reopen the period on the timesheet to log this, or dismiss it.`
-          : null,
-        ownerName: everyone ? m.user.name : null,
-        actualMinutes: m.actualMinutes,
-        recordingUrl: m.recordingUrl,
-        summary: m.summary,
-        summaryDoc: asSummaryDoc(m.summaryJson),
-        transcriptNote: m.transcriptNote,
-        transcriptRead: m.transcriptReadAt !== null,
-        hasZoom: m.zoomUuid !== null,
-        commitments: m.commitments,
-        timesheetNote: handLogged(m.userId, m.startsAt),
-      };
-    });
+    return {
+      id: m.id,
+      title: m.title,
+      dayLabel: formatMedium(day),
+      timeLabel: timeInZone(m.startsAt, zone),
+      minutes: m.minutes,
+      durationValue: durationValue(m.actualMinutes ?? m.minutes),
+      attendees,
+      externalDomains: m.externalDomains,
+      noClient: m.noClient,
+      suggestedProjectId: m.suggestedProjectId,
+      suggestedTaskId: m.taskId,
+      matchReason: m.matchReason,
+      confidence: m.confidence,
+      lockedNote: isLocked(day, lock)
+        ? `${formatMedium(day)} is in a closed month. Reopen the period on the timesheet to log this, or dismiss it.`
+        : null,
+      ownerName: everyone ? m.user.name : null,
+      actualMinutes: m.actualMinutes,
+      recordingUrl: m.recordingUrl,
+      summary: m.summary,
+      summaryDoc: asSummaryDoc(m.summaryJson),
+      transcriptNote: m.transcriptNote,
+      transcriptRead: m.transcriptReadAt !== null,
+      hasZoom: m.zoomUuid !== null,
+      commitments: m.commitments,
+      timesheetNote: handLogged(m.userId, m.startsAt),
+    };
+  });
 
   const weekGroups = new Map<string, MeetingWeek>();
   for (const m of history) {
@@ -355,7 +363,6 @@ export default async function MeetingsPage({
       ? `${hrefFor({ range: "all" })}&weeks=${weeksShown + 8}`
       : null;
 
-  const upcoming = pending.length - rows.length;
 
   // The backlog control only shows when something of yours is older than the
   // fortnight My Work counts; anything newer is still live work.
