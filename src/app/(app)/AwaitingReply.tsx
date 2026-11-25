@@ -5,6 +5,7 @@ import { useActionState, useState } from "react";
 import { clearAwaitingMailAction, markMailDoneAction } from "@/app/actions/mail";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ErrorNote } from "@/components/ui";
+import { CappedList } from "@/components/CappedList";
 
 type State = { error?: string; ok?: boolean; message?: string };
 
@@ -27,8 +28,8 @@ export interface AwaitingThread {
   } | null;
 }
 
-/** How many rows show before "Show more". The section is a nudge, not an inbox. */
-const VISIBLE = 8;
+/** Rows in view before the list scrolls. The section is a nudge, not an inbox. */
+const VISIBLE = 5;
 
 const waitingLabel = (days: number) =>
   days === 0 ? "today" : days === 1 ? "1 day" : `${days} days`;
@@ -44,12 +45,9 @@ const waitingLabel = (days: number) =>
  */
 export function AwaitingReply({ threads }: { threads: AwaitingThread[] }) {
   const [open, setOpen] = useState<string | null>(null);
-  const [showAll, setShowAll] = useState(false);
   const [clearState, clearAction] = useActionState(clearAwaitingMailAction, {} as State);
 
   if (threads.length === 0) return null;
-  const shown = showAll ? threads : threads.slice(0, VISIBLE);
-  const hidden = threads.length - shown.length;
 
   return (
     <section className="mb-6">
@@ -83,26 +81,18 @@ export function AwaitingReply({ threads }: { threads: AwaitingThread[] }) {
       </div>
       <ErrorNote message={clearState?.error} />
 
-      <ul className="card divide-y divide-ink-100">
-        {shown.map((thread) => (
-          <Row
-            key={thread.id}
-            thread={thread}
-            expanded={open === thread.id}
-            onToggle={() => setOpen((cur) => (cur === thread.id ? null : thread.id))}
-          />
-        ))}
-      </ul>
-
-      {hidden > 0 ? (
-        <button
-          type="button"
-          className="mt-2 text-xs font-medium text-brand-700 hover:underline"
-          onClick={() => setShowAll(true)}
-        >
-          Show {hidden} more
-        </button>
-      ) : null}
+      <div className="card overflow-hidden">
+        <CappedList visible={VISIBLE} className="divide-y divide-ink-100">
+          {threads.map((thread) => (
+            <Row
+              key={thread.id}
+              thread={thread}
+              expanded={open === thread.id}
+              onToggle={() => setOpen((cur) => (cur === thread.id ? null : thread.id))}
+            />
+          ))}
+        </CappedList>
+      </div>
     </section>
   );
 }

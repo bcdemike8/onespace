@@ -7,6 +7,7 @@ import {
   dismissCommitmentsAction,
 } from "@/app/actions/zoom";
 import { SubmitButton } from "@/components/SubmitButton";
+import { CappedList } from "@/components/CappedList";
 import { ErrorNote } from "@/components/ui";
 import {
   queueCount,
@@ -139,11 +140,11 @@ function ProjectGroup({
           <ErrorNote message={state.error} />
         </div>
       ) : null}
-      <ul className="divide-y divide-ink-100">
+      <CappedList visible={5} className="divide-y divide-ink-100">
         {group.items.map((item) => (
           <QueueRow key={item.ids[0]} item={item} projects={projects} />
         ))}
-      </ul>
+      </CappedList>
     </div>
   );
 }

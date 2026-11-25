@@ -73,6 +73,7 @@ export default async function TimesheetPage({
     db.timeEntry.findMany({
       where: { userId: subject.id, date: { gte: from, lte: to } },
       select: {
+        id: true,
         minutes: true,
         date: true,
         taskId: true,
@@ -179,6 +180,7 @@ export default async function TimesheetPage({
         minutes: {},
         notes: {},
         locked: {},
+        lockedEntries: {},
       };
 
     // Only what the grid itself wrote is editable in it; everything else is
@@ -186,6 +188,15 @@ export default async function TimesheetPage({
     const bucket = entry.source === "TIMESHEET" ? row.minutes : row.locked;
     const iso = toISODate(entry.date);
     bucket[iso] = (bucket[iso] ?? 0) + entry.minutes;
+    // The entries behind a "logged" figure, so one can be deleted from here.
+    if (entry.source !== "TIMESHEET") {
+      (row.lockedEntries[iso] ??= []).push({
+        id: entry.id,
+        minutes: entry.minutes,
+        source: entry.source,
+        notes: entry.notes,
+      });
+    }
     // Only the grid's own entry carries a note the grid can edit.
     if (entry.source === "TIMESHEET" && entry.notes) row.notes[iso] = entry.notes;
     forProject.set(key, row);

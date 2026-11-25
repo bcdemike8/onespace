@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { setTaskDueDateAction } from "@/app/actions/tasks";
 
 /**
- * "Change date" on a task row. Opens a date field in place; saving moves the
+ * "Change due date" on a task row. Opens a date field in place; saving moves the
  * task, and the page re-buckets it into Today / Next three days / ... on the
  * refresh. "No date" takes the due date off.
  */
@@ -49,7 +49,7 @@ export function TaskDueDateButton({
         className="btn-secondary btn-sm"
         title={dueDate ? "Move this task to another day" : "Give this task a due date"}
       >
-        {dueDate ? "Change date" : "Set date"}
+        {dueDate ? "Change due date" : "Set due date"}
       </button>
     );
   }

@@ -146,6 +146,24 @@ export async function deleteTimeEntryAction(formData: FormData) {
   refresh();
 }
 
+/**
+ * Delete one entry and say how it went, for callers that aren't a plain form
+ * (the "logged" list in a timesheet cell). Same rules as above: your own
+ * time, or anyone's if you're an admin, and only in an open month.
+ */
+export async function removeTimeEntryAction(
+  id: string,
+): Promise<{ ok?: boolean; error?: string }> {
+  try {
+    await assertCanEditEntry(id);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "You can't delete that." };
+  }
+  await db.timeEntry.delete({ where: { id } });
+  refresh();
+  return { ok: true };
+}
+
 // ------------------------------------------------------------ weekly grid
 
 /**

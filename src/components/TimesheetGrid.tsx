@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import { setTimesheetCellAction } from "@/app/actions/time";
 import { CellNote } from "@/components/CellNote";
 import { TaskPicker } from "@/components/TaskPicker";
+import { LoggedEntries, type LoggedEntry } from "@/components/LoggedEntries";
 import { formatHours, parseDuration } from "@/lib/format";
 
 export interface TimesheetRow {
@@ -20,6 +21,8 @@ export interface TimesheetRow {
    * Shown here so the week reads true, but not editable from the grid.
    */
   locked: Record<string, number>;
+  /** The entries that make up each `locked` figure, so one can be deleted. */
+  lockedEntries: Record<string, LoggedEntry[]>;
 }
 
 export interface TimesheetProject {
@@ -111,6 +114,7 @@ export function TimesheetGrid({
             minutes: {},
             notes: {},
             locked: {},
+            lockedEntries: {},
           },
         ],
       };
@@ -260,12 +264,12 @@ export function TimesheetGrid({
                                   className="group/cell relative p-1 text-center align-top"
                                 >
                                   {locked > 0 ? (
-                                    <div
-                                      className="mb-0.5 text-xs tnum text-ink-400"
-                                      title="Logged from the project page, a timer or an import — not editable here"
-                                    >
-                                      {formatHours(locked)} logged
-                                    </div>
+                                    <LoggedEntries
+                                      label={`${formatHours(locked)} logged`}
+                                      entries={row.lockedEntries[d.iso] ?? []}
+                                      dayLabel={`${d.weekday} ${d.label}`}
+                                      taskName={row.taskName}
+                                    />
                                   ) : null}
                                   <form action={setTimesheetCellAction}>
                                     <input type="hidden" name="projectId" value={project.id} />
