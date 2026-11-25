@@ -76,7 +76,7 @@ const cases: Case[] = [
     text: `${RECAP_16_NOV}
 
 On my side, I'll investigate why completed Outreach tasks aren't associating with Salesforce Contact records and share my findings with Jordan.`,
-    expect: [{ owner: "priya", about: ["investigat"] }],
+    expect: [{ owner: "priya", about: ["investigat", "contact"] }],
   },
   {
     name: "Recap: the sender commits a named colleague",
@@ -90,7 +90,7 @@ Great session today. Quick recap:
 
 Talk soon,
 Priya`,
-    expect: [{ owner: "sam", about: ["configur"] }],
+    expect: [{ owner: "sam", about: ["configur", "bdr"] }],
   },
   {
     name: "Recap: plans, shared 'we' and work already done",
@@ -136,7 +136,7 @@ Priya Shah: Sure, I'll get the updated sequences over to you by Friday.
 Jordan Lee: Perfect, thank you.
 Priya Shah: Anything else on your side before we wrap?
 Jordan Lee: No, that's everything for today.`,
-    expect: [{ owner: "priya", about: ["sequence"], due: "2026-11-20" }],
+    expect: [{ owner: "priya", about: ["sequence", "persona"], due: "2026-11-20" }],
   },
   {
     name: "Call: a customer asks, the consultant doesn't agree",
@@ -200,7 +200,7 @@ Sam Ortiz: Once you send the export from Salesforce, I'll run the historical imp
 Jordan Lee: I'll get the export to you tomorrow.
 Sam Ortiz: Perfect. I'll confirm when it's loaded.
 Priya Shah: Great, that closes out the data side for now.`,
-    expect: [{ owner: "sam", about: ["import"] }],
+    expect: [{ owner: "sam", about: ["historical", "import"] }],
   },
   {
     name: "Call: things already done during the meeting",
@@ -224,7 +224,7 @@ Priya Shah: I'll put together a short how-to guide on the research agents for yo
 Jordan Lee: That would help a lot.
 Priya Shah: Happy to. I'll share it once it's ready.
 Jordan Lee: Thanks. That's all from me.`,
-    expect: [{ owner: "priya", about: ["guide", "how-to"] }],
+    expect: [{ owner: "priya", about: ["guide", "research"] }],
   },
   {
     name: "Call: talk of next steps, nobody takes them",
@@ -302,7 +302,7 @@ Priya Shah: I'll check with Sam on the import timing and get back to you tomorro
 Jordan Lee: Great, thanks.
 Priya Shah: Sam knows that part of the setup best.
 Jordan Lee: Makes sense.`,
-    expect: [{ owner: "priya", about: ["import", "timing", "back"], due: "2026-11-17" }],
+    expect: [{ owner: "priya", about: ["import", "timing"], due: "2026-11-17" }],
   },
   {
     name: "Call: a customer's deadline doesn't become the consultant's",
@@ -314,7 +314,7 @@ Sam Ortiz: Once it's in, I'll run the historical import and confirm the record c
 Jordan Lee: Perfect.
 Priya Shah: Great, that closes out the data side.
 Jordan Lee: Thanks both.`,
-    expect: [{ owner: "sam", about: ["import"] }],
+    expect: [{ owner: "sam", about: ["historical", "import"] }],
   },
   {
     name: "Call: vague timing stays undated",
@@ -338,7 +338,7 @@ Priya Shah: That one's tricky - Sam, is that something you could look at?
 Sam Ortiz: Yes, I can take care of that. I'll rebuild the BDR dashboard with the corrected filters.
 Jordan Lee: Thank you, Sam.
 Priya Shah: Great, that's settled.`,
-    expect: [{ owner: "sam", about: ["dashboard"] }],
+    expect: [{ owner: "sam", about: ["dashboard", "filter"] }],
   },
   {
     name: "Call: a consultant declines a request",
@@ -400,7 +400,7 @@ Sam Ortiz: Leave that with me.
 Jordan Lee: Perfect, thanks both.`,
     expect: [
       { owner: "priya", about: ["persona", "sequence"] },
-      { owner: "sam", about: ["admin guide", "guide"] },
+      { owner: "sam", about: ["admin", "guide"] },
     ],
   },
   {
@@ -413,7 +413,7 @@ Priya Shah: Absolutely, I'll send that over.
 Jordan Lee: Great, thank you.
 Priya Shah: Anything else for this week?
 Jordan Lee: No, that's everything.`,
-    expect: [{ owner: "priya", about: ["report"], due: "2026-11-20" }],
+    expect: [{ owner: "priya", about: ["pipeline", "report"], due: "2026-11-20" }],
   },
   {
     name: "Call: two deliverables, two dates, one sentence",
@@ -427,7 +427,7 @@ Priya Shah: Great. Let me know if the team has questions.
 Jordan Lee: Will do.`,
     expect: [
       { owner: "priya", about: ["sequence"], due: "2026-11-17" },
-      { owner: "priya", about: ["recommendation", "reporting"], due: "2026-11-20" },
+      { owner: "priya", about: ["recommendation"], due: "2026-11-20" },
     ],
   },
 ];
@@ -505,7 +505,11 @@ async function main() {
     if (ok) passed += 1;
 
     console.log(`\n${ok ? "✓" : "✗"} ${c.name}`);
-    for (const o of out.owned) console.log(`    → ${o.ownerId}: ${o.title}\n      "${o.quote}"`);
+    // Printed in full so a person can judge whether each is really the
+    // expected deliverable - the keyword match is only a proxy for that.
+    for (const o of out.owned) {
+      console.log(`    → ${o.ownerId}: ${o.title}\n      task: ${o.task}\n      quote: "${o.quote}"`);
+    }
     for (const x of extra) console.log(`    ✗ ${x}`);
     for (const m of left) console.log(`    ✗ missed: ${m.owner} - ${m.about.join("/")}`);
     for (const u of out.unidentified) console.log(`    · held back (owner): ${u.item.title} - ${u.reason}`);

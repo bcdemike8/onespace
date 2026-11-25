@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { dayStart } from "@/lib/dates";
 import { isAdmin, requireUser } from "@/lib/auth";
+import { mayDecide, takesTasks } from "@/lib/commitments/permissions";
 import { syncZoom } from "@/lib/zoom/sync";
 
 export type ActionState = { error?: string; ok?: boolean; message?: string };
@@ -91,8 +92,8 @@ export async function syncZoomAction(
  * exactly one of a meeting or the recap email it was written in; both know
  * who the host is and a date to anchor the task's description to.
  *
- * Allowed: the person who undertook it, the host of the call or thread (who
- * holds anything whose owner couldn't be placed), or an admin.
+ * Allowed: the person who undertook it; for an item whose owner couldn't be
+ * placed, the host of the call or thread; or an admin. See mayDecide.
  */
 async function ownCommitments(ids: string[]) {
   const user = await requireUser();
@@ -128,9 +129,13 @@ async function ownCommitments(ids: string[]) {
     // Neither: the meeting or the mail it came from has been deleted under it.
     if (!origin) throw new Error("Whatever this came from is no longer here.");
 
-    const mayAct =
-      row.ownerId === user.id || origin.userId === user.id || isAdmin(user);
-    if (!mayAct) throw new Error(`That's someone else's ${origin.where}.`);
+    if (!mayDecide({ ownerId: row.ownerId, hostId: origin.userId }, { id: user.id, admin: isAdmin(user) })) {
+      throw new Error(
+        row.ownerId
+          ? "That's a colleague's commitment - only they can add or clear it."
+          : `That's someone else's ${origin.where}.`,
+      );
+    }
     return { row, origin };
   });
 
@@ -174,9 +179,12 @@ export async function acceptCommitmentAction(
 
   const project = await db.project.findUnique({
     where: { id: projectId },
-    select: { id: true },
+    select: { id: true, status: true },
   });
   if (!project) return { error: "That project is no longer here." };
+  if (!takesTasks(project.status)) {
+    return { error: "That project is completed or archived - choose an open one." };
+  }
 
   const assigneeId = first.row.ownerId ?? first.origin.userId;
 

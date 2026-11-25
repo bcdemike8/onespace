@@ -46,3 +46,24 @@ test("wrong owner, extra items and missed items are each counted", () => {
   assert.equal(s.falsePositives, 1);
   assert.equal(s.falseNegatives, 1);
 });
+
+test("an item sharing one keyword isn't scored as the expected deliverable", () => {
+  // Expected: the historical import. Found: something else that mentions "import".
+  const s = scoreCase(
+    [{ owner: "sam", about: ["historical", "import"] }],
+    [found("Check the import settings with Jordan", null, "sam")],
+    SAID,
+  );
+  assert.equal(s.correct, 0);
+  assert.equal(s.falsePositives, 1);
+  assert.equal(s.falseNegatives, 1);
+});
+
+test("an item naming the whole deliverable is", () => {
+  const s = scoreCase(
+    [{ owner: "sam", about: ["historical", "import"] }],
+    [found("Run Northwind's historical import", null, "sam")],
+    SAID,
+  );
+  assert.equal(s.correct, 1);
+});

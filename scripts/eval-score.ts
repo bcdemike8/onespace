@@ -10,7 +10,12 @@ import { promisedDate } from "@/lib/commitments/pipeline";
 
 export interface Expected {
   owner: string;
-  /** Any of these words in the title or task shows it's the right item. */
+  /**
+   * Words that together name the deliverable - every one must appear in the
+   * item's title or task ("historical" + "import", "admin" + "guide"). A
+   * proxy for "is this the expected task", so the script also prints each
+   * item's title, task and quote for a person to read.
+   */
   about: string[];
   /** The promised deadline as YYYY-MM-DD, or absent when none was promised. */
   due?: string;
@@ -47,7 +52,9 @@ export function scoreCase(expect: Expected[], owned: Found[], said: Date): Score
 
   for (const o of owned) {
     const hay = `${o.title} ${o.task}`.toLowerCase();
-    const about = (e: Expected) => e.about.some((w) => hay.includes(w.toLowerCase()));
+    // All of the words, not any one of them: an item that merely mentions
+    // "report" or "back" isn't the expected deliverable.
+    const about = (e: Expected) => e.about.every((w) => hay.includes(w.toLowerCase()));
     const i = left.findIndex((e) => e.owner === o.ownerId && about(e));
     if (i === -1) {
       // The right task on the wrong person is its own kind of mistake.
