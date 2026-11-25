@@ -16,6 +16,7 @@ import { PageHeader } from "@/components/ui";
 import { CallSummary } from "@/components/CallSummary";
 import { asSummaryDoc } from "@/lib/summary";
 import { DiagnoseZoom } from "./DiagnoseZoom";
+import { timesheetOnDay } from "@/lib/timesheet-on-day";
 import { MeetingCard, type MeetingRow, type ProjectOption } from "../MeetingCard";
 
 export const dynamic = "force-dynamic";
@@ -139,6 +140,11 @@ export default async function MeetingPage({
   // The card carries the confirm-or-dismiss controls, so a call that hasn't
   // been dealt with can be dealt with here rather than sending someone back
   // to the list to find it again.
+  const handLogged =
+    meeting.status === "PENDING"
+      ? await timesheetOnDay([{ userId: meeting.userId, startsAt: meeting.startsAt }], zone)
+      : () => null;
+
   const row: MeetingRow = {
     id: meeting.id,
     title: meeting.title,
@@ -174,6 +180,7 @@ export default async function MeetingPage({
       fromSummary: c.fromSummary,
       ownerUnrecognised: c.ownerUnrecognised,
     })),
+    timesheetNote: handLogged(meeting.userId, meeting.startsAt),
   };
 
   return (
@@ -219,6 +226,20 @@ export default async function MeetingPage({
         ) : (
           <span className="chip bg-warn-50 text-warn-700">Not filed yet</span>
         )}
+        {meeting.status === "DISMISSED" ? (
+          <span>
+            {meeting.setAside === "REMOVED"
+              ? "Removed - not work"
+              : meeting.setAside === "BACKLOG"
+                ? "Cleared with the backlog"
+                : "Not billable"}
+          </span>
+        ) : null}
+        {meeting.loggedByHand ? (
+          <span title="Marked Already logged: the time was put on the timesheet by hand, so this call has no entry of its own">
+            Logged by hand on the timesheet
+          </span>
+        ) : null}
         {meeting.timeEntry ? (
           <span>
             {formatMinutes(meeting.timeEntry.minutes)} logged

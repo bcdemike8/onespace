@@ -1303,6 +1303,15 @@ model RunningTimer {
  * person already said no to, and when a meeting is accepted the link back to
  * the time entry is what stops a second sync booking the same hour twice.
  */
+/// The two ways a meeting leaves the list that aren't "not billable".
+enum MeetingSetAside {
+  /// Swept up by "Clear the backlog": old, never looked at one by one.
+  BACKLOG
+  /// Not work at all - a focus block, a doctor's appointment. Out of every
+  /// view, and the sync leaves it out.
+  REMOVED
+}
+
 model Meeting {
   id String @id @default(cuid())
 
@@ -1365,6 +1374,17 @@ model Meeting {
   /// suggested again rather than leaving it silently spent.
   timeEntryId String?    @unique
   timeEntry   TimeEntry? @relation(fields: [timeEntryId], references: [id], onDelete: SetNull)
+
+  /// Accepted without a time entry of its own, because the person had
+  /// already put the hour on the timesheet by hand. It counts as logged, not
+  /// as "not billable", and nothing is booked a second time. No entry is
+  /// linked, so taking it back never deletes time somebody typed in.
+  loggedByHand Boolean @default(false)
+
+  /// Why a set-aside (DISMISSED) meeting was set aside, when it wasn't a
+  /// person deciding "not billable" about this one call. Null means exactly
+  /// that decision.
+  setAside MeetingSetAside?
 
   source MeetingSource @default(CALENDAR)
 

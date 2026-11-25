@@ -9,6 +9,7 @@ import { ErrorNote } from "@/components/ui";
 import { Commitments, type CommitmentRow } from "./Commitments";
 import type { SummaryDoc } from "@/lib/summary";
 import { SummaryPeek } from "./SummaryPeek";
+import { AlreadyLoggedButton, RemoveButton } from "./MeetingButtons";
 
 export interface ProjectOption {
   id: string;
@@ -49,6 +50,11 @@ export interface MeetingRow {
   /** Whether this meeting was ever matched to a Zoom call. */
   hasZoom: boolean;
   commitments: CommitmentRow[];
+  /**
+   * What the owner already has on the timesheet that day, outside any
+   * meeting's own entry: "1h Acme Retainer · 30m Internal". Null if nothing.
+   */
+  timesheetNote: string | null;
 }
 
 /** At or above this the suggestion reads as an answer rather than a question. */
@@ -277,17 +283,25 @@ export function MeetingCard({
           submitted the surrounding "log this time" form instead. Which
           meant the one button whose whole job is "don't log this" was
           logging it. */}
-      {!meeting.lockedNote ? (
-        <div className="mt-2 flex justify-end">
-          <DismissButton id={meeting.id} />
-        </div>
+      {meeting.timesheetNote ? (
+        <p className="mt-3 text-xs text-ink-500">
+          Already on {meeting.ownerName ? `${meeting.ownerName}'s` : "your"} timesheet that
+          day: <span className="text-ink-700">{meeting.timesheetNote}</span>
+        </p>
       ) : null}
 
-      {meeting.lockedNote ? (
-        <div className="mt-3">
-          <DismissButton id={meeting.id} />
-        </div>
-      ) : null}
+      {/* "Already logged" sits beside "Not billable work" because they are
+          the two ways off this list without logging anything here. It books
+          nothing, so it works in a closed month too. */}
+      <div
+        className={`flex flex-wrap items-center gap-2 ${
+          meeting.lockedNote ? "mt-3" : "mt-2 justify-end"
+        }`}
+      >
+        <AlreadyLoggedButton id={meeting.id} />
+        <DismissButton id={meeting.id} />
+        <RemoveButton id={meeting.id} />
+      </div>
 
       {hideHeader ? null : (
         <SummaryPeek

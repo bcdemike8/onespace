@@ -11,6 +11,7 @@ import { dayInZone } from "@/lib/dates";
 import { parseDuration } from "@/lib/format";
 import { googleConfigured } from "@/lib/google/auth";
 import { forgetUnmapped, orgTimezone, syncCalendars } from "@/lib/google/sync";
+import { meetingsFromBound, onOrAfterStart } from "@/lib/meetings-start";
 
 export type ActionState = { error?: string; ok?: boolean; message?: string };
 
@@ -164,6 +165,8 @@ export async function acceptMeetingAction(
         projectId: parsed.data.projectId,
         taskId: parsed.data.taskId || null,
         timeEntryId: entry.id,
+        loggedByHand: false,
+        setAside: null,
       },
     });
   });
@@ -183,7 +186,10 @@ export async function dismissMeetingAction(formData: FormData): Promise<void> {
   if (!meeting) return;
   if (meeting.userId !== user.id && !isAdmin(user)) return;
 
-  await db.meeting.update({ where: { id }, data: { status: "DISMISSED" } });
+  await db.meeting.update({
+    where: { id },
+    data: { status: "DISMISSED", setAside: null },
+  });
   refresh();
 }
 
@@ -202,7 +208,7 @@ export async function dismissMeetingsAction(
 
   const { count } = await db.meeting.updateMany({
     where: { id: { in: ids }, userId: user.id, status: "PENDING" },
-    data: { status: "DISMISSED" },
+    data: { status: "DISMISSED", setAside: null },
   });
   refresh();
   return { ok: true, message: `Set aside ${count} meeting${count === 1 ? "" : "s"}.` };
@@ -213,7 +219,7 @@ export async function dismissMeetingsAction(
  * day. The backlog this clears ran to a hundred-odd calls, months old, that
  * nobody was ever going to log one at a time - and while they sat there the
  * count on My Work meant nothing. They go where "Not billable work" puts
- * things, not away: each can still be brought back with "Billable after all".
+ * things, not away: each can still be brought back with "Log it after all".
  *
  * Your own by default. An admin may pass scope=all to do it for the whole
  * team - the one-off retroactive clean-up, so everybody starts from the last
@@ -243,11 +249,18 @@ export async function dismissMeetingsBeforeAction(
     where: {
       ...owner,
       status: "PENDING",
-      startsAt: { lt: new Date(cutoff.getTime() + 86_400_000), lte: new Date() },
+      startsAt: {
+        gte: meetingsFromBound(),
+        lt: new Date(cutoff.getTime() + 86_400_000),
+        lte: new Date(),
+      },
     },
     select: { id: true, startsAt: true },
   });
+  // Calls before the Meetings tab's start date aren't shown anywhere, so
+  // they aren't in the count the button showed either.
   const ids = candidates
+    .filter((m) => onOrAfterStart(m.startsAt, zone))
     .filter((m) => dayInZone(m.startsAt, zone) < cutoff)
     .map((m) => m.id);
 
@@ -255,15 +268,96 @@ export async function dismissMeetingsBeforeAction(
 
   await db.meeting.updateMany({
     where: { id: { in: ids }, ...owner, status: "PENDING" },
-    data: { status: "DISMISSED" },
+    // Labelled Cleared, not Not billable: nobody looked at these one by one,
+    // so the All view shouldn't claim anybody decided they weren't billable.
+    data: { status: "DISMISSED", setAside: "BACKLOG" },
   });
   refresh();
   return {
     ok: true,
-    message: `Set aside ${ids.length} meeting${ids.length === 1 ? "" : "s"}${
+    message: `Cleared ${ids.length} meeting${ids.length === 1 ? "" : "s"}${
       everyone ? " across the team" : ""
-    }. They're under All, marked not billable, if any turn out to be billable after all.`,
+    }. They're under All, labelled Cleared, if any turn out to be billable after all.`,
   };
+}
+
+/**
+ * "Already logged": the time for these calls is on the timesheet already,
+ * put there by hand, so take them off the list as logged - not as "not
+ * billable", which is what people were pressing for want of anything else.
+ *
+ * No time entry is created (that would book the hour twice) and none is
+ * linked, so undoing it later can never delete time somebody typed in.
+ * Waiting calls and set-aside ones both qualify; a call already logged
+ * through the card is left as it is. Your own, or anyone's for an admin,
+ * same as Not billable.
+ */
+export async function markMeetingsLoggedAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+  const ids = formData.getAll("id").map(String).filter(Boolean);
+  if (ids.length === 0) return { ok: true };
+
+  const { count } = await db.meeting.updateMany({
+    where: {
+      id: { in: ids },
+      status: { in: ["PENDING", "DISMISSED"] },
+      ...(isAdmin(user) ? {} : { userId: user.id }),
+    },
+    data: { status: "ACCEPTED", loggedByHand: true, timeEntryId: null, setAside: null },
+  });
+  refresh();
+  if (count === 0) return { error: "Nothing changed - it may already be logged." };
+  return {
+    ok: true,
+    message: `Marked ${count} meeting${count === 1 ? "" : "s"} as already logged.`,
+  };
+}
+
+/**
+ * Remove: not work at all - a focus block, a doctor's appointment, a
+ * commute. It leaves every list and every count, and the sync leaves it
+ * alone from then on, because the sync never re-opens a decided meeting.
+ * Nothing is deleted: All has "Show removed" with Put back on each.
+ *
+ * Anything not on a timesheet through its own entry can be removed. One
+ * that is has to be marked not billable first, so no time disappears as a
+ * side effect of tidying the list.
+ */
+export async function removeMeetingsAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+  const ids = formData.getAll("id").map(String).filter(Boolean);
+  if (ids.length === 0) return { ok: true };
+
+  const { count } = await db.meeting.updateMany({
+    where: {
+      id: { in: ids },
+      timeEntryId: null,
+      ...(isAdmin(user) ? {} : { userId: user.id }),
+    },
+    data: { status: "DISMISSED", setAside: "REMOVED", loggedByHand: false },
+  });
+  refresh();
+  if (count === 0) {
+    return { error: "This one has time on the timesheet. Mark it not billable first." };
+  }
+  return { ok: true, message: `Removed ${count} meeting${count === 1 ? "" : "s"}.` };
+}
+
+/** Put a removed meeting back on the list to be dealt with. */
+export async function restoreMeetingAction(formData: FormData): Promise<void> {
+  const user = await requireUser();
+  const id = String(formData.get("id") ?? "");
+  await db.meeting.updateMany({
+    where: { id, setAside: "REMOVED", ...(isAdmin(user) ? {} : { userId: user.id }) },
+    data: { status: "PENDING", setAside: null },
+  });
+  refresh();
 }
 
 /**
@@ -300,7 +394,13 @@ export async function setMeetingOutcomeAction(
   }
 
   if (intent === "not-billable") {
-    if (meeting.status === "DISMISSED") return { ok: true };
+    // Already set aside - Cleared or Removed - so this is someone looking at
+    // it and confirming: it becomes a plain Not billable.
+    if (meeting.status === "DISMISSED") {
+      await db.meeting.update({ where: { id }, data: { setAside: null } });
+      refresh();
+      return { ok: true };
+    }
     if (meeting.timeEntry) {
       try {
         await assertUnlocked(meeting.timeEntry.date);
@@ -311,7 +411,7 @@ export async function setMeetingOutcomeAction(
     await db.$transaction(async (tx) => {
       await tx.meeting.update({
         where: { id },
-        data: { status: "DISMISSED", timeEntryId: null },
+        data: { status: "DISMISSED", timeEntryId: null, loggedByHand: false, setAside: null },
       });
       if (meeting.timeEntryId) {
         await tx.timeEntry.delete({ where: { id: meeting.timeEntryId } });
@@ -323,7 +423,7 @@ export async function setMeetingOutcomeAction(
 
   if (intent === "log") {
     if (meeting.status === "DISMISSED") {
-      await db.meeting.update({ where: { id }, data: { status: "PENDING" } });
+      await db.meeting.update({ where: { id }, data: { status: "PENDING", setAside: null } });
       refresh();
     }
     redirect(`/meetings/${id}`);
@@ -355,7 +455,7 @@ export async function reopenMeetingAction(formData: FormData): Promise<void> {
   await db.$transaction(async (tx) => {
     await tx.meeting.update({
       where: { id },
-      data: { status: "PENDING", timeEntryId: null },
+      data: { status: "PENDING", timeEntryId: null, loggedByHand: false, setAside: null },
     });
     if (meeting.timeEntryId) {
       await tx.timeEntry.delete({ where: { id: meeting.timeEntryId } });

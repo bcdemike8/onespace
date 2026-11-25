@@ -16,10 +16,18 @@ import { ErrorNote } from "@/components/ui";
  * in the org's zone, so the count here matches what the server will do.
  */
 export function ClearBacklog({
+  show,
   days,
   defaultBefore,
   everyone,
 }: {
+  /**
+   * Whether there is a backlog worth offering to clear. The page renders
+   * this either way and lets it hide itself, so that once the clear has
+   * emptied the backlog the "Set aside 40 meetings" confirmation is still
+   * here to read - unmounted, it vanished along with the control.
+   */
+  show: boolean;
   days: { day: string; person: string }[];
   defaultBefore: string;
   /** An admin on the Everyone view: clears the whole team's, not just theirs. */
@@ -38,7 +46,7 @@ export function ClearBacklog({
   ].sort((a, b) => b[1] - a[1]);
   const breakdown = byPerson.map(([name, n]) => `${name} ${n}`).join(" · ");
 
-  if (days.length === 0 && !state.message) return null;
+  if (!show && !state.message && !state.error) return null;
 
   const whose = everyone ? "everyone's waiting meetings" : "everything of mine";
 
@@ -46,7 +54,7 @@ export function ClearBacklog({
     <div className="mb-4 rounded-lg border border-ink-200 bg-ink-50 px-4 py-3 text-sm text-ink-700">
       {state.message ? <p className="mb-2 text-ink-800">{state.message}</p> : null}
       <ErrorNote message={state.error} />
-      {days.length > 0 ? (
+      {show ? (
         <form
           action={action}
           onSubmit={(e) => {
@@ -54,7 +62,7 @@ export function ClearBacklog({
             if (
               count === 0 ||
               !window.confirm(
-                `Set aside ${count} meeting${count === 1 ? "" : "s"} from before ${before}?${who}`,
+                `Clear ${count} meeting${count === 1 ? "" : "s"} from before ${before}?${who}`,
               )
             ) {
               e.preventDefault();
@@ -63,7 +71,7 @@ export function ClearBacklog({
           className="flex flex-wrap items-center gap-2"
         >
           <input type="hidden" name="scope" value={everyone ? "all" : "me"} />
-          <span>Clear the backlog: set aside {whose} from before</span>
+          <span>Clear the backlog: {whose} from before</span>
           <input
             type="date"
             name="before"
@@ -72,18 +80,19 @@ export function ClearBacklog({
             className="input w-auto py-1 text-sm"
             required
           />
-          <SubmitButton pendingLabel="Setting aside…" className="btn-secondary btn-sm">
+          <SubmitButton pendingLabel="Clearing…" className="btn-secondary btn-sm">
             {count === 0
               ? "Nothing before then"
-              : `Set aside ${count} meeting${count === 1 ? "" : "s"}`}
+              : `Clear ${count} meeting${count === 1 ? "" : "s"}`}
           </SubmitButton>
           {everyone && count > 0 ? (
             <span className="w-full text-xs text-ink-600">{breakdown}</span>
           ) : null}
           <span className="w-full text-xs text-ink-500">
-            Nothing is deleted. They show as Not billable under All
-            {everyone ? " on each person's Meetings tab" : ""}, and any of them
-            can still be logged with &ldquo;Log it after all&rdquo;.
+            Nothing is deleted. They show as Cleared under All
+            {everyone ? " on each person's Meetings tab" : ""} - kept apart from
+            calls someone marked Not billable - and any of them can still be
+            marked Already logged or logged with &ldquo;Log it after all&rdquo;.
           </span>
         </form>
       ) : null}
