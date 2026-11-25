@@ -7,6 +7,7 @@ import {
   dayStart,
   formatMedium,
   relativeDueLabel,
+  timeInZone,
   toISODate,
   today,
   weekEnd,
@@ -27,7 +28,9 @@ import { TaskListItem, type TaskListItemData } from "@/components/TaskListItem";
 import { deleteTimeEntryAction } from "@/app/actions/time";
 import { queueSince } from "@/lib/recency";
 import { groupQueue, withoutDecided, type QueueRecord } from "@/lib/commitments/queue";
+import { orgTimezone } from "@/lib/google/sync";
 import { DayQueue } from "./DayQueue";
+import { AwaitingReply, type AwaitingThread } from "./AwaitingReply";
 
 export const dynamic = "force-dynamic";
 
@@ -216,7 +219,9 @@ export default async function MyWorkPage() {
       db.mailThread.findMany({
         where: { userId: user.id, status: "OPEN", awaitingUs: true },
         orderBy: { lastMessageAt: "asc" },
-        take: 8,
+        // Eight show; the rest sit behind "Show more", so "Clear all" can
+        // reach the whole list and not just the first screenful.
+        take: 50,
         select: {
           id: true,
           subject: true,
@@ -224,6 +229,22 @@ export default async function MyWorkPage() {
           lastFrom: true,
           lastMessageAt: true,
           client: { select: { name: true } },
+          project: { select: { name: true } },
+          // The client's newest message, so it can be read without opening
+          // the thread.
+          messages: {
+            where: { fromUs: false },
+            orderBy: { sentAt: "desc" },
+            take: 1,
+            select: {
+              fromName: true,
+              fromEmail: true,
+              toEmails: true,
+              ccEmails: true,
+              sentAt: true,
+              body: true,
+            },
+          },
         },
       }),
       // Meetings that happened and haven't been turned into time yet.
@@ -247,6 +268,31 @@ export default async function MyWorkPage() {
         take: 500,
       }),
     ]);
+
+  const zone = await orgTimezone();
+  const awaitingThreads: AwaitingThread[] = awaitingReply.map((thread) => {
+    const last = thread.messages[0];
+    return {
+      id: thread.id,
+      subject: thread.subject,
+      from: thread.lastFromName || thread.lastFrom,
+      clientName: thread.client?.name ?? null,
+      projectName: thread.project?.name ?? null,
+      waitingDays: Math.floor(
+        (now.getTime() - dayStart(thread.lastMessageAt).getTime()) / DAY_MS,
+      ),
+      preview: last
+        ? {
+            fromName: last.fromName,
+            fromEmail: last.fromEmail,
+            to: last.toEmails,
+            cc: last.ccEmails,
+            sentLabel: `${formatMedium(last.sentAt)} · ${timeInZone(last.sentAt, zone)}`,
+            body: last.body,
+          }
+        : null,
+    };
+  });
 
   const ownedIds = ownedProjects.map((p) => p.id);
   const [ownedMinutes, ownedOpen] = await Promise.all([
@@ -389,52 +435,7 @@ export default async function MyWorkPage() {
         <div className="lg:col-span-2">
           <DayQueue groups={queueGroups} projects={queueProjects} />
 
-          {awaitingReply.length > 0 ? (
-            <section className="mb-6">
-              <div className="mb-3 flex items-baseline justify-between">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-600">
-                  Waiting on your reply
-                </h2>
-                <span className="text-xs text-ink-500 tnum">
-                  {awaitingReply.length}
-                </span>
-              </div>
-              <ul className="card divide-y divide-ink-100">
-                {awaitingReply.map((thread) => {
-                  const waitingDays = Math.floor(
-                    (now.getTime() - dayStart(thread.lastMessageAt).getTime()) / DAY_MS,
-                  );
-                  return (
-                    <li key={thread.id} className="px-4 py-2.5">
-                      <Link
-                        href={`/inbox/${thread.id}`}
-                        className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 hover:text-brand-700"
-                      >
-                        <span className="text-sm font-medium text-ink-900">
-                          {thread.subject}
-                        </span>
-                        <span className="text-xs text-ink-500">
-                          {thread.lastFromName || thread.lastFrom}
-                          {thread.client ? ` · ${thread.client.name}` : ""}
-                        </span>
-                        <span
-                          className={`ml-auto text-xs tnum ${
-                            waitingDays >= 2 ? "font-medium text-warn-700" : "text-ink-500"
-                          }`}
-                        >
-                          {waitingDays === 0
-                            ? "today"
-                            : waitingDays === 1
-                              ? "1 day"
-                              : `${waitingDays} days`}
-                        </span>
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
-          ) : null}
+          <AwaitingReply threads={awaitingThreads} />
 
           {meetingsToLog > 0 ? (
             <p className="mb-6 rounded-lg border border-ink-200 bg-ink-50 px-4 py-2.5 text-sm text-ink-600">
