@@ -679,6 +679,7 @@ export default async function MyWorkPage() {
                         key={task.id}
                         task={task}
                         timerRunning={Boolean(timer)}
+                        timing={timer?.taskId === task.id}
                         canReschedule
                       />
                     ))}

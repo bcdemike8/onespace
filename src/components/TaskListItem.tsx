@@ -1,11 +1,12 @@
 import Link from "next/link";
 import type { TaskStatus } from "@prisma/client";
-import { startTimerAction } from "@/app/actions/time";
-import { toggleTaskDoneAction } from "@/app/actions/tasks";
+import { startTimerAction, stopTimerAction } from "@/app/actions/time";
 import { formatHours } from "@/lib/format";
 import { relativeDueLabel, toISODate, today } from "@/lib/dates";
 import { TaskStatusChip } from "@/components/ui";
 import { TaskDueDateButton } from "@/components/TaskDueDateButton";
+import { TaskDoneCheckbox } from "@/components/TaskDoneCheckbox";
+import { SubmitButton } from "@/components/SubmitButton";
 
 export interface TaskListItemData {
   id: string;
@@ -30,34 +31,23 @@ export function TaskListItem({
   showAssignee = false,
   timerRunning = false,
   canReschedule = false,
+  timing = false,
 }: {
   task: TaskListItemData;
   showProject?: boolean;
   showAssignee?: boolean;
   timerRunning?: boolean;
-  /** Show "Change date" beside the timer button. */
+  /** Show "Change due date" beside the timer button. */
   canReschedule?: boolean;
+  /** The running timer is on this task: offer Stop instead of Start. */
+  timing?: boolean;
 }) {
   const done = task.status === "DONE";
   const overdue = !done && task.dueDate && task.dueDate < today();
 
   return (
     <li className="flex flex-wrap items-start gap-3 px-4 py-3 sm:flex-nowrap">
-      <form action={toggleTaskDoneAction} className="pt-0.5">
-        <input type="hidden" name="id" value={task.id} />
-        <button
-          type="submit"
-          aria-label={done ? `Reopen ${task.name}` : `Complete ${task.name}`}
-          className={`flex h-4.5 w-4.5 items-center justify-center rounded border text-[11px] leading-none transition-colors ${
-            done
-              ? "border-good-500 bg-good-500 text-white"
-              : "border-ink-300 bg-white text-transparent hover:border-good-500"
-          }`}
-          style={{ height: "1.125rem", width: "1.125rem" }}
-        >
-          ✓
-        </button>
-      </form>
+      <TaskDoneCheckbox taskId={task.id} taskName={task.name} done={done} />
 
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
@@ -70,6 +60,12 @@ export function TaskListItem({
           </span>
           {task.status !== "TODO" && task.status !== "DONE" ? (
             <TaskStatusChip status={task.status} />
+          ) : null}
+          {timing ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-100 px-2 py-0.5 text-xs font-medium text-brand-800">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-700" />
+              Timer running
+            </span>
           ) : null}
         </div>
 
@@ -111,20 +107,30 @@ export function TaskListItem({
         </div>
       ) : null}
 
-      {!done ? (
+      {!done && timing ? (
+        <form action={stopTimerAction} className="shrink-0">
+          <SubmitButton
+            className="btn-primary btn-sm"
+            pendingLabel="Logging…"
+            title="Stop the timer and log the time to your timesheet"
+          >
+            ■ Stop &amp; log
+          </SubmitButton>
+        </form>
+      ) : !done ? (
         <form action={startTimerAction} className="shrink-0">
           <input type="hidden" name="taskId" value={task.id} />
-          <button
-            type="submit"
-            className={timerRunning ? "btn-secondary btn-sm" : "btn-secondary btn-sm"}
+          <SubmitButton
+            className="btn-secondary btn-sm"
+            pendingLabel="Starting…"
             title={
               timerRunning
-                ? "Banks the timer that's already running, then starts this one"
-                : "Start a timer on this task"
+                ? "Logs the timer that's already running, then starts one on this task"
+                : "Start a timer on this task. Stop it to log the time to your timesheet."
             }
           >
-            ▶ Start
-          </button>
+            ▶ Start timer
+          </SubmitButton>
         </form>
       ) : null}
     </li>
