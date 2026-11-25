@@ -1,7 +1,17 @@
 import Link from "next/link";
 import { isAdmin, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { addDays, dayInZone, formatMedium, timeInZone, toISODate, today } from "@/lib/dates";
+import {
+  addDays,
+  dayInZone,
+  formatMedium,
+  formatShort,
+  formatWeekday,
+  timeInZone,
+  toISODate,
+  today,
+  weekStart,
+} from "@/lib/dates";
 import { getLockState } from "@/lib/lock";
 import { isLocked } from "@/lib/periods";
 import { calendarWindowLabel, orgTimezone } from "@/lib/google/sync";
@@ -16,6 +26,7 @@ import { SyncButton } from "./SyncButton";
 import { ReopenButton } from "./ReopenButton";
 import { UnmappedDomains } from "./UnmappedDomains";
 import { ClearBacklog } from "./ClearBacklog";
+import { AllMeetings, type AllMeetingRow, type MeetingWeek } from "./AllMeetings";
 
 export const dynamic = "force-dynamic";
 
@@ -41,7 +52,7 @@ function durationValue(minutes: number): string {
 export default async function MeetingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ who?: string; range?: string }>;
+  searchParams: Promise<{ who?: string; range?: string; weeks?: string }>;
 }) {
   const user = await requireUser();
   const admin = isAdmin(user);
@@ -53,6 +64,12 @@ export default async function MeetingsPage({
   const range = RANGES.find((r) => r.value === params.range) ?? RANGES[0];
   const rangeFrom =
     range.days === null ? null : new Date(Date.now() - range.days * 86_400_000);
+  // All is a different page in all but name: not the to-do list but the
+  // record of every call, week by week, logged or not. It reads back a few
+  // weeks at a time, because a year of seven people's calendars is not a
+  // list anybody scrolls.
+  const isAll = range.days === null;
+  const weeksShown = Math.min(Math.max(Number(params.weeks) || 8, 1), 104);
   const hrefFor = (next: { who?: boolean; range?: string }) => {
     const q = new URLSearchParams();
     if (next.who ?? everyone) q.set("who", "all");
@@ -68,12 +85,13 @@ export default async function MeetingsPage({
     calendarWindowLabel(),
     recentLabel(),
   ]);
+  const allFromDay = addDays(weekStart(today(zone)), -7 * (weeksShown - 1));
 
   const [
     pending,
     recent,
-    dismissed,
-    dismissedTotal,
+    history,
+    earlier,
     projects,
     unmapped,
     clientOptions,
@@ -88,7 +106,7 @@ export default async function MeetingsPage({
         ...(rangeFrom ? { startsAt: { gte: rangeFrom } } : {}),
       },
       orderBy: [{ startsAt: "desc" }],
-      take: 200,
+      take: isAll ? 0 : 200,
       select: {
         id: true,
         title: true,
@@ -138,25 +156,36 @@ export default async function MeetingsPage({
         user: { select: { name: true } },
       },
     }),
-    // Dismissed meetings, which used to go nowhere at all. Pressing "Not
-    // billable work" made a call vanish with no way back, and whether
-    // something is billable is a decision that changes - a project starts
-    // being charged for, an internal call turns out to be client work. It
-    // is not a delete, so it does not behave like one.
+    // Every call in the weeks the All view shows, whatever became of it.
     db.meeting.findMany({
-      where: { status: "DISMISSED", ...(everyone ? {} : { userId: user.id }) },
+      where: {
+        ...(everyone ? {} : { userId: user.id }),
+        startsAt: { gte: addDays(allFromDay, -1), lte: new Date() },
+      },
       orderBy: [{ startsAt: "desc" }],
-      take: 50,
+      take: isAll ? 5000 : 0,
       select: {
         id: true,
         title: true,
         startsAt: true,
         minutes: true,
+        actualMinutes: true,
+        status: true,
+        suggestedProjectId: true,
+        project: { select: { name: true } },
+        timeEntry: {
+          select: { minutes: true, billable: true, date: true, project: { select: { name: true } } },
+        },
         user: { select: { name: true } },
       },
     }),
+    // Whether there is anything before the first week shown, for "Show
+    // earlier weeks".
     db.meeting.count({
-      where: { status: "DISMISSED", ...(everyone ? {} : { userId: user.id }) },
+      where: {
+        ...(everyone ? {} : { userId: user.id }),
+        startsAt: { lt: addDays(allFromDay, -1) },
+      },
     }),
     db.project.findMany({
       where: { status: { in: ["ACTIVE", "ON_HOLD"] } },
@@ -262,6 +291,49 @@ export default async function MeetingsPage({
       };
     });
 
+  const weekGroups = new Map<string, MeetingWeek>();
+  for (const m of history) {
+    const day = dayInZone(m.startsAt, zone);
+    if (day < allFromDay) continue;
+    const monday = weekStart(day);
+    const key = toISODate(monday);
+    let week = weekGroups.get(key);
+    if (!week) {
+      week = {
+        key,
+        label: `Week of ${formatShort(monday)} – ${formatMedium(addDays(monday, 6))}`,
+        rows: [],
+      };
+      weekGroups.set(key, week);
+    }
+    const entry = m.timeEntry;
+    const row: AllMeetingRow = {
+      id: m.id,
+      title: m.title,
+      whenLabel: `${formatWeekday(day)}, ${formatShort(day)} · ${timeInZone(m.startsAt, zone)}`,
+      minutes: entry?.minutes ?? m.actualMinutes ?? m.minutes,
+      status: m.status,
+      projectName:
+        entry?.project.name ??
+        m.project?.name ??
+        (m.suggestedProjectId ? (options.find((o) => o.id === m.suggestedProjectId)?.name ?? null) : null),
+      nonBillableEntry: entry ? !entry.billable : false,
+      locked: entry ? isLocked(entry.date, lock) : false,
+      ownerName: everyone ? m.user.name : null,
+    };
+    week.rows.push(row);
+  }
+  const weeks = [...weekGroups.values()];
+  const allCounts = {
+    logged: history.filter((m) => m.status === "ACCEPTED").length,
+    notBillable: history.filter((m) => m.status === "DISMISSED").length,
+    waiting: history.filter((m) => m.status === "PENDING").length,
+  };
+  const moreHref =
+    earlier > 0
+      ? `${hrefFor({ range: "all" })}&weeks=${weeksShown + 8}`
+      : null;
+
   const upcoming = pending.length - rows.length;
 
   // The backlog control only shows when something of yours is older than the
@@ -303,7 +375,11 @@ export default async function MeetingsPage({
       <PageHeader
         title="Meetings"
         subtitle={
-          rows.length === 0
+          isAll
+            ? `Every meeting, week by week · ${allCounts.logged} logged · ${allCounts.notBillable} not billable${
+                allCounts.waiting > 0 ? ` · ${allCounts.waiting} not logged yet` : ""
+              }`
+            : rows.length === 0
             ? "Your calendar, waiting to become time entries."
             : `${rows.length} meeting${rows.length === 1 ? "" : "s"} to deal with${
                 rangeFrom ? ` from the ${range.label.toLowerCase()}` : ""
@@ -402,7 +478,9 @@ export default async function MeetingsPage({
         <ClearBacklog days={waitingDays} defaultBefore={backlogFrom} everyone={everyone} />
       ) : null}
 
-      {rows.length === 0 ? (
+      {isAll ? (
+        <AllMeetings weeks={weeks} moreHref={moreHref} />
+      ) : rows.length === 0 ? (
         <EmptyState
           title="Nothing waiting"
           body={
@@ -441,7 +519,7 @@ export default async function MeetingsPage({
         </p>
       ) : null}
 
-      {recent.length > 0 ? (
+      {!isAll && recent.length > 0 ? (
         <section className="mt-8">
           <h2 className="mb-2 text-sm font-semibold text-ink-900">Recently logged</h2>
           <ul className="card divide-y divide-ink-100">
@@ -487,58 +565,17 @@ export default async function MeetingsPage({
         </section>
       ) : null}
 
-      {/* Where "Not billable work" puts things.
-          Rolled up, because on a normal day nobody wants to read it — but
-          present, with a count, because the alternative was a call
-          disappearing off the screen with no way to change your mind. */}
-      {dismissed.length > 0 ? (
-        <details className="card group mt-8 overflow-hidden p-0">
-          <summary className="flex cursor-pointer list-none items-baseline gap-2 px-4 py-3 hover:bg-ink-50 [&::-webkit-details-marker]:hidden">
-            <span
-              aria-hidden
-              className="inline-block w-3 shrink-0 text-ink-400 transition-transform group-open:rotate-90"
-            >
-              ▸
-            </span>
-            <h2 className="text-sm font-semibold text-ink-900">Not billable</h2>
-            <span className="text-xs text-ink-500">
-              {dismissedTotal.toLocaleString()}{" "}
-              {dismissedTotal === 1 ? "meeting" : "meetings"} you set aside
-            </span>
-          </summary>
-
-          <ul className="divide-y divide-ink-100 border-t border-ink-100">
-            {dismissed.map((m) => (
-              <li
-                key={m.id}
-                className="flex flex-wrap items-center gap-2 px-4 py-2 text-sm"
-              >
-                <Link
-                  href={`/meetings/${m.id}`}
-                  className="text-ink-800 hover:text-brand-700 hover:underline"
-                >
-                  {m.title}
-                </Link>
-                <span className="text-xs text-ink-500">
-                  {formatMedium(dayInZone(m.startsAt, zone))} · {m.minutes}m
-                  {everyone ? ` · ${m.user.name}` : ""}
-                </span>
-                <span className="ml-auto">
-                  <ReopenButton id={m.id} dismissed />
-                </span>
-              </li>
-            ))}
-          </ul>
-
-          <p className="border-t border-ink-100 px-4 py-2 text-xs text-ink-500">
-            {dismissedTotal > dismissed.length
-              ? `The ${dismissed.length} most recent of ${dismissedTotal.toLocaleString()}. `
-              : ""}
-            Nothing here is logged against a project or a client.
-            &ldquo;Billable after all&rdquo; puts one back at the top of this
-            page to be dealt with.
-          </p>
-        </details>
+      {/* Logged and set-aside calls used to trail off the bottom of this page
+          in two lists of their own. They live in All now, week by week, where
+          any of them can be changed. */}
+      {!isAll ? (
+        <p className="mt-8 text-xs text-ink-500">
+          Meetings you&apos;ve logged or marked not billable are under{" "}
+          <Link href={hrefFor({ range: "all" })} className="underline">
+            All
+          </Link>
+          , week by week, where you can change either.
+        </p>
       ) : null}
 
     </>
