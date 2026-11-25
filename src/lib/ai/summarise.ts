@@ -191,6 +191,10 @@ needs:
   custom fields don't appear in layout configuration" rather than "Submit a
   ticket". Where it depends on something else, say so.
 
+An instruction RevOptics gives the client - "you'll want to create the
+field", "go ahead and map the stage" - is the client's item, not ours,
+however much RevOptics talked about it.
+
 Not action items, on either side - leave all of these out:
 - ideas, plans and possibilities: "we'll want to create a custom field",
   "we should look at", "it might be worth", "the next phase will";
@@ -212,6 +216,35 @@ export function shortTitle(title: string | undefined, task: string): string {
   const words = (title?.trim() || task.trim()).split(/\s+/).filter(Boolean);
   const cut = words.slice(0, 14).join(" ").replace(/[.,;:]+$/, "");
   return words.length > 14 ? `${cut}…` : cut;
+}
+
+type RawActionItem = {
+  title?: string;
+  task?: string;
+  owner?: string | null;
+  ours?: boolean;
+  when?: string | null;
+  quote?: string;
+};
+
+/**
+ * The action items as the answer gave them, tidied.
+ *
+ * "ours" only when the answer said so in as many words: a missing flag is
+ * not a RevOptics undertaking, and treating it as one is how the client's
+ * own to-dos used to land on our lists.
+ */
+function toActionItems(raw: RawActionItem[] | undefined): AiActionItem[] {
+  return (raw ?? [])
+    .filter((i) => typeof i.task === "string" && i.task.trim().length > 2)
+    .map((i) => ({
+      title: shortTitle(i.title, i.task!),
+      task: i.task!.trim().slice(0, 400),
+      owner: i.owner?.trim() || null,
+      ours: i.ours === true,
+      when: i.when?.trim() || null,
+      quote: (i.quote ?? "").trim().slice(0, 2000),
+    }));
 }
 
 /** The write-up as text, for pasting into a recap email. */
@@ -431,16 +464,7 @@ export async function readTranscript(
       }))
       .filter((g) => g.heading && g.bullets.length > 0);
 
-  const actionItems: AiActionItem[] = (parsed.action_items ?? [])
-    .filter((i) => typeof i.task === "string" && i.task.trim().length > 2)
-    .map((i) => ({
-      title: shortTitle(i.title, i.task!),
-      task: i.task!.trim().slice(0, 400),
-      owner: i.owner?.trim() || null,
-      ours: i.ours !== false,
-      when: i.when?.trim() || null,
-      quote: (i.quote ?? "").trim().slice(0, 2000),
-    }));
+  const actionItems = toActionItems(parsed.action_items);
 
   return {
     read: {
@@ -452,4 +476,135 @@ export async function readTranscript(
     },
     reason: null,
   };
+}
+
+// ------------------------------------------------------------ recap emails
+
+const RECAP_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["action_items"],
+  properties: { action_items: SCHEMA.properties.action_items },
+} as const;
+
+/**
+ * Reading a recap email a consultant sent to a client.
+ *
+ * The question is narrower than for a call: not "what happened" but "which
+ * of these is RevOptics' to do". A recap is usually written to the client
+ * and lists what *they* have to do next, so most lists in most recaps are
+ * not ours. The worked examples use a made-up client on purpose - this file
+ * is in a public repository.
+ */
+const RECAP_SYSTEM = `You are reading a recap email that someone at RevOptics,
+a RevOps consultancy, sent to a client after a call. Your one job is to find
+the action items that are RevOptics' to do.
+
+The message tells you who sent it, which client it went to, and who the
+RevOptics people are. Anyone not on that list is the client's side.
+
+A RevOptics action item ("ours": true) is something the email says a
+RevOptics person will do - deliver something to the client, or do something
+on the client's behalf. The email has to say so:
+- the sender in the first person: "I'll send over the field mapping doc by
+  Friday" - owner is the sender;
+- a named RevOptics person: "Marcus will configure the sequences for you",
+  "Marcus to build the dashboard" - owner is Marcus;
+- RevOptics as a team, from a RevOptics sender: "On our side, we'll build
+  the dashboard", "RevOptics will run the import" - owner is the sender.
+
+Everything else is not ours. In particular:
+- A list of instructions addressed to the client is the client's to do,
+  however it's introduced. Say the client is Northwind and the recap reads
+  "Here is a recap of the remaining items we need to address: 1. Create a
+  custom 'Region' field on the Account object and map it in Outreach.
+  2. Confirm whether the sandbox has API access." Both are Northwind's items,
+  not ours.
+- A named client person: "Dana to confirm the Salesforce setting".
+- A shared "we" with nobody taking it on, or a joint decision: "we'll need to
+  confirm whether...", "determine whether a historical sync is needed and
+  agree on the timeframe".
+- Ideas, plans, possibilities and anything hedged.
+
+When you can't tell whether RevOptics took something on, leave it out. An
+empty list is a correct and useful answer - most recaps list the client's
+next steps, not ours.
+
+For each RevOptics item give:
+- owner: the RevOptics person's full name exactly as it appears in the list.
+- title: at most 12 words, starting with a verb.
+- task: the full instruction, with enough detail to act on cold.
+- when: the timing exactly as written, or null. Never invent one.
+- quote: the line or sentence it came from, verbatim.
+
+You may include the client's items with "ours": false; they won't be used.`;
+
+/**
+ * The RevOptics action items in a recap email, read by Claude.
+ *
+ * Throws on a real API failure, so the caller can leave the message unread
+ * and try again on the next sync rather than lose it.
+ */
+export async function readRecap(
+  body: string,
+  context: {
+    subject: string;
+    sentAt: Date;
+    sender: string;
+    client: string | null;
+    team: string[];
+  },
+  timeoutMs: number,
+): Promise<{ items: AiActionItem[] | null; reason: string | null }> {
+  if (!aiConfigured()) {
+    return { items: null, reason: "Claude isn't connected on this service." };
+  }
+  const text = body.trim();
+  if (text.length < 40) return { items: [], reason: null };
+
+  const client = new Anthropic({ maxRetries: 0 });
+  const header = [
+    `Subject: ${context.subject}`,
+    `Sent: ${context.sentAt.toISOString().slice(0, 10)}`,
+    `From: ${context.sender} (RevOptics)`,
+    context.client ? `To: ${context.client} (the client)` : "To: the client",
+    context.team.length > 0 ? `RevOptics people: ${context.team.join(", ")}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const message = await runOrExplain(timeoutMs, () =>
+    client.messages
+      .stream(
+        {
+          model: MODEL,
+          // A recap is a few hundred words; this is room to think, not a
+          // budget anyone expects to spend.
+          max_tokens: 16000,
+          system: RECAP_SYSTEM,
+          thinking: { type: "adaptive" },
+          output_config: {
+            effort: "high",
+            format: { type: "json_schema", schema: RECAP_SCHEMA },
+          },
+          messages: [{ role: "user", content: `${header}\n\nEmail:\n\n${text}` }],
+        },
+        { timeout: timeoutMs },
+      )
+      .finalMessage(),
+  );
+
+  if (message.stop_reason === "max_tokens" || message.stop_reason === "refusal") {
+    return { items: null, reason: `Claude stopped (${message.stop_reason}) reading this recap.` };
+  }
+  const out = message.content
+    .filter((b): b is Anthropic.TextBlock => b.type === "text")
+    .map((b) => b.text)
+    .join("");
+  try {
+    const parsed = JSON.parse(out) as { action_items?: RawActionItem[] };
+    return { items: toActionItems(parsed.action_items), reason: null };
+  } catch {
+    return { items: null, reason: "Claude's answer for this recap didn't parse." };
+  }
 }

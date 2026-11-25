@@ -106,22 +106,19 @@ export function aiOwnership(index: NameIndex, owner: string | null): Ownership |
 }
 
 /**
- * The owner of a line in a recap email.
+ * Which of a reading's action items are RevOptics', and whose.
  *
- * "I'll send the spec" or a bare bullet is the sender's. "Yaz to set up the
- * sandbox" is Yaz's, if Yaz is one of ours. A name that isn't one of ours is
- * the client's own undertaking - worth having in the email, not ours to do -
- * so it's dropped.
+ * The step after Claude, for calls and recap emails alike: only items Claude
+ * marked as ours, only with a named owner, matched to a OneSpace person where
+ * possible. Everything the client owes, or nobody took on, stops here.
  */
-export function recapOwnership(
+export function ourActionItems<T extends { owner: string | null; ours: boolean }>(
+  items: T[],
   index: NameIndex,
-  named: string | null,
-  senderId: string,
-): Ownership | null {
-  if (!named?.trim()) return { ownerId: senderId, ownerUnrecognised: false };
-  const id = index.match(named);
-  if (id) return { ownerId: id, ownerUnrecognised: false };
-  // One of ours, but which one can't be told - the sender decides.
-  if (id === null) return { ownerId: null, ownerUnrecognised: true };
-  return null;
+): (T & Ownership)[] {
+  return items.flatMap((item) => {
+    if (!item.ours) return [];
+    const owner = aiOwnership(index, item.owner);
+    return owner ? [{ ...item, ...owner }] : [];
+  });
 }

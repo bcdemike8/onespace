@@ -4,8 +4,15 @@ import { dayStart } from "@/lib/dates";
 import { findThreadIds, getThread, type GmailMessage } from "@/lib/google/gmail";
 import { GoogleApiError, GoogleAuthError, googleConfigured } from "@/lib/google/auth";
 import { buildWeights, matchMeeting, type MatchCandidate } from "@/lib/google/match";
-import { extractRecapItems, looksLikeRecap } from "@/lib/mail/recap";
-import { buildNameIndex, recapOwnership, type NameIndex } from "@/lib/commitments/owner";
+import { looksLikeRecap, ownWords } from "@/lib/mail/recap";
+import {
+  buildNameIndex,
+  ourActionItems,
+  type NameIndex,
+  type Ownership,
+} from "@/lib/commitments/owner";
+import { sameUndertaking } from "@/lib/commitments/queue";
+import { aiConfigured, readRecap, type AiActionItem } from "@/lib/ai/summarise";
 import { dueFor } from "@/lib/when";
 import { backfillDueDates } from "@/lib/commitments/backfill";
 
@@ -107,10 +114,20 @@ export async function syncMail(options?: {
   await backfillDueDates();
 
   const clientByDomain = new Map(domainRows.map((d) => [d.domain, d.clientId]));
-  // Who a recap's "Yaz to set up the sandbox" means. Once per sync.
-  const team = buildNameIndex(
-    await db.user.findMany({ where: { isActive: true }, select: { id: true, name: true } }),
-  );
+  // Who a recap's "Marcus will build the dashboard" means. Once per sync.
+  const ours = await db.user.findMany({
+    where: { isActive: true },
+    select: { id: true, name: true },
+    orderBy: { name: "asc" },
+  });
+  const team: RecapTeam = {
+    index: buildNameIndex(ours),
+    names: ours.map((u) => u.name),
+    // Claude takes seconds per recap. A sync runs inside one web request,
+    // so it reads what fits and leaves the rest for the next sync.
+    reads: RECAP_READS_PER_SYNC,
+    until: Date.now() + RECAP_SECONDS_PER_SYNC * 1000,
+  };
   const domains = domainRows.map((d) => d.domain);
 
   const people = await db.user.findMany({
@@ -289,21 +306,34 @@ export async function syncMail(options?: {
   return outcome;
 }
 
+/** Who's who, and how much reading this sync has left. */
+interface RecapTeam {
+  index: NameIndex;
+  names: string[];
+  reads: number;
+  until: number;
+}
+
+const RECAP_READS_PER_SYNC = 8;
+const RECAP_SECONDS_PER_SYNC = 90;
+const RECAP_READ_MS = 40_000;
+
 /**
- * Action items out of the recaps in a thread.
+ * RevOptics' action items out of the recaps in a thread.
  *
- * A recap is the most considered statement of what was agreed that exists -
- * the consultant wrote it after the call, having thought about it. Read once
- * per message, marked, and never read again: re-reading would raise the same
- * items after somebody dismissed them.
+ * Only mail we sent, and only what it says a RevOptics person will do. A
+ * recap usually lists the client's next steps - "Create the field on the Lead
+ * object" - and those are theirs to keep, not ours: Claude reads the email
+ * and keeps only what the sender, a named colleague, or "our side" took on.
+ * Pattern rules used to do this line by line and couldn't tell the two apart;
+ * on a hard-wrapped email they also cut items into fragments.
  *
- * Only mail we sent. A client's own "next steps" list is their commitment to
- * keep, and putting it on a RevOptics plate would be wrong in both
- * directions - we'd chase work that isn't ours and miss that they owe it.
+ * Each message is read once and marked. One Claude couldn't read - a timeout,
+ * a quota - is left unread and tried again on the next sync.
  */
 async function readRecaps(
   threadId: string,
-  team: NameIndex,
+  team: RecapTeam,
 ): Promise<{ recaps: number; items: number }> {
   const unread = await db.mailMessage.findMany({
     where: { threadId, fromUs: true, recapReadAt: null },
@@ -311,7 +341,13 @@ async function readRecaps(
       id: true,
       sentAt: true,
       body: true,
-      thread: { select: { subject: true, userId: true } },
+      thread: {
+        select: {
+          subject: true,
+          user: { select: { name: true } },
+          client: { select: { name: true } },
+        },
+      },
     },
     orderBy: { sentAt: "asc" },
     take: 50,
@@ -322,13 +358,32 @@ async function readRecaps(
 
   for (const message of unread) {
     const isRecap = looksLikeRecap(message.thread.subject, message.body);
-    // Each line goes to whoever it names, if they're one of ours, and to the
-    // person who sent the recap otherwise. A line naming somebody who isn't
-    // one of ours is the client's to do, and isn't offered to anyone.
-    const found = (isRecap ? extractRecapItems(message.body) : []).flatMap((item) => {
-      const owner = recapOwnership(team, item.owner, message.thread.userId);
-      return owner ? [{ ...item, ...owner }] : [];
-    });
+
+    let found: (AiActionItem & Ownership)[] = [];
+
+    if (isRecap && aiConfigured()) {
+      const left = team.until - Date.now();
+      if (team.reads <= 0 || left < 10_000) continue; // next sync
+      team.reads -= 1;
+      let read;
+      try {
+        read = await readRecap(
+          ownWords(message.body).join("\n"),
+          {
+            subject: message.thread.subject,
+            sentAt: message.sentAt,
+            sender: message.thread.user.name,
+            client: message.thread.client?.name ?? null,
+            team: team.names,
+          },
+          Math.min(RECAP_READ_MS, left),
+        );
+      } catch (e) {
+        console.error("Couldn't read a recap with Claude:", e);
+        continue; // left unread - tried again next sync
+      }
+      found = ourActionItems(read.items ?? [], team.index);
+    }
 
     await db.$transaction(async (tx) => {
       // Marked whether or not it was a recap: a message that isn't one now
@@ -338,30 +393,48 @@ async function readRecaps(
         where: { id: message.id },
         data: { recapReadAt: new Date() },
       });
-      if (found.length > 0) {
-        await tx.commitment.createMany({
-          data: found.map((item) => {
-            // Anchored to the day the recap went out, so "by Friday" in a
-            // mail from last week means that Friday.
-            const due = dueFor(item.text, message.sentAt);
-            return {
-              mailMessageId: message.id,
-              source: "RECAP_EMAIL" as const,
-              text: item.text,
-              speaker: item.owner,
-              suggestedTask: item.suggestedTask,
-              ownerId: item.ownerId,
-              ownerUnrecognised: item.ownerUnrecognised,
-              dueDate: due.date,
-              dueStated: due.stated,
-            };
-          }),
-        });
-      }
+      if (found.length === 0) return;
+
+      // A message read again keeps what somebody already decided about it:
+      // nothing already a task or dismissed comes back, reworded or not.
+      const decided = await tx.commitment.findMany({
+        where: { mailMessageId: message.id, status: { in: ["ACCEPTED", "DISMISSED"] } },
+        select: { suggestedTask: true, text: true },
+      });
+      const fresh = found.filter(
+        (item) =>
+          !decided.some((d) =>
+            sameUndertaking(
+              { title: item.title, quote: item.quote },
+              { title: d.suggestedTask, quote: d.text },
+            ),
+          ),
+      );
+      if (fresh.length === 0) return;
+
+      await tx.commitment.createMany({
+        data: fresh.map((item) => {
+          // Anchored to the day the recap went out, so "by Friday" in a
+          // mail from last week means that Friday.
+          const due = dueFor(item.when ?? item.quote, message.sentAt);
+          return {
+            mailMessageId: message.id,
+            source: "RECAP_EMAIL" as const,
+            text: item.quote || item.task,
+            speaker: item.owner,
+            suggestedTask: item.title.slice(0, 200),
+            detail: item.task,
+            ownerId: item.ownerId,
+            ownerUnrecognised: item.ownerUnrecognised,
+            dueDate: due.date,
+            dueStated: due.stated,
+          };
+        }),
+      });
+      items += fresh.length;
     });
 
     if (isRecap) recaps += 1;
-    items += found.length;
   }
 
   return { recaps, items };

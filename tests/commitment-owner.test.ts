@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   aiOwnership,
   buildNameIndex,
-  recapOwnership,
+  ourActionItems,
 } from "@/lib/commitments/owner";
 
 /**
@@ -73,20 +73,40 @@ test("Claude's item with no owner at all is dropped", () => {
   assert.equal(aiOwnership(team, "  "), null);
 });
 
-test("a recap line naming nobody belongs to whoever sent the recap", () => {
-  assert.deepEqual(recapOwnership(team, null, "dana"), {
-    ownerId: "dana",
-    ownerUnrecognised: false,
-  });
+// What Claude hands back for a recap, and what reaches My work. The email is
+// made up but shaped like the real one that went wrong: a numbered list of
+// the client's own next steps, with nobody at RevOptics taking anything on.
+const reading = (items: { title: string; owner: string | null; ours: boolean }[]) =>
+  items.map((i) => ({ ...i, task: i.title, when: null, quote: i.title }));
+
+test("a recap listing only the client's next steps puts nothing on My work", () => {
+  const items = reading([
+    { title: "Create the Region field on the Account object", owner: "Jordan Lee", ours: false },
+    { title: "Troubleshoot the task sync", owner: null, ours: false },
+    { title: "Decide whether a historical sync is needed", owner: null, ours: false },
+  ]);
+  assert.deepEqual(ourActionItems(items, team), []);
 });
 
-test("a recap line naming one of ours belongs to them", () => {
-  assert.deepEqual(recapOwnership(team, "Priya", "dana"), {
-    ownerId: "priya",
-    ownerUnrecognised: false,
-  });
+test("from a mixed recap, only what a named one of ours took on is kept", () => {
+  const items = reading([
+    { title: "Send Northwind the field mapping doc", owner: "Priya Shah", ours: true },
+    { title: "Confirm sandbox API access", owner: "Jordan Lee", ours: false },
+    { title: "Build the dashboard", owner: null, ours: true },
+  ]);
+  const kept = ourActionItems(items, team);
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0].title, "Send Northwind the field mapping doc");
+  assert.equal(kept[0].ownerId, "priya");
+  assert.equal(kept[0].ownerUnrecognised, false);
 });
 
-test("a recap line naming the client is the client's, and isn't offered", () => {
-  assert.equal(recapOwnership(team, "Jordan", "dana"), null);
+test("an item Claude calls ours but names oddly goes to the sender to place", () => {
+  const kept = ourActionItems(
+    reading([{ title: "Share the checklist", owner: "iPhone", ours: true }]),
+    team,
+  );
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0].ownerId, null);
+  assert.equal(kept[0].ownerUnrecognised, true);
 });
