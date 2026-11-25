@@ -232,12 +232,14 @@ export default async function MeetingPage({
               ? "Removed - not work"
               : meeting.setAside === "BACKLOG"
                 ? "Cleared with the backlog"
-                : "Not billable"}
+                : meeting.noClient
+                  ? "Internal"
+                  : "Not billable"}
           </span>
         ) : null}
         {meeting.loggedByHand ? (
           <span title="Marked Already logged: the time was put on the timesheet by hand, so this call has no entry of its own">
-            Logged by hand on the timesheet
+            Manually logged - the time was already on the timesheet
           </span>
         ) : null}
         {meeting.timeEntry ? (
