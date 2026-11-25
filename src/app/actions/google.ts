@@ -187,6 +187,76 @@ export async function dismissMeetingAction(formData: FormData): Promise<void> {
 }
 
 /**
+ * Set aside a named handful of your own waiting meetings - My Work's
+ * "Set all aside". By id rather than by date, so it only ever touches the
+ * rows that were on the screen when it was pressed.
+ */
+export async function dismissMeetingsAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+  const ids = formData.getAll("id").map(String).filter(Boolean);
+  if (ids.length === 0) return { ok: true };
+
+  const { count } = await db.meeting.updateMany({
+    where: { id: { in: ids }, userId: user.id, status: "PENDING" },
+    data: { status: "DISMISSED" },
+  });
+  refresh();
+  return { ok: true, message: `Set aside ${count} meeting${count === 1 ? "" : "s"}.` };
+}
+
+/**
+ * Set aside, in one go, every one of your own waiting meetings from before a
+ * day. The backlog this clears ran to a hundred-odd calls, months old, that
+ * nobody was ever going to log one at a time - and while they sat there the
+ * count on My Work meant nothing. They go where "Not billable work" puts
+ * things, not away: each can still be brought back with "Billable after all".
+ *
+ * Your own only, even for an admin looking at everyone's. Writing off other
+ * people's calls in bulk is a decision they should make.
+ */
+export async function dismissMeetingsBeforeAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+  const raw = String(formData.get("before") ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return { error: "Pick a day." };
+
+  const zone = await orgTimezone();
+  const cutoff = new Date(`${raw}T00:00:00Z`);
+  if (Number.isNaN(cutoff.getTime())) return { error: "Pick a day." };
+
+  // Which day a call falls on depends on the zone, so the comparison is done
+  // on the day, not the instant. A day either side covers every offset.
+  const candidates = await db.meeting.findMany({
+    where: {
+      userId: user.id,
+      status: "PENDING",
+      startsAt: { lt: new Date(cutoff.getTime() + 86_400_000), lte: new Date() },
+    },
+    select: { id: true, startsAt: true },
+  });
+  const ids = candidates
+    .filter((m) => dayInZone(m.startsAt, zone) < cutoff)
+    .map((m) => m.id);
+
+  if (ids.length === 0) return { ok: true, message: "Nothing waiting from before then." };
+
+  await db.meeting.updateMany({
+    where: { id: { in: ids }, userId: user.id, status: "PENDING" },
+    data: { status: "DISMISSED" },
+  });
+  refresh();
+  return {
+    ok: true,
+    message: `Set aside ${ids.length} meeting${ids.length === 1 ? "" : "s"}. They're under "meetings you set aside" if any turn out to be billable.`,
+  };
+}
+
+/**
  * Put a meeting back in the list.
  *
  * An accepted one takes its time entry with it, so undo really is undo rather

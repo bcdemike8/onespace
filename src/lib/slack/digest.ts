@@ -30,7 +30,7 @@ export interface DailyInput {
   lastWorkedMinutes: number;
   lastWorkedLabel: string;
   weekMinutes: number;
-  /** Meetings sitting on the calendar waiting to be turned into time. */
+  /** Client meetings from the last fortnight waiting to be turned into time. */
   meetingsWaiting: number;
   appUrl: string;
 }
@@ -139,7 +139,7 @@ export function buildDailyDigest(input: DailyInput): SlackMessage {
   if (meetingsWaiting > 0) {
     blocks.push(
       section(
-        `:calendar: *${meetingsWaiting} meeting${meetingsWaiting === 1 ? "" : "s"} waiting to be logged.* <${appUrl}/meetings|Review them>`,
+        `:calendar: *${meetingsWaiting} client meeting${meetingsWaiting === 1 ? "" : "s"} from the last two weeks waiting to be logged.* <${appUrl}|Review them>`,
       ),
     );
   }
