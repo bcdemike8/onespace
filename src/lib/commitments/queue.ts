@@ -47,17 +47,63 @@ export function normalTask(text: string): string {
     .trim();
 }
 
-function contentWords(text: string): Set<string> {
-  return new Set(normalTask(text).split(" ").filter((w) => w.length > 1 && !STOP.has(w)));
+/**
+ * A word without its common ending, so "sequences" and "sequence", "syncing"
+ * and "sync", count as the same word. Deliberately light - just enough that
+ * a call and its recap, worded a little differently, read as one promise.
+ */
+function stem(word: string): string {
+  if (word.length > 5 && word.endsWith("ing")) return word.slice(0, -3);
+  if (word.length > 4 && word.endsWith("ed")) return word.slice(0, -2);
+  if (word.length > 3 && word.endsWith("s") && !word.endsWith("ss")) return word.slice(0, -1);
+  return word;
 }
 
-function compare(a: string, b: string): { shared: number; overlap: number } {
+function contentWords(text: string): Set<string> {
+  return new Set(
+    normalTask(text)
+      .split(" ")
+      .filter((w) => w.length > 1 && !STOP.has(w))
+      .map(stem),
+  );
+}
+
+/**
+ * Words every task title has - the verb, mostly - so sharing them says
+ * nothing about whether two titles are the same deliverable.
+ */
+const ACTION_WORDS = new Set([
+  "send", "share", "get", "give", "provide", "deliver", "updat", "draft",
+  "create", "build", "prepare", "put", "together", "set", "run", "review",
+  "follow", "confirm", "schedule", "book", "new", "revis", "final", "team",
+]);
+
+/** The words naming the deliverable - content words, less the verbs every title has. */
+function thingWords(text: string): Set<string> {
+  return new Set([...contentWords(text)].filter((w) => !ACTION_WORDS.has(w)));
+}
+
+/** One title is the other said more fully: "Book the training" / "Book Northwind's admin training". */
+function narrows(a: string, b: string): boolean {
+  const x = thingWords(a);
+  const y = thingWords(b);
+  if (x.size === 0 || y.size === 0) return false;
+  const [small, big] = x.size <= y.size ? [x, y] : [y, x];
+  return [...small].every((w) => big.has(w));
+}
+
+function compare(a: string, b: string): { shared: number; things: number; overlap: number } {
   const x = contentWords(a);
   const y = contentWords(b);
-  if (x.size === 0 || y.size === 0) return { shared: 0, overlap: 0 };
+  if (x.size === 0 || y.size === 0) return { shared: 0, things: 0, overlap: 0 };
   let shared = 0;
-  for (const w of x) if (y.has(w)) shared += 1;
-  return { shared, overlap: shared / (x.size + y.size - shared) };
+  let things = 0;
+  for (const w of x) {
+    if (!y.has(w)) continue;
+    shared += 1;
+    if (!ACTION_WORDS.has(w)) things += 1;
+  }
+  return { shared, things, overlap: shared / (x.size + y.size - shared) };
 }
 
 /**
@@ -68,9 +114,13 @@ function compare(a: string, b: string): { shared: number; overlap: number } {
  * row), and against what the person already added or dismissed.
  *
  * Same when the titles are the same, or nearly all the same words. Or when
- * the quotes are mostly the same words AND the titles share at least two -
- * one sentence can hold two promises ("I'll send the deck and book the
- * training"), and the shared quote alone mustn't make them one.
+ * the quotes are mostly the same words AND the titles share at least two
+ * words about the thing itself, not the verb - one sentence can hold two
+ * promises ("the sequences tomorrow and the recommendations by Friday"),
+ * and "Send Northwind the..." in both titles mustn't make them one. The
+ * customer's name can be one of the two, so a re-worded "Send Acme the
+ * sequence spec" still matches "Share the revised sequence specification
+ * with Acme".
  */
 export function sameUndertaking(
   a: { title: string; quote?: string | null },
@@ -80,7 +130,11 @@ export function sameUndertaking(
   const titles = compare(a.title, b.title);
   if (titles.overlap >= 0.8) return true;
   if (a.quote && b.quote && compare(a.quote, b.quote).overlap >= 0.6) {
-    return titles.shared >= 2;
+    // Same sentence: the same thing if the titles share two words about it,
+    // or one title is just the other said more fully. Two deliverables from
+    // one sentence ("the sequences ... and the recommendations") share
+    // neither.
+    return (titles.things >= 2 && titles.overlap >= 0.25) || narrows(a.title, b.title);
   }
   return false;
 }

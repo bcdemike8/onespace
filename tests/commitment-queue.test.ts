@@ -93,6 +93,34 @@ test("a decision on one project doesn't hide a like-named item on another", () =
   assert.equal(left.length, 1);
 });
 
+test("a call and its recap, worded a little differently, are one promise", () => {
+  assert.ok(
+    sameUndertaking(
+      { title: "Send Northwind the updated sequences" },
+      { title: "Send Northwind the updated sequence templates" },
+    ),
+  );
+});
+
+test("two deliverables from one sentence stay two, though the titles share the client and verb", () => {
+  const quote = "I'll send the updated sequences tomorrow and the reporting recommendations by Friday.";
+  assert.ok(
+    !sameUndertaking(
+      { title: "Send Northwind the updated sequences", quote },
+      { title: "Send Northwind the reporting recommendations", quote },
+    ),
+  );
+});
+
+test("one word apart in what's delivered is two promises", () => {
+  assert.ok(
+    !sameUndertaking(
+      { title: "Send Northwind the sequence spec" },
+      { title: "Send Northwind the sequence results" },
+    ),
+  );
+});
+
 test("different undertakings are different", () => {
   assert.ok(
     !sameUndertaking(

@@ -16,8 +16,13 @@ import { pickTranscript, type TranscriptPick } from "@/lib/zoom/files";
 import { readFromZoomSummary } from "@/lib/zoom/zoom-summary";
 import { parseVtt } from "@/lib/zoom/commitments";
 import { buildNameIndex, type NameIndex } from "@/lib/commitments/owner";
-import { promisedDate, vetActionItems, type Person } from "@/lib/commitments/pipeline";
-import { normalTask, sameUndertaking } from "@/lib/commitments/queue";
+import {
+  promisedDate,
+  promisedWhen,
+  vetActionItems,
+  type Person,
+} from "@/lib/commitments/pipeline";
+import { planReading } from "@/lib/commitments/reread";
 import {
   aiConfigured,
   readTranscript,
@@ -437,15 +442,6 @@ export async function syncZoom(options?: {
         // for it, and the call is left exactly as it was - the worst of both.
         outcome.transcriptsLeft += 1;
       } else if (unread) {
-        if (readButEmpty) {
-          // Whatever the earlier read offered came from the weaker rules and
-          // is about to be offered again by a better reader. Clear the ones
-          // nobody has ruled on, exactly as the per-call button does, so the
-          // queue doesn't end up holding both readings of the same call.
-          await db.commitment.deleteMany({
-            where: { meetingId: row.id, status: "PENDING" },
-          });
-        }
         const found = await readCommitments(
           zm.uuid,
           named,
@@ -605,46 +601,36 @@ async function storeRead(
       },
     });
 
-    if (found.commitments.length === 0) return;
+    // A reading that didn't happen - failed, nothing to read, or only Zoom's
+    // own summary (which never yields items) - changes no items. Clearing
+    // them first, as this used to, lost every waiting item on the call
+    // whenever a re-read then failed.
+    if (found.retry || !found.ai || found.fromSummary) return;
 
-    // What somebody has already ruled on for this call.
-    //
-    // A re-read clears the pending suggestions and nothing else, so anything
-    // accepted or dismissed is a decision that still stands. Reading the
-    // call again must not re-offer something already made a task, and must
-    // not turn a dismissal back into work - "not a task" is an answer.
-    //
-    // Compared as undertakings, not as strings: Claude rarely words a title
-    // the same way twice, and exact matching let dismissed items come back
-    // reworded after every re-read.
-    const decided = await tx.commitment.findMany({
-      where: {
-        meetingId: meeting.id,
-        status: { in: ["ACCEPTED", "DISMISSED"] },
-      },
-      select: { suggestedTask: true, text: true },
+    // Merge with what's stored: only the host's own and unidentified items
+    // are replaced; a colleague's waiting commitment and every decision stay
+    // as they are, and nothing is offered twice. See lib/commitments/reread.
+    const stored = await tx.commitment.findMany({
+      where: { meetingId: meeting.id },
+      select: { id: true, ownerId: true, status: true, suggestedTask: true, text: true },
     });
-    const ruledOn = (c: Found) =>
-      decided.some((d) =>
-        sameUndertaking(
-          { title: c.suggestedTask, quote: c.text },
-          { title: d.suggestedTask, quote: d.text },
-        ),
-      );
+    const plan = planReading(
+      stored.map((s) => ({ ...s, title: s.suggestedTask, quote: s.text })),
+      found.commitments,
+      meeting.userId,
+    );
+    if (plan.remove.length > 0) {
+      await tx.commitment.deleteMany({
+        where: { id: { in: plan.remove }, status: "PENDING" },
+      });
+    }
 
     // "by Friday" is read against the day of the call, not against today: a
     // promise made last Tuesday means that Friday, and reading it now would
     // push the deadline out every sync.
     const said = dayInZone(meeting.startsAt, zone);
-    const seen = new Set<string>();
 
-    for (const c of found.commitments) {
-      if (ruledOn(c)) continue;
-      // The same thing listed twice in one reading is one item.
-      const key = normalTask(c.suggestedTask);
-      if (seen.has(key)) continue;
-      seen.add(key);
-
+    for (const c of plan.add) {
       // Only a deadline that was actually given - Claude's isolated timing
       // phrase, read against the day of the call. No phrase, no date: a
       // calculated one would look on My work like a promise to the customer.
@@ -711,10 +697,6 @@ export async function readMeetingNow(meetingId: string): Promise<string> {
   summaryNote = null;
   const zone = await orgTimezone();
   const people = await peopleMatcher();
-
-  await db.commitment.deleteMany({
-    where: { meetingId: meeting.id, status: "PENDING" },
-  });
 
   const found = await readCommitments(
     meeting.zoomUuid,
@@ -869,6 +851,7 @@ function callItems(
     if (id) there.add(id);
   }
   const vetted = vetActionItems(items, people.index, people.people, {
+    kind: "call",
     text,
     presentIds: there,
   });
@@ -884,7 +867,9 @@ function callItems(
   });
   return [
     ...vetted.owned.map((i) => found(i, i.ownerId)),
-    ...vetted.unidentified.map(({ item }) => found(item, null)),
+    ...vetted.unidentified.map(({ item }) =>
+      found({ ...item, when: promisedWhen(item.when, item.quote) }, null),
+    ),
   ];
 }
 

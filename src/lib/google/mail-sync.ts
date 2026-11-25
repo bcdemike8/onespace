@@ -418,8 +418,10 @@ async function readRecaps(
     // or named in it, and anything whose owner can't be established is
     // dropped: an email has no page of its own to hold it for someone.
     const vetted = vetActionItems(read.items, team.index, team.people, {
+      kind: "email",
       text,
       presentIds: new Set([sender.id]),
+      senderId: sender.id,
     });
 
     await db.$transaction(async (tx) => {

@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { dayStart } from "@/lib/dates";
 import { isAdmin, requireUser } from "@/lib/auth";
+import { mayDecide, takesTasks } from "@/lib/commitments/permissions";
+import { addTaskOnce } from "@/lib/commitments/accept";
 import { syncZoom } from "@/lib/zoom/sync";
 
 export type ActionState = { error?: string; ok?: boolean; message?: string };
@@ -91,8 +93,8 @@ export async function syncZoomAction(
  * exactly one of a meeting or the recap email it was written in; both know
  * who the host is and a date to anchor the task's description to.
  *
- * Allowed: the person who undertook it, the host of the call or thread (who
- * holds anything whose owner couldn't be placed), or an admin.
+ * Allowed: the person who undertook it; for an item whose owner couldn't be
+ * placed, the host of the call or thread; or an admin. See mayDecide.
  */
 async function ownCommitments(ids: string[]) {
   const user = await requireUser();
@@ -128,9 +130,13 @@ async function ownCommitments(ids: string[]) {
     // Neither: the meeting or the mail it came from has been deleted under it.
     if (!origin) throw new Error("Whatever this came from is no longer here.");
 
-    const mayAct =
-      row.ownerId === user.id || origin.userId === user.id || isAdmin(user);
-    if (!mayAct) throw new Error(`That's someone else's ${origin.where}.`);
+    if (!mayDecide({ ownerId: row.ownerId, hostId: origin.userId }, { id: user.id, admin: isAdmin(user) })) {
+      throw new Error(
+        row.ownerId
+          ? "That's a colleague's commitment - only they can add or clear it."
+          : `That's someone else's ${origin.where}.`,
+      );
+    }
     return { row, origin };
   });
 
@@ -174,9 +180,12 @@ export async function acceptCommitmentAction(
 
   const project = await db.project.findUnique({
     where: { id: projectId },
-    select: { id: true },
+    select: { id: true, status: true },
   });
   if (!project) return { error: "That project is no longer here." };
+  if (!takesTasks(project.status)) {
+    return { error: "That project is completed or archived - choose an open one." };
+  }
 
   const assigneeId = first.row.ownerId ?? first.origin.userId;
 
@@ -202,29 +211,15 @@ export async function acceptCommitmentAction(
     .filter(Boolean)
     .join("\n\n");
 
-  await db.$transaction(async (tx) => {
-    const task = await tx.task.create({
-      data: {
-        projectId,
-        name: name.slice(0, 200),
-        assigneeId,
-        dueDate,
-        description,
-      },
-    });
-    await tx.commitment.update({
-      where: { id: first.row.id },
-      data: { status: "ACCEPTED", taskId: task.id },
-    });
-    // The same undertaking said on another call is the same task.
-    const copies = pending.slice(1).map((i) => i.row.id);
-    if (copies.length > 0) {
-      await tx.commitment.updateMany({
-        where: { id: { in: copies } },
-        data: { status: "ACCEPTED" },
-      });
-    }
-  });
+  // Atomic: a second "Add it" for the same item - a double-click, another
+  // tab - finds it already added and creates no second task.
+  const taskId = await addTaskOnce(
+    db,
+    first.row.id,
+    pending.slice(1).map((i) => i.row.id),
+    { projectId, name: name.slice(0, 200), assigneeId, dueDate, description },
+  );
+  if (!taskId) return { error: "That's already been added." };
 
   refresh();
   return { ok: true };
@@ -260,18 +255,14 @@ export async function dismissCommitmentAction(formData: FormData): Promise<void>
 }
 
 /**
- * Throw away what the transcript rules found and read them again.
+ * Read calls again, under the current rules.
  *
- * The rules are the feature, and a rules change makes everything already
- * raised the output of a version nobody believes any more. Rather than ask
- * people to dismiss thirty rows by hand, this clears the pending ones and
- * unsets the read marker so the next Zoom sync goes back to Zoom for the
+ * Unsets the read marker so the next Zoom sync goes back to Zoom for the
  * transcripts - which are still there, because Zoom keeps them; OneSpace is
- * the one that doesn't.
- *
- * Accepted commitments are left alone. They are real tasks now, and somebody
- * decided that. Dismissed ones are left too, so a promise already turned
- * down doesn't come back a second time.
+ * the one that doesn't. Nothing is deleted here: when each new reading
+ * arrives it replaces the host's own waiting items and unidentified ones,
+ * and leaves colleagues' commitments, and everything already added or
+ * dismissed, as they are (lib/commitments/reread).
  */
 /**
  * Mark calls to be read again.
@@ -309,23 +300,19 @@ export async function rereadTranscriptsAction(
     startsAt: { gte: since },
   };
 
-  const cleared = await db.$transaction(async (tx) => {
-    const removed = await tx.commitment.deleteMany({
-      where: {
-        status: "PENDING",
-        source: { in: ["TRANSCRIPT", "ZOOM_SUMMARY", "AI_SUMMARY"] },
-        meeting: scope,
-      },
-    });
-    // Only meetings there is still a transcript to go back for: the sync
-    // finds one by Zoom UUID, so a calendar-only meeting has nothing to
-    // re-read and clearing its marker would just cost a lookup.
-    const queued = await tx.meeting.updateMany({
-      where: { ...scope, zoomUuid: { not: null }, transcriptReadAt: { not: null } },
-      data: { transcriptReadAt: null, transcriptNote: null, transcriptFailedAt: null },
-    });
-    return { removed: removed.count, queued: queued.count };
+  // Nothing is cleared up front. Clearing waiting items here used to take
+  // colleagues' commitments off their My work, and lost them for good if
+  // the re-read then failed. The new reading is merged in when it arrives:
+  // it replaces only the host's own and unidentified items, after it has
+  // actually succeeded (see lib/commitments/reread).
+  //
+  // Only meetings there is still a transcript to go back for: the sync finds
+  // one by Zoom UUID, so a calendar-only meeting has nothing to re-read.
+  const queued = await db.meeting.updateMany({
+    where: { ...scope, zoomUuid: { not: null }, transcriptReadAt: { not: null } },
+    data: { transcriptReadAt: null, transcriptNote: null, transcriptFailedAt: null },
   });
+  const cleared = { queued: queued.count };
 
   refresh();
   return {
@@ -335,11 +322,7 @@ export async function rereadTranscriptsAction(
         ? `Nothing ${window} to read again${everyone ? "" : " on your calls"}.`
         : `${cleared.queued} call${cleared.queued === 1 ? "" : "s"} ${window}${
             everyone ? "" : " of yours"
-          } queued to be read again${
-            cleared.removed > 0
-              ? `, ${cleared.removed} unconfirmed suggestion${cleared.removed === 1 ? "" : "s"} cleared`
-              : ""
-          }. Run Sync Zoom, or leave it to tonight.`,
+          } queued to be read again. Your waiting suggestions from them are replaced once each is read; colleagues' are left alone. Run Sync Zoom, or leave it to tonight.`,
   };
 }
 

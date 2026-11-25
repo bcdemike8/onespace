@@ -160,13 +160,19 @@ be done:
 - "I'll own that piece." / "I can take care of that." - when it answers a
   specific piece of work and the context makes clear what "that" is. Spell
   out what it is in the title and task.
-- "Sam will take care of the configuration." - said by someone in a position
-  to commit Sam, and not contradicted.
+- "Sam will take care of the configuration." - said by a RevOptics person
+  (who can commit a colleague), and not contradicted. A customer saying "Sam
+  will sort that out" doesn't make it Sam's unless Sam agrees.
 - The client asks "Can you send us the mapping?" and the RevOptics person
   agrees: "Sure, I'll send it today." The agreement makes it ours; the
   request on its own does not.
 - Work that waits on the client: "Once Dana sends the export, I'll run the
   import." Ours - say in the task what it waits on.
+
+A REVOPTICS COMMITMENT WITH NO INDIVIDUAL OWNER
+"On our side, we'll build the dashboard", "RevOptics will run the import" -
+the team took it on, but no one person did. Mark it "ours": true with owner
+null. Never give it to whoever happened to say it or send the email.
 
 NOT A REVOPTICS COMMITMENT - leave it out, or mark it "ours": false
 - The client's own work, or an instruction given to the client: "The
@@ -184,17 +190,25 @@ When you can't tell who took it on, or whether they really did, leave it out.
 Accuracy matters more than catching everything.
 
 FOR EACH ITEM
-- owner: the one person who took it on. For RevOptics, their full name
-  exactly as it appears in the list of RevOptics people.
+- owner: the one person who took it on, or null when only the team did. For
+  RevOptics, their full name exactly as it appears in the list of RevOptics
+  people. Being mentioned, or hosting the call, doesn't make anyone the owner.
 - title: at most 12 words, starting with a verb, naming what and for whom -
   "Send Northwind the updated sequences". A whole phrase, never a fragment.
 - task: what has to be done, for which client, and anything it depends on,
   in full sentences - enough to act on without the source.
-- when: the deadline exactly as it was stated or agreed - "by Friday" - or
-  null. Never infer one.
-- quote: the exact words from the source that show the commitment, copied
-  character for character - for an accepted request, include the acceptance.
-  Never paraphrase or tidy it.`;
+- when: the deadline for this RevOptics task, exactly as it was stated in the
+  quote - "by Friday" - or null. A date the client asked for counts when the
+  RevOptics person plainly agreed ("Can you send it by Friday?" -
+  "Absolutely"); not when they hedged ("I'll see if I can"). Never the
+  deadline of the client's own task, never the date of the meeting, and null
+  for anything vague ("next week", "soon", "in a few days"). When one
+  sentence promises two things with two dates, give each item its own date.
+  Never infer one.
+- quote: the exact words from the source that show the owner taking it on -
+  their own words of acceptance, or a RevOptics colleague assigning it to
+  them by name. For an accepted request, include the request and the
+  acceptance. Copy it character for character; never paraphrase or tidy it.`;
 
 const SYSTEM = `You are writing up a client call at RevOptics, a RevOps
 consultancy that delivers through Outreach.io and Salesloft. The reader is
@@ -549,8 +563,8 @@ ${COMMITMENT_RULES}
 
 IN A RECAP EMAIL SPECIFICALLY
 - The sender writing in the first person ("I'll...") - the owner is the
-  sender. "On our side, we'll..." or "RevOptics will..." from the sender -
-  the owner is the sender.
+  sender. "On our side, we'll..." or "RevOptics will..." is the team's, not
+  the sender's: owner null.
 - A named RevOptics colleague ("Sam will...", "Sam to...") - the owner is
   that colleague.
 - A list of remaining items written to the client is the client's to do,
