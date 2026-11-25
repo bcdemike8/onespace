@@ -218,11 +218,61 @@ export async function createProjectAction(
   redirect(`/projects/${project.id}`);
 }
 
+/**
+ * The on-hold record that goes with a status change, or nothing if the move
+ * doesn't touch on hold. Going on hold records who and why and puts it in
+ * front of admins; coming off clears the lot, which also takes it out of
+ * their list - a project that's running again isn't news.
+ */
+function onHoldChange(
+  from: ProjectStatus,
+  to: ProjectStatus,
+  userId: string,
+  reason: string | null,
+) {
+  if (to === "ON_HOLD" && from !== "ON_HOLD") {
+    return {
+      onHoldAt: new Date(),
+      onHoldById: userId,
+      onHoldReason: reason?.trim().slice(0, 500) || null,
+      onHoldClearedAt: null,
+    };
+  }
+  if (to !== "ON_HOLD" && from === "ON_HOLD") {
+    return {
+      onHoldAt: null,
+      onHoldById: null,
+      onHoldReason: null,
+      onHoldClearedAt: null,
+    };
+  }
+  return {};
+}
+
+/** An admin has seen that this project went on hold: take it off the list. */
+export async function clearOnHoldNoticeAction(formData: FormData) {
+  await requireAdmin();
+  const id = String(formData.get("id") ?? "");
+  const all = formData.get("all") === "1";
+
+  await db.project.updateMany({
+    where: {
+      ...(all ? {} : { id }),
+      status: "ON_HOLD",
+      onHoldAt: { not: null },
+      onHoldClearedAt: null,
+    },
+    data: { onHoldClearedAt: new Date() },
+  });
+
+  revalidatePath("/projects");
+}
+
 export async function updateProjectAction(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireAdmin();
+  const admin = await requireAdmin();
   const id = String(formData.get("id") ?? "");
 
   const parsed = projectSchema.safeParse({
@@ -246,6 +296,10 @@ export async function updateProjectAction(
   const [slackChannelId, slackChannelName] = (d.slackChannel ?? "").split("|");
   const budgetCents = d.budgetAmount ? parseMoneyToCents(d.budgetAmount) : null;
   const billRateCents = d.billRate ? parseMoneyToCents(d.billRate) : null;
+  const before = await db.project.findUnique({
+    where: { id },
+    select: { status: true },
+  });
 
   await db.project.update({
     where: { id },
@@ -264,6 +318,9 @@ export async function updateProjectAction(
       slackChannelId: slackChannelId || null,
       slackChannelName: slackChannelId ? (slackChannelName ?? null) : null,
       status: status as "ACTIVE" | "ON_HOLD" | "COMPLETED" | "ARCHIVED",
+      ...(before
+        ? onHoldChange(before.status, status as ProjectStatus, admin.id, null)
+        : {}),
     },
   });
   await cascadeOwnerToTasks(id, d.ownerId || null);
@@ -706,7 +763,7 @@ export async function togglePartnerArchivedAction(formData: FormData) {
  * Projects view — and Reopen puts it straight back.
  */
 export async function setProjectStatusAction(formData: FormData) {
-  await requireUser();
+  const user = await requireUser();
 
   const id = String(formData.get("id") ?? "");
   const wanted = String(formData.get("status") ?? "");
@@ -716,13 +773,22 @@ export async function setProjectStatusAction(formData: FormData) {
 
   const project = await db.project.findUnique({
     where: { id },
-    select: { id: true },
+    select: { id: true, status: true },
   });
   if (!project) return;
 
+  const reason = formData.get("reason");
   await db.project.update({
     where: { id },
-    data: { status: wanted as ProjectStatus },
+    data: {
+      status: wanted as ProjectStatus,
+      ...onHoldChange(
+        project.status,
+        wanted as ProjectStatus,
+        user.id,
+        typeof reason === "string" ? reason : null,
+      ),
+    },
   });
 
   refresh();
