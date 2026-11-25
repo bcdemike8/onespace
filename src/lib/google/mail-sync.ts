@@ -16,7 +16,12 @@ import { sameUndertaking } from "@/lib/commitments/queue";
 import { aiConfigured, readRecap } from "@/lib/ai/summarise";
 
 export const MAIL_FROM_KEY = "google.mailFrom";
-export const DEFAULT_MAIL_FROM = "2026-08-01";
+/**
+ * How far back client mail is read. Moved from 1 August to 1 November to
+ * drop the backlog from before OneSpace was in daily use; the Inbox hides
+ * threads older than this too, so it applies to what's already stored.
+ */
+export const DEFAULT_MAIL_FROM = "2026-11-01";
 
 export async function mailSyncFrom(): Promise<Date> {
   const row = await db.appSetting.findUnique({ where: { key: MAIL_FROM_KEY } });

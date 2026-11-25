@@ -3,6 +3,7 @@ import { isAdmin, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { formatMedium } from "@/lib/dates";
 import { googleConfigured } from "@/lib/google/auth";
+import { mailSyncFrom } from "@/lib/google/mail-sync";
 import {
   asReplyFilter,
   attributeRows,
@@ -52,9 +53,14 @@ export default async function InboxPage({
   // Everything in the tab the person is looking at. The dropdown and the
   // reply tabs are both built from this, so neither one hides choices the
   // other would have offered.
+  //
+  // Nothing older than the mail start date. Threads from before it were
+  // stored by earlier syncs; they're hidden, not deleted, so moving the date
+  // back brings them back.
   const scope = {
     ...(everyone ? {} : { userId: user.id }),
     status: (showDone ? "DONE" : "OPEN") as "DONE" | "OPEN",
+    lastMessageAt: { gte: await mailSyncFrom() },
   };
 
   const current = {
