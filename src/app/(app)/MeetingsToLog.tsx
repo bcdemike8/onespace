@@ -28,7 +28,11 @@ const VISIBLE = 6;
  * It used to be a single line - "112 meetings still to log" - whose only
  * action was a link away. Most of what needs doing to a call that won't be
  * billed is one click, so that click lives here. Logging one still opens the
- * meeting, because that needs a project, a task and a duration.
+ * meeting, because that needs a project, a task and a duration. Clear is
+ * "Not billable work" by a shorter name: the call is set aside, not deleted.
+ *
+ * The window rolls: whatever is older than a fortnight drops off here on its
+ * own, and waits on the Meetings tab under Last 30 days or All.
  */
 export function MeetingsToLog({ meetings }: { meetings: MeetingToLog[] }) {
   const [showAll, setShowAll] = useState(false);
@@ -54,7 +58,7 @@ export function MeetingsToLog({ meetings }: { meetings: MeetingToLog[] }) {
               const n = meetings.length;
               if (
                 !window.confirm(
-                  `Set aside all ${n} meeting${n === 1 ? "" : "s"} as not billable? You can bring any of them back from the Meetings tab.`,
+                  `Clear all ${n} meeting${n === 1 ? "" : "s"} as not billable? You can bring any of them back from the Meetings tab.`,
                 )
               ) {
                 e.preventDefault();
@@ -65,7 +69,7 @@ export function MeetingsToLog({ meetings }: { meetings: MeetingToLog[] }) {
               <input key={m.id} type="hidden" name="id" value={m.id} />
             ))}
             <SubmitButton pendingLabel="Clearing…" className="btn-ghost btn-sm">
-              Set all aside
+              Clear all
             </SubmitButton>
           </form>
         </div>
@@ -126,8 +130,12 @@ function Row({ meeting }: { meeting: MeetingToLog }) {
         }}
       >
         <input type="hidden" name="id" value={meeting.id} />
-        <SubmitButton pendingLabel="…" className="btn-ghost btn-sm" title="Don't log this call">
-          Not billable work
+        <SubmitButton
+          pendingLabel="…"
+          className="btn-ghost btn-sm"
+          title="Not billable - set it aside. You can bring it back from the Meetings tab."
+        >
+          Clear
         </SubmitButton>
       </form>
     </li>
