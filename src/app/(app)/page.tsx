@@ -246,8 +246,8 @@ export default async function MyWorkPage() {
       db.mailThread.findMany({
         where: { userId: user.id, status: "OPEN", awaitingUs: true },
         orderBy: { lastMessageAt: "asc" },
-        // Eight show; the rest sit behind "Show more", so "Clear all" can
-        // reach the whole list and not just the first screenful.
+        // Five in view, the rest scroll; all of them load so "Clear all"
+        // reaches the whole list and not just the first screenful.
         take: 50,
         select: {
           id: true,

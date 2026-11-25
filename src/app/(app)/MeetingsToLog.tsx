@@ -5,6 +5,7 @@ import { useActionState, useState } from "react";
 import { dismissMeetingAction, dismissMeetingsAction } from "@/app/actions/google";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ErrorNote } from "@/components/ui";
+import { CappedList } from "@/components/CappedList";
 
 type State = { error?: string; ok?: boolean; message?: string };
 
@@ -18,8 +19,8 @@ export interface MeetingToLog {
   projectName: string | null;
 }
 
-/** How many rows show before "Show more". A nudge, not the Meetings tab. */
-const VISIBLE = 6;
+/** Rows in view before the list scrolls. A nudge, not the Meetings tab. */
+const VISIBLE = 5;
 
 /**
  * "Meetings to log" on My Work: the recent client calls still waiting, each
@@ -35,12 +36,9 @@ const VISIBLE = 6;
  * own, and waits on the Meetings tab under Last 30 days or All.
  */
 export function MeetingsToLog({ meetings }: { meetings: MeetingToLog[] }) {
-  const [showAll, setShowAll] = useState(false);
   const [clearState, clearAction] = useActionState(dismissMeetingsAction, {} as State);
 
   if (meetings.length === 0) return null;
-  const shown = showAll ? meetings : meetings.slice(0, VISIBLE);
-  const hidden = meetings.length - shown.length;
 
   return (
     <section className="mb-6">
@@ -76,22 +74,15 @@ export function MeetingsToLog({ meetings }: { meetings: MeetingToLog[] }) {
       </div>
       <ErrorNote message={clearState?.error} />
 
-      <ul className="card divide-y divide-ink-100">
-        {shown.map((m) => (
-          <Row key={m.id} meeting={m} />
-        ))}
-      </ul>
+      <div className="card overflow-hidden">
+        <CappedList visible={VISIBLE} className="divide-y divide-ink-100">
+          {meetings.map((m) => (
+            <Row key={m.id} meeting={m} />
+          ))}
+        </CappedList>
+      </div>
 
       <div className="mt-2 flex items-center gap-4 text-xs">
-        {hidden > 0 ? (
-          <button
-            type="button"
-            className="font-medium text-brand-700 hover:underline"
-            onClick={() => setShowAll(true)}
-          >
-            Show {hidden} more
-          </button>
-        ) : null}
         <Link href="/meetings" className="text-ink-500 hover:text-brand-700 hover:underline">
           All meetings, including internal and older ones →
         </Link>
