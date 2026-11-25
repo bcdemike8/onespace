@@ -72,7 +72,17 @@ export default async function ProjectsPage({
   const admin = isAdmin(user);
   const params = await searchParams;
 
-  const status = params.status ?? "open";
+  // Everyone lands on their own projects. On Mine the Owner dropdown shows
+  // the viewer; picking anybody else (or Anyone) is a request to look
+  // past Mine, so it moves to Open with that owner rather than being
+  // silently overruled by the tab.
+  const requested = params.status ?? "mine";
+  const status =
+    requested === "mine" &&
+    params.owner !== undefined &&
+    params.owner !== user.id
+      ? "open"
+      : requested;
   const clientId = params.client ?? "";
   const partnerId = params.partner ?? "";
   const ownerId = params.owner ?? "";
@@ -286,6 +296,17 @@ export default async function ProjectsPage({
     }
   });
 
+  // The status-update views are chase lists, and each project is one
+  // owner's to post. Grouping by owner makes it a list per person; the
+  // chosen sort still applies inside each group.
+  const groupByOwner = ["missed", "due", "owed", "none"].includes(health);
+  if (groupByOwner) {
+    rows.sort((a, b) => {
+      if (!a.owner !== !b.owner) return a.owner ? -1 : 1; // No owner last
+      return (a.owner?.name ?? "").localeCompare(b.owner?.name ?? "");
+    });
+  }
+
   const query = (overrides: Record<string, string | undefined>) => {
     const q = new URLSearchParams();
     const merged = {
@@ -362,6 +383,16 @@ export default async function ProjectsPage({
                   )}
                 </li>
               ))}
+            {["missed", "due", "owed", "none"].includes(health) ? (
+              <li className="sm:ml-auto">
+                <Link
+                  href={query({ health: "" })}
+                  className="font-medium underline"
+                >
+                  ← Show all projects
+                </Link>
+              </li>
+            ) : null}
           </ul>
         </div>
       ) : null}
@@ -372,7 +403,7 @@ export default async function ProjectsPage({
             key={tab.value}
             href={query({
               status: tab.value,
-              owner: tab.value === "mine" ? "" : ownerId,
+              owner: tab.value === "mine" || status === "mine" ? "" : ownerId,
             })}
             className={`rounded-lg px-2.5 py-1.5 text-sm font-medium ${
               status === tab.value
@@ -397,7 +428,7 @@ export default async function ProjectsPage({
           <select
             id="f-owner"
             name="owner"
-            defaultValue={ownerId}
+            defaultValue={status === "mine" ? user.id : ownerId}
             className="input"
           >
             <option value="">Anyone</option>
@@ -550,6 +581,7 @@ export default async function ProjectsPage({
           initialQuery={params.q ?? ""}
           allHref={query({ status: "all" })}
           narrowed={filtered || status !== "all"}
+          grouped={groupByOwner}
           header={
             <tr>
               <SortHeader
@@ -616,6 +648,7 @@ export default async function ProjectsPage({
 
             return {
               key: project.id,
+              group: project.owner?.name ?? "No owner",
               // What somebody would actually type to find this row.
               text: searchText(
                 project.name,
