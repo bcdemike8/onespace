@@ -15,7 +15,7 @@ import {
 import { pickTranscript, type TranscriptPick } from "@/lib/zoom/files";
 import { readFromZoomSummary } from "@/lib/zoom/zoom-summary";
 import { parseVtt } from "@/lib/zoom/commitments";
-import { aiOwnership, buildNameIndex, type NameIndex } from "@/lib/commitments/owner";
+import { buildNameIndex, ourActionItems, type NameIndex } from "@/lib/commitments/owner";
 import { normalTask, sameUndertaking } from "@/lib/commitments/queue";
 import { dueFor } from "@/lib/when";
 import {
@@ -951,22 +951,18 @@ async function readCommitments(
           // undertakings are in the summary, where they belong - worth
           // knowing, not RevOptics work. An owner Claude named but OneSpace
           // can't place goes to the host, marked so they can hand it on.
-          commitments: read.actionItems.flatMap((i): Found[] => {
-            if (!i.ours) return [];
-            const owner = aiOwnership(people.index, i.owner);
-            if (!owner) return [];
-            return [
-              {
-                text: i.quote || i.task,
-                speaker: i.owner,
-                atSeconds: 0,
-                suggestedTask: i.title,
-                when: i.when,
-                detail: i.task,
-                ...owner,
-              },
-            ];
-          }),
+          commitments: ourActionItems(read.actionItems, people.index).map(
+            (i): Found => ({
+              text: i.quote || i.task,
+              speaker: i.owner,
+              atSeconds: 0,
+              suggestedTask: i.title,
+              when: i.when,
+              detail: i.task,
+              ownerId: i.ownerId,
+              ownerUnrecognised: i.ownerUnrecognised,
+            }),
+          ),
         };
       }
       // No write-up, and now we know why rather than falling through in
