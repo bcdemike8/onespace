@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { matchesQuery } from "@/lib/search";
 
 export interface SearchableRow {
   key: string;
+  /** Heading this row sits under when the table is grouped. */
+  group?: string;
   /** Everything about this row worth typing: name, code, client, partner, owner. */
   text: string;
   /** The <tr> itself, rendered on the server and handed over whole. */
@@ -30,6 +32,7 @@ export function ProjectTable({
   rows,
   allHref,
   narrowed,
+  grouped = false,
   initialQuery = "",
 }: {
   header: ReactNode;
@@ -38,6 +41,11 @@ export function ProjectTable({
   allHref: string;
   /** Whether a tab or filter is currently hiding some projects. */
   narrowed: boolean;
+  /**
+   * Rows arrive already sorted by `group`; put a heading row, with a count,
+   * above each run of them.
+   */
+  grouped?: boolean;
   /** ?q= from the URL, so widening to All keeps what was typed. */
   initialQuery?: string;
 }) {
@@ -107,11 +115,41 @@ export function ProjectTable({
           <table className="w-full min-w-[58rem]">
             <thead className="border-b border-ink-200 bg-ink-50">{header}</thead>
             <tbody className="divide-y divide-ink-100">
-              {shown.map((r) => r.node)}
+              {grouped
+                ? groupRows(shown).map(({ name, rows: members }) => (
+                    <Fragment key={`group:${name}`}>
+                      <tr className="bg-ink-50">
+                        <th
+                          colSpan={100}
+                          scope="colgroup"
+                          className="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide text-ink-600"
+                        >
+                          {name}{" "}
+                          <span className="font-normal normal-case tracking-normal text-ink-500 tnum">
+                            · {members.length} {members.length === 1 ? "project" : "projects"}
+                          </span>
+                        </th>
+                      </tr>
+                      {members.map((r) => r.node)}
+                    </Fragment>
+                  ))
+                : shown.map((r) => r.node)}
             </tbody>
           </table>
         </div>
       )}
     </div>
   );
+}
+
+/** Consecutive rows with the same group, in the order they arrived. */
+function groupRows(rows: SearchableRow[]) {
+  const groups: { name: string; rows: SearchableRow[] }[] = [];
+  for (const r of rows) {
+    const name = r.group ?? "";
+    const last = groups[groups.length - 1];
+    if (last && last.name === name) last.rows.push(r);
+    else groups.push({ name, rows: [r] });
+  }
+  return groups;
 }

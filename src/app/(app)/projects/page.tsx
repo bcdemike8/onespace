@@ -286,6 +286,17 @@ export default async function ProjectsPage({
     }
   });
 
+  // The status-update views are chase lists, and each project is one
+  // owner's to post. Grouping by owner makes it a list per person; the
+  // chosen sort still applies inside each group.
+  const groupByOwner = ["missed", "due", "owed", "none"].includes(health);
+  if (groupByOwner) {
+    rows.sort((a, b) => {
+      if (!a.owner !== !b.owner) return a.owner ? -1 : 1; // No owner last
+      return (a.owner?.name ?? "").localeCompare(b.owner?.name ?? "");
+    });
+  }
+
   const query = (overrides: Record<string, string | undefined>) => {
     const q = new URLSearchParams();
     const merged = {
@@ -560,6 +571,7 @@ export default async function ProjectsPage({
           initialQuery={params.q ?? ""}
           allHref={query({ status: "all" })}
           narrowed={filtered || status !== "all"}
+          grouped={groupByOwner}
           header={
             <tr>
               <SortHeader
@@ -626,6 +638,7 @@ export default async function ProjectsPage({
 
             return {
               key: project.id,
+              group: project.owner?.name ?? "No owner",
               // What somebody would actually type to find this row.
               text: searchText(
                 project.name,
