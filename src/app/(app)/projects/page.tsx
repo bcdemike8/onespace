@@ -13,7 +13,7 @@ import { ProjectTable } from "./ProjectTable";
 import { searchText } from "@/lib/search";
 import { setProjectOwnerAction } from "@/app/actions/projects";
 import { orgTimezone } from "@/lib/google/sync";
-import { updateDue, updateDueLabel } from "@/lib/update-due";
+import { updateAlert, updateDue } from "@/lib/update-due";
 
 export const dynamic = "force-dynamic";
 
@@ -41,7 +41,9 @@ const HEALTH_FILTERS: { value: string; label: string }[] = [
   { value: "AT_RISK", label: "At risk" },
   { value: "ON_TRACK", label: "On track" },
   { value: "owed", label: "Weekly update owed" },
-  { value: "none", label: "No update yet" },
+  { value: "missed", label: "Missed Monday's update" },
+  { value: "due", label: "Update due by Monday" },
+  { value: "none", label: "Never posted an update" },
   { value: "attention", label: "At risk or off track" },
 ];
 
@@ -188,7 +190,7 @@ export default async function ProjectsPage({
   );
   const now = today();
   // Weekly updates are due by end of day Monday in the org's time zone;
-  // see lib/update-due.
+  // see lib/update-due. Nothing is flagged before 27 November 2026.
   const orgToday = today(await orgTimezone());
   // Default for the "as of" field in the status dialog on every row.
   const todayISO = toISODate(now);
@@ -220,9 +222,12 @@ export default async function ProjectsPage({
   // across the tab, not just among the rows a filter left showing.
   const updatesOverdue = rows.filter((r) => r.due.state === "overdue").length;
   const updatesDue = rows.filter((r) => r.due.state === "due").length;
+  const neverPosted = rows.filter((r) => r.health === null).length;
 
   if (health === "owed")
     rows = rows.filter((r) => r.due.state === "overdue" || r.due.state === "due");
+  else if (health === "missed") rows = rows.filter((r) => r.due.state === "overdue");
+  else if (health === "due") rows = rows.filter((r) => r.due.state === "due");
   else if (health === "none") rows = rows.filter((r) => r.health === null);
   else if (health === "attention")
     rows = rows.filter(
@@ -315,8 +320,8 @@ export default async function ProjectsPage({
         }
       />
 
-      {updatesOverdue > 0 || (updatesDue > 0 && health !== "owed") ? (
-        <p
+      {updatesOverdue + updatesDue + neverPosted > 0 ? (
+        <div
           role="status"
           className={`mb-4 rounded-lg border px-4 py-2.5 text-sm ${
             updatesOverdue > 0
@@ -324,21 +329,41 @@ export default async function ProjectsPage({
               : "border-warn-500/30 bg-warn-50 text-warn-700"
           }`}
         >
-          <span className="font-medium">
-            {updatesOverdue > 0
-              ? `${updatesOverdue} active ${updatesOverdue === 1 ? "project is" : "projects are"} missing this week's status update`
-              : `${updatesDue} active ${updatesDue === 1 ? "project needs" : "projects need"} a status update by end of day Monday`}
-          </span>
-          {updatesOverdue > 0 && updatesDue > 0
-            ? `, and ${updatesDue} more ${updatesDue === 1 ? "is" : "are"} due by end of day Monday`
-            : ""}
-          .{" "}
-          {health !== "owed" ? (
-            <Link href={query({ health: "owed" })} className="font-medium underline">
-              Show only those
-            </Link>
-          ) : null}
-        </p>
+          <p className="font-medium">Weekly status updates are due by end of day Monday.</p>
+          <ul className="mt-1 flex flex-wrap gap-x-5 gap-y-1">
+            {[
+              {
+                n: updatesOverdue,
+                text: `missed Monday's update`,
+                filter: "missed",
+              },
+              {
+                n: updatesDue,
+                text: `due by end of day Monday`,
+                filter: "due",
+              },
+              {
+                n: neverPosted,
+                text: `never posted an update`,
+                filter: "none",
+              },
+            ]
+              .filter((b) => b.n > 0)
+              .map((b) => (
+                <li key={b.filter}>
+                  {health === b.filter ? (
+                    <span className="font-medium">
+                      {b.n} {b.text}
+                    </span>
+                  ) : (
+                    <Link href={query({ health: b.filter })} className="underline">
+                      {b.n} {b.text}
+                    </Link>
+                  )}
+                </li>
+              ))}
+          </ul>
+        </div>
       ) : null}
 
       <div className="mb-4 flex flex-wrap gap-1">
@@ -655,15 +680,13 @@ export default async function ProjectsPage({
                       note={project.healthNote}
                       today={todayISO}
                       subtitleTone={
-                        project.due.state === "overdue"
-                          ? "bad"
-                          : project.due.state === "due"
-                            ? "warn"
-                            : undefined
+                        updateAlert(project.due, orgToday)?.tone ??
+                        (project.health === null ? "warn" : undefined)
                       }
                       subtitle={
-                        project.due.state === "overdue" || project.due.state === "due"
-                          ? updateDueLabel(project.due, orgToday)
+                        updateAlert(project.due, orgToday)?.label ??
+                        (project.health === null
+                          ? "Never posted an update"
                           : [
                               project.healthDate
                                 ? `as of ${formatMedium(project.healthDate)}`
@@ -675,7 +698,7 @@ export default async function ProjectsPage({
                                 : null,
                             ]
                               .filter(Boolean)
-                              .join(" · ") || "Click to post an update"
+                              .join(" · "))
                       }
                     />
                   </td>
