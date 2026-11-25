@@ -1391,6 +1391,12 @@ model Meeting {
   /// about.
   transcriptNote String?
 
+  /// When reading this call last failed in a way worth trying again - an API
+  /// error, a timeout, an answer that didn't parse. The sync waits a few hours
+  /// before the next attempt rather than paying for the same failure on every
+  /// pass, and clears it once a reading succeeds.
+  transcriptFailedAt DateTime?
+
   syncedAt  DateTime @default(now())
   updatedAt DateTime @updatedAt
 

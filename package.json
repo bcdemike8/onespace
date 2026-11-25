@@ -26,7 +26,8 @@
     "crm:status": "tsx scripts/crm-status.ts",
     "crm:platforms": "tsx scripts/crm-platforms.ts",
     "people:login": "tsx scripts/people-login.ts",
-    "sync:window": "tsx scripts/sync-window.ts"
+    "sync:window": "tsx scripts/sync-window.ts",
+    "eval:commitments": "node --conditions=react-server --import tsx scripts/eval-commitments.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

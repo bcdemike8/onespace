@@ -136,13 +136,65 @@ const SCHEMA = {
           quote: {
             type: "string",
             description:
-              "The sentence from the transcript this came from, verbatim.",
+              "The exact words from the source that show the commitment, copied character for character - including the acceptance, for an accepted request.",
           },
         },
       },
     },
   },
 } as const;
+
+/**
+ * What counts as a RevOptics commitment - one set of rules for calls and
+ * recap emails alike. The examples use made-up names on purpose: this file is
+ * in a public repository.
+ */
+const COMMITMENT_RULES = `WHAT COUNTS AS A REVOPTICS COMMITMENT ("ours": true)
+One named RevOptics person took on an outstanding piece of work for the
+client: delivering something to them, or doing something on their behalf.
+Judge from the conversation, not from keywords. It counts when the words and
+the context together show that person accepted the work and it is still to
+be done:
+- "I'll get the updated sequences over to you by Friday."
+- "I'll work with Outreach Support to resolve the sync error."
+- "I'll own that piece." / "I can take care of that." - when it answers a
+  specific piece of work and the context makes clear what "that" is. Spell
+  out what it is in the title and task.
+- "Sam will take care of the configuration." - said by someone in a position
+  to commit Sam, and not contradicted.
+- The client asks "Can you send us the mapping?" and the RevOptics person
+  agrees: "Sure, I'll send it today." The agreement makes it ours; the
+  request on its own does not.
+- Work that waits on the client: "Once Dana sends the export, I'll run the
+  import." Ours - say in the task what it waits on.
+
+NOT A REVOPTICS COMMITMENT - leave it out, or mark it "ours": false
+- The client's own work, or an instruction given to the client: "The
+  customer should configure this", "You'll want to create the field".
+- A request the RevOptics person didn't accept: "Can you look into it?" met
+  with "Let's see", a change of subject, or no answer.
+- A shared "we" with nobody taking it on: "We'll want to test this", "We need
+  to confirm the mapping".
+- Plans and agenda: "We'll discuss this during the next session", "The next
+  step is reviewing governance".
+- Anything already done, including during the call itself: "We already
+  completed the configuration", "I've updated it while we were talking".
+- Ideas, possibilities and anything hedged.
+When you can't tell who took it on, or whether they really did, leave it out.
+Accuracy matters more than catching everything.
+
+FOR EACH ITEM
+- owner: the one person who took it on. For RevOptics, their full name
+  exactly as it appears in the list of RevOptics people.
+- title: at most 12 words, starting with a verb, naming what and for whom -
+  "Send Northwind the updated sequences". A whole phrase, never a fragment.
+- task: what has to be done, for which client, and anything it depends on,
+  in full sentences - enough to act on without the source.
+- when: the deadline exactly as it was stated or agreed - "by Friday" - or
+  null. Never infer one.
+- quote: the exact words from the source that show the commitment, copied
+  character for character - for an accepted request, include the acceptance.
+  Never paraphrase or tidy it.`;
 
 const SYSTEM = `You are writing up a client call at RevOptics, a RevOps
 consultancy that delivers through Outreach.io and Salesloft. The reader is
@@ -175,38 +227,16 @@ Name who said or did what, using the names in the transcript.
 
 Write complete sentences, not fragments. Past tense for what happened.
 
-Action items. A RevOptics action item ("ours": true) is something one named
-RevOptics person agreed to deliver to the client, or to do on the client's
-behalf: "I'll send you the updated sequence spec by Friday", "Marcus will
-raise a support case with Outreach for you". The message lists the RevOptics
-people; anyone not on that list is the client's side. Each RevOptics item
-needs:
-- owner: the one RevOptics person who took it on, written exactly as their
-  name appears in that list. If you can't tell which single RevOptics person
-  took it on, leave the item out.
-- title: at most 12 words, starting with a verb - "Send Canopy the
-  research-agent field mapping". It goes on a to-do list, so keep it short.
-- task: the full instruction, with enough detail to act on cold. "Submit an
-  Outreach support request explaining that the research agents run but their
-  custom fields don't appear in layout configuration" rather than "Submit a
-  ticket". Where it depends on something else, say so.
+Action items. Each line of the transcript starts with the speaker's name.
+The message lists the RevOptics people; anyone not on that list is the
+client's side.
 
-An instruction RevOptics gives the client - "you'll want to create the
-field", "go ahead and map the stage" - is the client's item, not ours,
-however much RevOptics talked about it.
-
-Not action items, on either side - leave all of these out:
-- ideas, plans and possibilities: "we'll want to create a custom field",
-  "we should look at", "it might be worth", "the next phase will";
-- things said by "we" with nobody taking them on;
-- RevOptics' own housekeeping that isn't for the client;
-- anything done during the call itself, and narration of the agenda;
-- anything hedged into meaninglessness.
+${COMMITMENT_RULES}
 
 Also record the client's own commitments, with "ours" false and the client
-person as owner - real and worth seeing in the write-up, but not RevOptics
-work. Fewer, real commitments are worth more than a long list: if nothing
-was undertaken, return an empty list; that is a useful answer.`;
+person as owner - worth seeing in the write-up, never RevOptics work. If no
+RevOptics person took anything on, the RevOptics list is empty; that is a
+correct and useful answer.`;
 
 /**
  * The title as asked for, or the start of the instruction when the answer
@@ -284,6 +314,12 @@ export interface AiAttempt {
   read: AiRead | null;
   /** Why there isn't, in words. Null when there is. */
   reason: string | null;
+  /**
+   * Worth trying again later: Claude isn't connected yet, or the answer
+   * didn't parse. False when there is a reading, and when trying again would
+   * only repeat the same answer - too short to read, too long, declined.
+   */
+  retry: boolean;
 }
 
 /**
@@ -341,7 +377,8 @@ export async function readTranscript(
     return {
       read: null,
       reason:
-        "Claude isn't connected on this service, so no write-up or action items were made. Set ANTHROPIC_API_KEY in Railway on both the app service and the cron service, then use Re-read transcripts on the meetings list.",
+        "Claude isn't connected on this service, so this call hasn't been read yet. Set ANTHROPIC_API_KEY in Railway on both the app service and the cron service; it will be read on the next sync.",
+      retry: true,
     };
   }
 
@@ -350,6 +387,7 @@ export async function readTranscript(
     return {
       read: null,
       reason: `The transcript for this call is only ${body.length} characters - too little to write anything up from. Zoom produces one of these when a call is mostly silence, or when it ended before anyone spoke.`,
+      retry: false,
     };
   }
 
@@ -416,6 +454,7 @@ export async function readTranscript(
       read: null,
       reason:
         "Claude ran out of room writing this call up, so the answer came back cut off. The transcript is unusually long - tell me and I'll raise the limit.",
+      retry: false,
     };
   }
   if (message.stop_reason === "refusal") {
@@ -424,6 +463,7 @@ export async function readTranscript(
       reason: `Claude declined to write this call up${
         message.stop_details?.explanation ? `: ${message.stop_details.explanation}` : "."
       }`,
+      retry: false,
     };
   }
 
@@ -452,7 +492,8 @@ export async function readTranscript(
     // should cost this one meeting rather than the whole sync.
     return {
       read: null,
-      reason: `Claude's answer for this call didn't parse (${text.length} characters, stopped because ${message.stop_reason ?? "unknown"}). Worth trying again.`,
+      reason: `Claude's answer for this call didn't parse (${text.length} characters, stopped because ${message.stop_reason ?? "unknown"}). It will be tried again on a later sync.`,
+      retry: true,
     };
   }
 
@@ -475,6 +516,7 @@ export async function readTranscript(
       model: MODEL,
     },
     reason: null,
+    retry: false,
   };
 }
 
@@ -503,39 +545,26 @@ the action items that are RevOptics' to do.
 The message tells you who sent it, which client it went to, and who the
 RevOptics people are. Anyone not on that list is the client's side.
 
-A RevOptics action item ("ours": true) is something the email says a
-RevOptics person will do - deliver something to the client, or do something
-on the client's behalf. The email has to say so:
-- the sender in the first person: "I'll send over the field mapping doc by
-  Friday" - owner is the sender;
-- a named RevOptics person: "Marcus will configure the sequences for you",
-  "Marcus to build the dashboard" - owner is Marcus;
-- RevOptics as a team, from a RevOptics sender: "On our side, we'll build
-  the dashboard", "RevOptics will run the import" - owner is the sender.
+${COMMITMENT_RULES}
 
-Everything else is not ours. In particular:
-- A list of instructions addressed to the client is the client's to do,
+IN A RECAP EMAIL SPECIFICALLY
+- The sender writing in the first person ("I'll...") - the owner is the
+  sender. "On our side, we'll..." or "RevOptics will..." from the sender -
+  the owner is the sender.
+- A named RevOptics colleague ("Sam will...", "Sam to...") - the owner is
+  that colleague.
+- A list of remaining items written to the client is the client's to do,
   however it's introduced. Say the client is Northwind and the recap reads
   "Here is a recap of the remaining items we need to address: 1. Create a
   custom 'Region' field on the Account object and map it in Outreach.
-  2. Confirm whether the sandbox has API access." Both are Northwind's items,
-  not ours.
-- A named client person: "Dana to confirm the Salesforce setting".
-- A shared "we" with nobody taking it on, or a joint decision: "we'll need to
-  confirm whether...", "determine whether a historical sync is needed and
-  agree on the timeframe".
-- Ideas, plans, possibilities and anything hedged.
-
-When you can't tell whether RevOptics took something on, leave it out. An
-empty list is a correct and useful answer - most recaps list the client's
-next steps, not ours.
-
-For each RevOptics item give:
-- owner: the RevOptics person's full name exactly as it appears in the list.
-- title: at most 12 words, starting with a verb.
-- task: the full instruction, with enough detail to act on cold.
-- when: the timing exactly as written, or null. Never invent one.
-- quote: the line or sentence it came from, verbatim.
+  2. Continue troubleshooting the task sync, so we'll need to confirm whether
+  a setting is preventing it. 3. Determine whether a historical sync is
+  needed." None of these is a RevOptics commitment: nobody at RevOptics is
+  named or says "I'll". If the same recap had said "I'll investigate why the
+  completed tasks aren't associating with Contact records and share my
+  findings with Dana", that one would be the sender's.
+- Most recaps list the client's next steps. An empty list is a correct and
+  common answer.
 
 You may include the client's items with "ours": false; they won't be used.`;
 
@@ -555,12 +584,12 @@ export async function readRecap(
     team: string[];
   },
   timeoutMs: number,
-): Promise<{ items: AiActionItem[] | null; reason: string | null }> {
+): Promise<{ items: AiActionItem[] | null; reason: string | null; retry: boolean }> {
   if (!aiConfigured()) {
-    return { items: null, reason: "Claude isn't connected on this service." };
+    return { items: null, reason: "Claude isn't connected on this service.", retry: true };
   }
   const text = body.trim();
-  if (text.length < 40) return { items: [], reason: null };
+  if (text.length < 40) return { items: [], reason: null, retry: false };
 
   const client = new Anthropic({ maxRetries: 0 });
   const header = [
@@ -595,7 +624,11 @@ export async function readRecap(
   );
 
   if (message.stop_reason === "max_tokens" || message.stop_reason === "refusal") {
-    return { items: null, reason: `Claude stopped (${message.stop_reason}) reading this recap.` };
+    return {
+      items: null,
+      reason: `Claude stopped (${message.stop_reason}) reading this recap.`,
+      retry: false,
+    };
   }
   const out = message.content
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
@@ -603,8 +636,8 @@ export async function readRecap(
     .join("");
   try {
     const parsed = JSON.parse(out) as { action_items?: RawActionItem[] };
-    return { items: toActionItems(parsed.action_items), reason: null };
+    return { items: toActionItems(parsed.action_items), reason: null, retry: false };
   } catch {
-    return { items: null, reason: "Claude's answer for this recap didn't parse." };
+    return { items: null, reason: "Claude's answer for this recap didn't parse.", retry: true };
   }
 }

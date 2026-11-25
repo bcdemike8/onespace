@@ -147,8 +147,9 @@ const idsFrom = (formData: FormData) => [
  * Turn an action item into a real task on the project.
  *
  * Assigned to the person who undertook it - several consultants on one
- * project each confirm their own. An item whose owner couldn't be placed is
- * assigned to whoever the host picks, or to the host.
+ * project each confirm their own. An item whose owner couldn't be
+ * established is only ever added from the call's own page, by somebody
+ * looking at it, and lands on the host's plate because they chose so.
  */
 export async function acceptCommitmentAction(
   _prev: ActionState,
@@ -157,7 +158,6 @@ export async function acceptCommitmentAction(
   const ids = idsFrom(formData);
   const name = String(formData.get("name") ?? "").trim();
   const projectId = String(formData.get("projectId") ?? "").trim();
-  const assignTo = String(formData.get("assignTo") ?? "").trim();
 
   let ctx;
   try {
@@ -178,20 +178,18 @@ export async function acceptCommitmentAction(
   });
   if (!project) return { error: "That project is no longer here." };
 
-  let assigneeId = first.row.ownerId ?? first.origin.userId;
-  if (first.row.ownerUnrecognised && assignTo) {
-    const person = await db.user.findFirst({
-      where: { id: assignTo, isActive: true },
-      select: { id: true },
-    });
-    if (!person) return { error: "That person can't be assigned work." };
-    assigneeId = person.id;
-  }
+  const assigneeId = first.row.ownerId ?? first.origin.userId;
 
-  // A date typed on the card wins over the one that was read out of the
-  // sentence - the person is looking at it and knows better.
+  // The date on the card: the promised one, changed or not, or one the
+  // person picked for their own planning. Left blank, the task has none -
+  // a date nobody chose isn't put on it. (Items from before this carry a
+  // calculated date with dueStated false; that one is never used.)
   const typed = String(formData.get("dueDate") ?? "").trim();
-  const dueDate = /^\d{4}-\d{2}-\d{2}$/.test(typed) ? dayStart(typed) : first.row.dueDate;
+  const dueDate = /^\d{4}-\d{2}-\d{2}$/.test(typed)
+    ? dayStart(typed)
+    : first.row.dueStated
+      ? first.row.dueDate
+      : null;
 
   const said = first.origin.on.toISOString().slice(0, 10);
   const from = first.origin.where === "call" ? "the call on" : "the recap sent on";
@@ -324,7 +322,7 @@ export async function rereadTranscriptsAction(
     // re-read and clearing its marker would just cost a lookup.
     const queued = await tx.meeting.updateMany({
       where: { ...scope, zoomUuid: { not: null }, transcriptReadAt: { not: null } },
-      data: { transcriptReadAt: null, transcriptNote: null },
+      data: { transcriptReadAt: null, transcriptNote: null, transcriptFailedAt: null },
     });
     return { removed: removed.count, queued: queued.count };
   });

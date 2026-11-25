@@ -6,6 +6,7 @@ import {
   queueCount,
   queueStart,
   sameUndertaking,
+  withoutDecided,
   type QueueRecord,
 } from "@/lib/commitments/queue";
 import { parseWindow } from "@/lib/window";
@@ -52,6 +53,46 @@ test("the same words in another order is the same undertaking", () => {
   );
 });
 
+test("two promises in one sentence stay two", () => {
+  const quote = "I'll send the deck and book the admin training";
+  assert.ok(
+    !sameUndertaking(
+      { title: "Send Acme the deck", quote },
+      { title: "Book Acme the admin training", quote },
+    ),
+  );
+});
+
+test("similar but different deliverables stay separate", () => {
+  assert.ok(
+    !sameUndertaking(
+      { title: "Send Acme the sequence spec" },
+      { title: "Send Acme the sequence results" },
+    ),
+  );
+});
+
+test("something already added from a call isn't offered again from the recap", () => {
+  const recapItem = record({
+    title: "Send Acme the updated sequence spec",
+    quote: "I'll send over the updated sequence spec by Friday",
+  });
+  const other = record({ title: "Book the admin training for Acme" });
+  const left = withoutDecided(
+    [recapItem, other],
+    [{ title: "Send the updated sequence spec to Acme", quote: "I'll get you the spec", projectId: "p-acme" }],
+  );
+  assert.deepEqual(left.map((r) => r.title), ["Book the admin training for Acme"]);
+});
+
+test("a decision on one project doesn't hide a like-named item on another", () => {
+  const left = withoutDecided(
+    [record({ title: "Send the kickoff deck", projectId: "p-beta" })],
+    [{ title: "Send the kickoff deck", quote: "x", projectId: "p-acme" }],
+  );
+  assert.equal(left.length, 1);
+});
+
 test("different undertakings are different", () => {
   assert.ok(
     !sameUndertaking(
@@ -82,8 +123,6 @@ function record(over: Partial<QueueRecord>): QueueRecord {
     originLabel: "Acme weekly",
     originHref: "/meetings/call-1",
     projectId: "p-acme",
-    ownerUnrecognised: false,
-    speaker: null,
     ...over,
   };
 }
@@ -128,17 +167,6 @@ test("the same title said twice on one call still counts as one call", () => {
   );
   assert.equal(groups[0].items[0].calls, 1);
   assert.equal(groups[0].items[0].ids.length, 2);
-});
-
-test("a row is only held for the host while every copy is unplaced", () => {
-  const groups = groupQueue(
-    [
-      record({ title: "Send the deck", ownerUnrecognised: true }),
-      record({ title: "Send the deck", ownerUnrecognised: false }),
-    ],
-    projects,
-  );
-  assert.equal(groups[0].items[0].ownerUnrecognised, false);
 });
 
 test("soonest due first, undated last, then most recently said", () => {

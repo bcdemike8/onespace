@@ -212,19 +212,3 @@ export function parseWhen(text: string, anchor: Date): Date | null {
 
   return null;
 }
-
-/**
- * A due date for a promise, whether or not it named one.
- *
- * `stated` is what they actually said; when there is none, three working
- * days is the fallback - long enough not to be nagging, short enough that
- * the task surfaces while the call is still in living memory. Callers are
- * expected to show which of the two it was, so an invented date reads as an
- * invitation to correct it rather than as a commitment nobody made.
- */
-export function dueFor(text: string, anchor: Date): { date: Date; stated: boolean } {
-  const stated = parseWhen(text, anchor);
-  return stated
-    ? { date: stated, stated: true }
-    : { date: addWorkdays(anchor, 3), stated: false };
-}

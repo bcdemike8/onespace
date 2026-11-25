@@ -21,12 +21,16 @@ export interface QueueProject {
   clientName: string | null;
 }
 
-export interface QueuePerson {
-  id: string;
-  name: string;
-}
-
 type State = { error?: string; ok?: boolean; message?: string };
+
+/** "Fri 27 Nov", for a promised date held as YYYY-MM-DD. */
+const promised = (iso: string) =>
+  new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(`${iso}T00:00:00Z`));
 
 const WHERE: Record<QueueSourceKind, string> = {
   AI_SUMMARY: "From the call",
@@ -47,13 +51,9 @@ const WHERE: Record<QueueSourceKind, string> = {
 export function DayQueue({
   groups,
   projects,
-  people,
-  viewerId,
 }: {
   groups: QueueGroup[];
   projects: QueueProject[];
-  people: QueuePerson[];
-  viewerId: string;
 }) {
   const total = queueCount(groups);
 
@@ -76,13 +76,7 @@ export function DayQueue({
       ) : (
         <div className="space-y-4">
           {groups.map((group) => (
-            <ProjectGroup
-              key={group.key}
-              group={group}
-              projects={projects}
-              people={people}
-              viewerId={viewerId}
-            />
+            <ProjectGroup key={group.key} group={group} projects={projects} />
           ))}
         </div>
       )}
@@ -93,13 +87,9 @@ export function DayQueue({
 function ProjectGroup({
   group,
   projects,
-  people,
-  viewerId,
 }: {
   group: QueueGroup;
   projects: QueueProject[];
-  people: QueuePerson[];
-  viewerId: string;
 }) {
   const [state, clear] = useActionState(dismissCommitmentsAction, {} as State);
   const label = group.projectName
@@ -151,13 +141,7 @@ function ProjectGroup({
       ) : null}
       <ul className="divide-y divide-ink-100">
         {group.items.map((item) => (
-          <QueueRow
-            key={item.ids[0]}
-            item={item}
-            projects={projects}
-            people={people}
-            viewerId={viewerId}
-          />
+          <QueueRow key={item.ids[0]} item={item} projects={projects} />
         ))}
       </ul>
     </div>
@@ -167,13 +151,9 @@ function ProjectGroup({
 function QueueRow({
   item,
   projects,
-  people,
-  viewerId,
 }: {
   item: QueueItem;
   projects: QueueProject[];
-  people: QueuePerson[];
-  viewerId: string;
 }) {
   const [state, action] = useActionState(acceptCommitmentAction, {} as State);
   const [showSaid, setShowSaid] = useState(false);
@@ -206,13 +186,11 @@ function QueueRow({
               name="dueDate"
               type="date"
               defaultValue={item.dueDate ?? ""}
-              className={`input w-[8.5rem] shrink-0 py-1 text-sm tnum ${
-                item.dueStated ? "" : "text-ink-500"
-              }`}
+              className="input w-[8.5rem] shrink-0 py-1 text-sm tnum"
               title={
-                item.dueStated
-                  ? "The date that was named"
-                  : "Nothing was said about when - three working days, change it"
+                item.dueDate
+                  ? "The date that was promised - change it if you need to"
+                  : "No date was given. Pick one if you want the task to have a due date, or leave it blank."
               }
             />
             <label className="sr-only" htmlFor={`p-${rowId}`}>
@@ -233,26 +211,6 @@ function QueueRow({
                 </option>
               ))}
             </select>
-            {item.ownerUnrecognised ? (
-              <>
-                <label className="sr-only" htmlFor={`a-${rowId}`}>
-                  Assign to
-                </label>
-                <select
-                  id={`a-${rowId}`}
-                  name="assignTo"
-                  defaultValue={viewerId}
-                  className="input w-[9.5rem] shrink-0 py-1 text-sm"
-                  title="Whose task this becomes"
-                >
-                  {people.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.id === viewerId ? `Me (${p.name})` : p.name}
-                    </option>
-                  ))}
-                </select>
-              </>
-            ) : null}
             <SubmitButton pendingLabel="Adding…" className="btn-primary btn-sm">
               Add it
             </SubmitButton>
@@ -276,23 +234,12 @@ function QueueRow({
               <span>said on {item.calls} calls</span>
             </>
           ) : null}
-          {item.ownerUnrecognised ? (
-            <>
-              <span aria-hidden="true">·</span>
-              <span
-                className="text-warn-700"
-                title="The owner's name didn't match anyone in OneSpace, so it came to you as host. Pick who it's for."
-              >
-                ⚠ owner not recognised{item.speaker ? ` ("${item.speaker}")` : ""}
-              </span>
-            </>
-          ) : null}
-          {!item.dueStated ? (
-            <>
-              <span aria-hidden="true">·</span>
-              <span className="text-warn-700">no date given</span>
-            </>
-          ) : null}
+          <span aria-hidden="true">·</span>
+          {item.dueDate ? (
+            <span>Promised for {promised(item.dueDate)}</span>
+          ) : (
+            <span className="text-warn-700">No date given</span>
+          )}
           <button
             type="button"
             onClick={() => setShowSaid((v) => !v)}
