@@ -362,6 +362,16 @@ export default async function ProjectsPage({
                   )}
                 </li>
               ))}
+            {["missed", "due", "owed", "none"].includes(health) ? (
+              <li className="sm:ml-auto">
+                <Link
+                  href={query({ health: "" })}
+                  className="font-medium underline"
+                >
+                  ← Show all projects
+                </Link>
+              </li>
+            ) : null}
           </ul>
         </div>
       ) : null}
