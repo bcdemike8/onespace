@@ -14,6 +14,11 @@ import { SubmitButton } from "@/components/SubmitButton";
  *
  * Only the move that makes sense from here is offered. A list of four
  * statuses asks you to know the model; two buttons ask you what happened.
+ *
+ * Put on hold is here too, for the same reason: the consultant is the one
+ * who knows the client has paused. It asks why, because the admins who get
+ * told about it will want to know, and on-hold projects stop being chased
+ * for weekly status updates.
  */
 export function ProjectLifecycle({
   projectId,
@@ -27,9 +32,48 @@ export function ProjectLifecycle({
 }) {
   const done = status === "COMPLETED";
   const archived = status === "ARCHIVED";
+  const onHold = status === "ON_HOLD";
 
   return (
     <>
+      {status === "ACTIVE" ? (
+        <form
+          action={setProjectStatusAction}
+          onSubmit={(e) => {
+            const reason = prompt(
+              "Put this project on hold?\n\n" +
+                "Admins will be notified, and it won't be flagged for weekly " +
+                "status updates while it's paused.\n\n" +
+                "Why is it on hold? (optional)",
+              "",
+            );
+            if (reason === null) {
+              e.preventDefault();
+              return;
+            }
+            const field = e.currentTarget.elements.namedItem("reason");
+            if (field instanceof HTMLInputElement) field.value = reason;
+          }}
+        >
+          <input type="hidden" name="id" value={projectId} />
+          <input type="hidden" name="status" value="ON_HOLD" />
+          <input type="hidden" name="reason" defaultValue="" />
+          <SubmitButton pendingLabel="Pausing…" className="btn-secondary">
+            Put on hold
+          </SubmitButton>
+        </form>
+      ) : null}
+
+      {onHold ? (
+        <form action={setProjectStatusAction}>
+          <input type="hidden" name="id" value={projectId} />
+          <input type="hidden" name="status" value="ACTIVE" />
+          <SubmitButton pendingLabel="Resuming…" className="btn-secondary">
+            Resume
+          </SubmitButton>
+        </form>
+      ) : null}
+
       {!done && !archived ? (
         <form
           action={setProjectStatusAction}

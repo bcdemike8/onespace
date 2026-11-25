@@ -11,7 +11,11 @@ import { SortHeader, type SortDir } from "@/components/SortHeader";
 import { StatusCell } from "./StatusCell";
 import { ProjectTable } from "./ProjectTable";
 import { searchText } from "@/lib/search";
-import { setProjectOwnerAction } from "@/app/actions/projects";
+import {
+  clearOnHoldNoticeAction,
+  setProjectOwnerAction,
+} from "@/app/actions/projects";
+import { SubmitButton } from "@/components/SubmitButton";
 import { orgTimezone } from "@/lib/google/sync";
 import { updateAlert, updateDue } from "@/lib/update-due";
 
@@ -108,6 +112,29 @@ export default async function ProjectsPage({
         : ownerId
           ? { ownerId }
           : {};
+
+  // Admins are told when a project goes on hold, until one of them clears
+  // it. A project resumed in the meantime has already dropped off.
+  const reviewingHolds = admin && params.onhold === "review";
+  const holdNotices = admin
+    ? await db.project.findMany({
+        where: {
+          status: "ON_HOLD",
+          onHoldAt: { not: null },
+          onHoldClearedAt: null,
+        },
+        select: {
+          id: true,
+          name: true,
+          onHoldAt: true,
+          onHoldReason: true,
+          onHoldBy: { select: { name: true } },
+          owner: { select: { name: true } },
+          client: { select: { name: true } },
+        },
+        orderBy: { onHoldAt: "desc" },
+      })
+    : [];
 
   const [projects, clients, partners, people] = await Promise.all([
     db.project.findMany({
@@ -344,6 +371,91 @@ export default async function ProjectsPage({
           </Link>
         }
       />
+
+      {reviewingHolds ? (
+        <section className="card mb-4 overflow-hidden" aria-labelledby="holds-title">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ink-200 px-4 py-3">
+            <h2 id="holds-title" className="text-sm font-semibold text-ink-900">
+              Recently put on hold{" "}
+              <span className="font-normal text-ink-500 tnum">
+                · {holdNotices.length}
+              </span>
+            </h2>
+            <div className="flex items-center gap-2">
+              {holdNotices.length > 1 ? (
+                <form action={clearOnHoldNoticeAction}>
+                  <input type="hidden" name="all" value="1" />
+                  <SubmitButton pendingLabel="Clearing…" className="btn-secondary">
+                    Clear all
+                  </SubmitButton>
+                </form>
+              ) : null}
+              <Link href={query({})} className="btn-secondary">
+                Close
+              </Link>
+            </div>
+          </div>
+          {holdNotices.length === 0 ? (
+            <p className="px-4 py-3 text-sm text-ink-500">
+              You&apos;re all caught up: nothing new has been put on hold.
+            </p>
+          ) : (
+            <ul className="divide-y divide-ink-100">
+              {holdNotices.map((p) => (
+                <li
+                  key={p.id}
+                  className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3"
+                >
+                  <div className="min-w-[14rem] flex-1">
+                    <Link
+                      href={`/projects/${p.id}`}
+                      className="text-sm font-medium text-ink-900 hover:text-brand-700"
+                    >
+                      {p.name}
+                    </Link>
+                    <div className="mt-0.5 text-xs text-ink-500">
+                      {[
+                        p.client?.name ?? "No client",
+                        p.owner ? `Owner: ${p.owner.name}` : "No owner",
+                        `Put on hold by ${p.onHoldBy?.name ?? "someone"} on ${formatMedium(p.onHoldAt!)}`,
+                      ].join(" · ")}
+                    </div>
+                    <p className="mt-1 text-sm text-ink-700">
+                      {p.onHoldReason ? (
+                        <>&ldquo;{p.onHoldReason}&rdquo;</>
+                      ) : (
+                        <span className="text-ink-400">No reason given</span>
+                      )}
+                    </p>
+                  </div>
+                  <form action={clearOnHoldNoticeAction}>
+                    <input type="hidden" name="id" value={p.id} />
+                    <SubmitButton pendingLabel="Clearing…" className="btn-secondary">
+                      Clear
+                    </SubmitButton>
+                  </form>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : holdNotices.length > 0 ? (
+        <p
+          role="status"
+          className="mb-4 rounded-lg border border-brand-200 bg-brand-50 px-4 py-2.5 text-sm text-brand-700"
+        >
+          <span className="font-medium">
+            {holdNotices.length} {holdNotices.length === 1 ? "project was" : "projects were"} put
+            on hold recently.
+          </span>{" "}
+          <Link
+            href={`${query({})}&onhold=review`}
+            className="font-medium underline"
+          >
+            Review {holdNotices.length === 1 ? "it" : "them"}
+          </Link>
+        </p>
+      ) : null}
 
       {updatesOverdue + updatesDue + neverPosted > 0 ? (
         <div

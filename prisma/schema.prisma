@@ -230,6 +230,7 @@ model User {
   timer             RunningTimer?
   templateTasks     TemplateTask[]   @relation("TemplateDefaultAssignee")
   ownedProjects     Project[]        @relation("ProjectOwner")
+  projectsPutOnHold Project[]        @relation("ProjectOnHoldBy")
   statusUpdates     StatusUpdate[]   @relation("StatusUpdateAuthor")
   meetings          Meeting[]
   mailThreads       MailThread[]
@@ -1010,6 +1011,15 @@ model Project {
   partner   Partner? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
 
   status ProjectStatus @default(ACTIVE)
+
+  /// Who put the project on hold, when and why. Set when the status moves to
+  /// ON_HOLD and cleared when it moves off. Admins are shown every pause they
+  /// haven't cleared yet: `onHoldClearedAt` is when one of them did.
+  onHoldAt        DateTime?
+  onHoldById      String?
+  onHoldBy        User?     @relation("ProjectOnHoldBy", fields: [onHoldById], references: [id], onDelete: SetNull)
+  onHoldReason    String?
+  onHoldClearedAt DateTime?
 
   ownerId String?
   owner   User?   @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: SetNull)
