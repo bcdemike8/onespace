@@ -26,9 +26,9 @@ interface Attendee {
 
 /** "1.5" reads better in the duration box than "90m", and parses the same. */
 const RANGES: { value: string; label: string; days: number | null }[] = [
-  { value: "all", label: "All", days: null },
   { value: "14", label: "Last 2 weeks", days: 14 },
   { value: "30", label: "Last 30 days", days: 30 },
+  { value: "all", label: "All", days: null },
 ];
 
 function durationValue(minutes: number): string {
@@ -47,9 +47,9 @@ export default async function MeetingsPage({
   const admin = isAdmin(user);
   const params = await searchParams;
   const everyone = admin && params.who === "all";
-  // How far back the waiting list reaches. Everything by default, so nothing
-  // quietly drops out of sight; the shorter views are for working through
-  // the recent calls without scrolling past months of older ones.
+  // How far back the waiting list reaches. The last fortnight by default -
+  // the same window My Work uses - so "to deal with" is the calls that are
+  // actually live. Last 30 days and All are a click away for anything older.
   const range = RANGES.find((r) => r.value === params.range) ?? RANGES[0];
   const rangeFrom =
     range.days === null ? null : new Date(Date.now() - range.days * 86_400_000);
@@ -57,7 +57,7 @@ export default async function MeetingsPage({
     const q = new URLSearchParams();
     if (next.who ?? everyone) q.set("who", "all");
     const r = next.range ?? range.value;
-    if (r !== "all") q.set("range", r);
+    if (r !== RANGES[0].value) q.set("range", r);
     const qs = q.toString();
     return qs ? `/meetings?${qs}` : "/meetings";
   };
@@ -79,7 +79,7 @@ export default async function MeetingsPage({
     clientOptions,
     skippedMeetings,
     skippedTotal,
-    myWaiting,
+    waiting,
   ] = await Promise.all([
     db.meeting.findMany({
       where: {
@@ -199,11 +199,16 @@ export default async function MeetingsPage({
       },
     }),
     db.skippedMeeting.count(),
-    // Your own waiting calls, all of them and nothing else, for the backlog
-    // control. The list above is capped and may be everyone's.
+    // Every waiting call in view - yours, or the team's on Everyone - for the
+    // backlog control and the "older ones under All" note. The list above is
+    // capped and filtered to the range; this is neither.
     db.meeting.findMany({
-      where: { userId: user.id, status: "PENDING", startsAt: { lte: new Date() } },
-      select: { startsAt: true },
+      where: {
+        status: "PENDING",
+        startsAt: { lte: new Date() },
+        ...(everyone ? {} : { userId: user.id }),
+      },
+      select: { startsAt: true, user: { select: { name: true } } },
     }),
   ]);
 
@@ -262,8 +267,14 @@ export default async function MeetingsPage({
   // The backlog control only shows when something of yours is older than the
   // fortnight My Work counts; anything newer is still live work.
   const backlogFrom = toISODate(addDays(today(zone), -14));
-  const myDays = myWaiting.map((m) => toISODate(dayInZone(m.startsAt, zone)));
-  const hasBacklog = myDays.some((d) => d < backlogFrom);
+  const waitingDays = waiting.map((m) => ({
+    day: toISODate(dayInZone(m.startsAt, zone)),
+    person: m.user.name,
+  }));
+  const hasBacklog = waitingDays.some((d) => d.day < backlogFrom);
+  const olderWaiting = rangeFrom
+    ? waiting.filter((m) => m.startsAt < rangeFrom).length
+    : 0;
   // Everyone but an admin now gets their internal meetings too, so the count
   // jumped. Saying how many have no client behind them makes that legible
   // rather than alarming — and they're the ones nobody is paying for.
@@ -295,6 +306,8 @@ export default async function MeetingsPage({
           rows.length === 0
             ? "Your calendar, waiting to become time entries."
             : `${rows.length} meeting${rows.length === 1 ? "" : "s"} to deal with${
+                rangeFrom ? ` from the ${range.label.toLowerCase()}` : ""
+              }${
                 noClient > 0 ? ` · ${noClient} with no client` : ""
               } · ${written} with a write-up.`
         }
@@ -385,14 +398,20 @@ export default async function MeetingsPage({
         </div>
       </div>
 
-      {hasBacklog ? <ClearBacklog days={myDays} defaultBefore={backlogFrom} /> : null}
+      {hasBacklog ? (
+        <ClearBacklog days={waitingDays} defaultBefore={backlogFrom} everyone={everyone} />
+      ) : null}
 
       {rows.length === 0 ? (
         <EmptyState
           title="Nothing waiting"
           body={
             rangeFrom
-              ? `Nothing waiting from the ${range.label.toLowerCase()}. Older meetings may still be waiting under All.`
+              ? `Nothing waiting from the ${range.label.toLowerCase()}.${
+                  olderWaiting > 0
+                    ? ` ${olderWaiting} older ${olderWaiting === 1 ? "one is" : "ones are"} still waiting under All.`
+                    : ""
+                }`
               : upcoming > 0
               ? `${upcoming} meeting${upcoming === 1 ? "" : "s"} still to come. They appear here once they've happened.`
               : "Every meeting on your calendar has been logged or dismissed. Sync again if you've just booked something."
@@ -405,6 +424,16 @@ export default async function MeetingsPage({
           ))}
         </ul>
       )}
+
+      {olderWaiting > 0 && rows.length > 0 ? (
+        <p className="mt-4 text-xs text-ink-500">
+          {olderWaiting} older {olderWaiting === 1 ? "meeting is" : "meetings are"} still
+          waiting.{" "}
+          <Link href={hrefFor({ range: "all" })} className="underline">
+            Show all
+          </Link>
+        </p>
+      ) : null}
 
       {upcoming > 0 && rows.length > 0 ? (
         <p className="mt-4 text-xs text-ink-500">

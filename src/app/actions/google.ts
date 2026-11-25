@@ -208,20 +208,27 @@ export async function dismissMeetingsAction(
 }
 
 /**
- * Set aside, in one go, every one of your own waiting meetings from before a
+ * Set aside, in one go, every waiting meeting from before a
  * day. The backlog this clears ran to a hundred-odd calls, months old, that
  * nobody was ever going to log one at a time - and while they sat there the
  * count on My Work meant nothing. They go where "Not billable work" puts
  * things, not away: each can still be brought back with "Billable after all".
  *
- * Your own only, even for an admin looking at everyone's. Writing off other
- * people's calls in bulk is a decision they should make.
+ * Your own by default. An admin may pass scope=all to do it for the whole
+ * team - the one-off retroactive clean-up, so everybody starts from the last
+ * fortnight. Nothing is deleted either way: each person still sees their own
+ * set-aside calls on the Meetings tab and can bring any of them back.
  */
 export async function dismissMeetingsBeforeAction(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
   const user = await requireUser();
+  const everyone = formData.get("scope") === "all";
+  if (everyone && !isAdmin(user)) {
+    return { error: "Only an admin can clear everyone's meetings." };
+  }
+  const owner = everyone ? {} : { userId: user.id };
   const raw = String(formData.get("before") ?? "");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return { error: "Pick a day." };
 
@@ -233,7 +240,7 @@ export async function dismissMeetingsBeforeAction(
   // on the day, not the instant. A day either side covers every offset.
   const candidates = await db.meeting.findMany({
     where: {
-      userId: user.id,
+      ...owner,
       status: "PENDING",
       startsAt: { lt: new Date(cutoff.getTime() + 86_400_000), lte: new Date() },
     },
@@ -246,13 +253,15 @@ export async function dismissMeetingsBeforeAction(
   if (ids.length === 0) return { ok: true, message: "Nothing waiting from before then." };
 
   await db.meeting.updateMany({
-    where: { id: { in: ids }, userId: user.id, status: "PENDING" },
+    where: { id: { in: ids }, ...owner, status: "PENDING" },
     data: { status: "DISMISSED" },
   });
   refresh();
   return {
     ok: true,
-    message: `Set aside ${ids.length} meeting${ids.length === 1 ? "" : "s"}. They're under "meetings you set aside" if any turn out to be billable.`,
+    message: `Set aside ${ids.length} meeting${ids.length === 1 ? "" : "s"}${
+      everyone ? " across the team" : ""
+    }. They're under "meetings you set aside" if any turn out to be billable.`,
   };
 }
 
