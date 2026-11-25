@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import {
   DAY_MS,
   addDays,
+  dayInZone,
   dayStart,
   formatMedium,
   relativeDueLabel,
@@ -33,6 +34,8 @@ import { daysSinceUpdate, myWorkAlert, updateDue } from "@/lib/update-due";
 import { StatusCell } from "./projects/StatusCell";
 import { DayQueue } from "./DayQueue";
 import { AwaitingReply, type AwaitingThread } from "./AwaitingReply";
+import { MeetingsToLog, type MeetingToLog } from "./MeetingsToLog";
+import { recentClientMeetingsWhere } from "@/lib/meetings/waiting";
 
 export const dynamic = "force-dynamic";
 
@@ -257,16 +260,22 @@ export default async function MyWorkPage() {
         },
       }),
       // Client meetings from the last fortnight that haven't been turned into
-      // time yet. Not every waiting meeting: counting the whole backlog, months
-      // of internal calls included, gave a number in the hundreds that never
-      // went down and that nobody acted on. Older ones and internal ones still
-      // wait on the Meetings tab, which has a control to clear the backlog.
-      db.meeting.count({
-        where: {
-          userId: user.id,
-          status: "PENDING",
-          noClient: false,
-          startsAt: { lte: new Date(), gte: new Date(Date.now() - 14 * 86_400_000) },
+      // time yet, listed so each can be logged or set aside from here. Not
+      // every waiting meeting: the whole backlog, months of internal calls
+      // included, ran into the hundreds and nobody acted on it. Older and
+      // internal ones still wait on the Meetings tab.
+      db.meeting.findMany({
+        where: { userId: user.id, ...recentClientMeetingsWhere() },
+        orderBy: { startsAt: "desc" },
+        take: 50,
+        select: {
+          id: true,
+          title: true,
+          startsAt: true,
+          minutes: true,
+          actualMinutes: true,
+          suggestedProjectId: true,
+          project: { select: { name: true } },
         },
       }),
       // What this person already added or dismissed lately, so the same
@@ -288,6 +297,16 @@ export default async function MyWorkPage() {
     ]);
 
   const zone = await orgTimezone();
+  const projectNames = new Map(projects.map((p) => [p.id, p.name]));
+  const meetingRows: MeetingToLog[] = meetingsToLog.map((m) => ({
+    id: m.id,
+    title: m.title,
+    whenLabel: `${formatMedium(dayInZone(m.startsAt, zone))} · ${timeInZone(m.startsAt, zone)}`,
+    minutes: m.actualMinutes ?? m.minutes,
+    projectName:
+      m.project?.name ??
+      (m.suggestedProjectId ? (projectNames.get(m.suggestedProjectId) ?? null) : null),
+  }));
   const awaitingThreads: AwaitingThread[] = awaitingReply.map((thread) => {
     const last = thread.messages[0];
     return {
@@ -477,15 +496,7 @@ export default async function MyWorkPage() {
 
           <AwaitingReply threads={awaitingThreads} />
 
-          {meetingsToLog > 0 ? (
-            <p className="mb-6 rounded-lg border border-ink-200 bg-ink-50 px-4 py-2.5 text-sm text-ink-600">
-              {meetingsToLog} client meeting{meetingsToLog === 1 ? "" : "s"} from the
-              last two weeks still to log.{" "}
-              <Link href="/meetings" className="font-medium text-brand-700 hover:underline">
-                Deal with {meetingsToLog === 1 ? "it" : "them"}
-              </Link>
-            </p>
-          ) : null}
+          <MeetingsToLog meetings={meetingRows} />
 
           {ownedProjects.length > 0 ? (
             <section className="mb-6">

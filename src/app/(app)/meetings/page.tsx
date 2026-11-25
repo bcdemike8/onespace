@@ -25,6 +25,12 @@ interface Attendee {
 }
 
 /** "1.5" reads better in the duration box than "90m", and parses the same. */
+const RANGES: { value: string; label: string; days: number | null }[] = [
+  { value: "all", label: "All", days: null },
+  { value: "14", label: "Last 2 weeks", days: 14 },
+  { value: "30", label: "Last 30 days", days: 30 },
+];
+
 function durationValue(minutes: number): string {
   if (minutes % 60 === 0) return String(minutes / 60);
   const quarters = minutes / 15;
@@ -35,12 +41,26 @@ function durationValue(minutes: number): string {
 export default async function MeetingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ who?: string }>;
+  searchParams: Promise<{ who?: string; range?: string }>;
 }) {
   const user = await requireUser();
   const admin = isAdmin(user);
   const params = await searchParams;
   const everyone = admin && params.who === "all";
+  // How far back the waiting list reaches. Everything by default, so nothing
+  // quietly drops out of sight; the shorter views are for working through
+  // the recent calls without scrolling past months of older ones.
+  const range = RANGES.find((r) => r.value === params.range) ?? RANGES[0];
+  const rangeFrom =
+    range.days === null ? null : new Date(Date.now() - range.days * 86_400_000);
+  const hrefFor = (next: { who?: boolean; range?: string }) => {
+    const q = new URLSearchParams();
+    if (next.who ?? everyone) q.set("who", "all");
+    const r = next.range ?? range.value;
+    if (r !== "all") q.set("range", r);
+    const qs = q.toString();
+    return qs ? `/meetings?${qs}` : "/meetings";
+  };
 
   const [zone, lock, calendarWindow, writeUpWindow] = await Promise.all([
     orgTimezone(),
@@ -62,7 +82,11 @@ export default async function MeetingsPage({
     myWaiting,
   ] = await Promise.all([
     db.meeting.findMany({
-      where: { status: "PENDING", ...(everyone ? {} : { userId: user.id }) },
+      where: {
+        status: "PENDING",
+        ...(everyone ? {} : { userId: user.id }),
+        ...(rangeFrom ? { startsAt: { gte: rangeFrom } } : {}),
+      },
       orderBy: [{ startsAt: "desc" }],
       take: 200,
       select: {
@@ -330,22 +354,36 @@ export default async function MeetingsPage({
         </p>
       ) : null}
 
-      {admin ? (
-        <div className="mb-4 flex gap-2 text-sm">
-          <Link
-            href="/meetings"
-            className={everyone ? "btn-ghost btn-sm" : "btn-secondary btn-sm"}
-          >
-            Mine
-          </Link>
-          <Link
-            href="/meetings?who=all"
-            className={everyone ? "btn-secondary btn-sm" : "btn-ghost btn-sm"}
-          >
-            Everyone
-          </Link>
+      <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+        {admin ? (
+          <div className="flex gap-2">
+            <Link
+              href={hrefFor({ who: false })}
+              className={everyone ? "btn-ghost btn-sm" : "btn-secondary btn-sm"}
+            >
+              Mine
+            </Link>
+            <Link
+              href={hrefFor({ who: true })}
+              className={everyone ? "btn-secondary btn-sm" : "btn-ghost btn-sm"}
+            >
+              Everyone
+            </Link>
+          </div>
+        ) : null}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-ink-500">Show</span>
+          {RANGES.map((r) => (
+            <Link
+              key={r.value}
+              href={hrefFor({ range: r.value })}
+              className={r.value === range.value ? "btn-secondary btn-sm" : "btn-ghost btn-sm"}
+            >
+              {r.label}
+            </Link>
+          ))}
         </div>
-      ) : null}
+      </div>
 
       {hasBacklog ? <ClearBacklog days={myDays} defaultBefore={backlogFrom} /> : null}
 
@@ -353,7 +391,9 @@ export default async function MeetingsPage({
         <EmptyState
           title="Nothing waiting"
           body={
-            upcoming > 0
+            rangeFrom
+              ? `Nothing waiting from the ${range.label.toLowerCase()}. Older meetings may still be waiting under All.`
+              : upcoming > 0
               ? `${upcoming} meeting${upcoming === 1 ? "" : "s"} still to come. They appear here once they've happened.`
               : "Every meeting on your calendar has been logged or dismissed. Sync again if you've just booked something."
           }

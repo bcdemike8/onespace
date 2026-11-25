@@ -1,4 +1,5 @@
 import "server-only";
+import { recentClientMeetingsWhere } from "@/lib/meetings/waiting";
 import { db } from "@/lib/db";
 import { addDays, today, weekStart } from "@/lib/dates";
 import { postMessage, slackConfigured } from "@/lib/slack/client";
@@ -96,11 +97,13 @@ export async function sendDailyDigests(): Promise<DigestOutcome> {
       where: { userId: { in: ids }, date: { gte: weekFrom, lte: weekEnd } },
       select: { userId: true, minutes: true, date: true },
     }),
-    // Only meetings that have actually happened: nobody can book time for
-    // this afternoon's call at five in the morning.
+    // The same meetings My Work lists: client calls from the last fortnight
+    // that have happened (nobody can book this afternoon's call at five in
+    // the morning). Counting every waiting meeting ever gave a number in the
+    // hundreds that told nobody anything.
     db.meeting.groupBy({
       by: ["userId"],
-      where: { userId: { in: ids }, status: "PENDING", startsAt: { lte: new Date() } },
+      where: { userId: { in: ids }, ...recentClientMeetingsWhere() },
       _count: true,
     }),
   ]);

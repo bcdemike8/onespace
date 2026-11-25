@@ -187,6 +187,27 @@ export async function dismissMeetingAction(formData: FormData): Promise<void> {
 }
 
 /**
+ * Set aside a named handful of your own waiting meetings - My Work's
+ * "Set all aside". By id rather than by date, so it only ever touches the
+ * rows that were on the screen when it was pressed.
+ */
+export async function dismissMeetingsAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+  const ids = formData.getAll("id").map(String).filter(Boolean);
+  if (ids.length === 0) return { ok: true };
+
+  const { count } = await db.meeting.updateMany({
+    where: { id: { in: ids }, userId: user.id, status: "PENDING" },
+    data: { status: "DISMISSED" },
+  });
+  refresh();
+  return { ok: true, message: `Set aside ${count} meeting${count === 1 ? "" : "s"}.` };
+}
+
+/**
  * Set aside, in one go, every one of your own waiting meetings from before a
  * day. The backlog this clears ran to a hundred-odd calls, months old, that
  * nobody was ever going to log one at a time - and while they sat there the
