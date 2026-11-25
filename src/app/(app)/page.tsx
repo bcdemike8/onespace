@@ -217,7 +217,14 @@ export default async function MyWorkPage() {
       // Threads whose last word is the client's. The clearest kind of
       // overdue there is: somebody is waiting.
       db.mailThread.findMany({
-        where: { userId: user.id, status: "OPEN", awaitingUs: true },
+        // Only the last fortnight. Older ones are still open and still on
+        // the Inbox; here they would bury what's actually current.
+        where: {
+          userId: user.id,
+          status: "OPEN",
+          awaitingUs: true,
+          lastMessageAt: { gte: addDays(now, -14) },
+        },
         orderBy: { lastMessageAt: "asc" },
         // Eight show; the rest sit behind "Show more", so "Clear all" can
         // reach the whole list and not just the first screenful.
