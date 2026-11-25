@@ -669,3 +669,71 @@ test("...and the other deliverable's date is never attached to this one", () => 
   );
   assert.equal(out.owned[0]?.when, null);
 });
+
+// ---------------------------------------- a statement isn't a commitment
+
+const statement = (line: string) =>
+  vetActionItems(
+    [item({ title: "Review Northwind's dashboard configuration", task: "Review the dashboard configuration for Northwind.", quote: line })],
+    team,
+    people,
+    { kind: "call", text: `\nJordan Lee: Let's look at the dashboard setup.\nPriya Shah: ${line}\nJordan Lee: Okay.`, presentIds: new Set(["priya"]) },
+  );
+
+for (const line of [
+  "I think the configuration looks correct.",
+  "I have access to the dashboard.",
+  "I understand the issue.",
+  "I can see the dashboard now.",
+]) {
+  test(`'${line}' describes; it commits to nothing`, () => {
+    assert.equal(statement(line).owned.length, 0);
+  });
+}
+
+test("'I'll review the dashboard and send my recommendations.' commits", () => {
+  assert.equal(statement("I'll review the dashboard and send my recommendations.").owned[0]?.ownerId, "priya");
+});
+
+test("'I can review it this afternoon.' commits - 'I can' plus doing something", () => {
+  assert.equal(statement("I can review it this afternoon.").owned[0]?.ownerId, "priya");
+});
+
+// ------------------------- a short yes answers the request right before it
+
+const movedOn = `
+Jordan Lee: Can you send the configuration guide?
+Priya Shah: We already sent it yesterday.
+Jordan Lee: Okay, let's move to reporting.
+Priya Shah: Sounds good.
+Jordan Lee: Great.
+`;
+
+test("'Sounds good' after moving on doesn't accept an earlier, resolved request", () => {
+  const out = vetActionItems(
+    [
+      item({
+        title: "Send Northwind the configuration guide",
+        quote: "Can you send the configuration guide? We already sent it yesterday. Okay, let's move to reporting. Sounds good.",
+      }),
+    ],
+    team,
+    people,
+    { kind: "call", text: movedOn, presentIds: new Set(["priya"]) },
+  );
+  assert.equal(out.owned.length, 0);
+});
+
+test("...while 'Sounds good' straight after the request does accept it", () => {
+  const out = vetActionItems(
+    [item({ title: "Send Northwind the configuration guide", quote: "Can you send the configuration guide? Sounds good." })],
+    team,
+    people,
+    {
+      kind: "call",
+      text: "\nJordan Lee: Can you send the configuration guide?\nPriya Shah: Sounds good.\nJordan Lee: Thanks.",
+      presentIds: new Set(["priya"]),
+    },
+  );
+  assert.equal(out.owned[0]?.ownerId, "priya");
+});

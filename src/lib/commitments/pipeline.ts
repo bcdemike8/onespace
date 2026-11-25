@@ -308,6 +308,18 @@ const SOMEONE_ELSE =
 /** The speaker - or writer - talking about themselves. */
 const SELF = /\b(i|i'?ll|i'?m|i'?ve|i'?d|me|my|mine)\b/;
 
+/**
+ * Something that actually takes work on - looking ahead, or claiming it.
+ *
+ * Grammar, not a phrasebook: any "I'll...", "I'm going to...", "let me...",
+ * "I can <do something>", "<name> will...", or a claim of ownership ("on
+ * me", "with me", "I've got it", "mine"). Without one, a sentence describes
+ * or agrees - "I think the configuration looks correct", "I have access to
+ * the dashboard", "I understand the issue" - and commits to nothing.
+ */
+const TAKES_ON =
+  /\b(i'?ll|i will|i shall|i'?m going to|i am going to|i'?m gonna|going to|gonna|will|let me|i can (?!see|hear|tell|imagine|understand|appreciate|access|agree|relate|picture|confirm that)[a-z]+|i'?m on it|on it|on me|with me|i'?ve got (it|this|that|you)|i got (it|this|that)|consider it done|you got it|mine|count me in|i'?m taking|i'?m handling)\b/;
+
 /** Just a yes. */
 const ONLY_AGREES =
   /^(sure|yes|yep|yeah|absolutely|of course|definitely|no problem|happy to|sounds good|ok|okay|will do|you got it|consider it done|done|on it|perfect|great)\b[\s,.!]*(thanks|thank you|will do|on it)?[\s.!]*$/;
@@ -322,32 +334,38 @@ function clausesOf(text: string): string[] {
     .filter(Boolean);
 }
 
+/** One of the owner's sentences, and whether it directly answers a request. */
+interface Said {
+  text: string;
+  /** The turn just before it is somebody else asking for something. */
+  answersRequest: boolean;
+}
+
 /**
- * Does this part commit, rather than decline, wonder, report or ask?
+ * Does any of this commit, rather than decline, wonder, report, ask, or just
+ * describe?
+ *
+ * Each clause needs positive evidence (TAKES_ON, or the owner named as the
+ * one doing it) and none of the signs against. A bare "Sure" / "Sounds good"
+ * counts only when it's the direct answer to a request - not to something
+ * asked three turns earlier and already dealt with.
  *
  * `aboutSelf` is for email, where there's no speaker label: the clause has to
  * be the writer talking about themselves, or naming the colleague who'll do
  * it. On a call the speaker label has already established that.
  */
-function commits(
-  sentences: string[],
-  answersRequest: boolean,
-  ownerName: string | null,
-  aboutSelf: boolean,
-): boolean {
-  return sentences
-    .filter((s) => !/\?\s*$/.test(s))
-    .flatMap(clausesOf)
-    .some((c) => {
-      if (DECLINES.test(c)) return false;
-      if (ONLY_EXPLORING.test(c) && !REPORTS_BACK.test(c)) return false;
-      if (ALREADY_DONE.test(c) && !AHEAD.test(c.replace(/\balready\b.*$/, ""))) return false;
-      if (SOMEONE_ELSE.test(c) && !/\bi('ll| will| can|'m going to)\b/.test(c)) return false;
-      const named = ownerName !== null && namedAsDoer(ownerName, c);
-      if (aboutSelf && !named && !SELF.test(c)) return false;
-      if (ONLY_AGREES.test(c)) return answersRequest;
-      return true;
-    });
+function commitsIn(part: Said, ownerName: string | null, aboutSelf: boolean): boolean {
+  if (/\?\s*$/.test(part.text)) return false;
+  return clausesOf(part.text).some((c) => {
+    if (DECLINES.test(c)) return false;
+    if (ONLY_EXPLORING.test(c) && !REPORTS_BACK.test(c)) return false;
+    if (ALREADY_DONE.test(c) && !AHEAD.test(c.replace(/\balready\b.*$/, ""))) return false;
+    if (SOMEONE_ELSE.test(c) && !/\bi('ll| will| can|'m going to)\b/.test(c)) return false;
+    const named = ownerName !== null && namedAsDoer(ownerName, c);
+    if (aboutSelf && !named && !SELF.test(c)) return false;
+    if (ONLY_AGREES.test(c)) return part.answersRequest;
+    return named || TAKES_ON.test(c);
+  });
 }
 
 /**
@@ -384,7 +402,7 @@ export function quoteSupports(
     return {
       owner: theirs.length > 0,
       ours: true,
-      commits: theirs.length > 0 && commits(theirs, false, ownerName, true),
+      commits: theirs.some((t) => commitsIn({ text: t, answersRequest: false }, ownerName, true)),
       said: theirs.join(" "),
       asked: "",
     };
@@ -400,23 +418,24 @@ export function quoteSupports(
     ours = true;
     if (id === ownerId || namedAsDoer(ownerName, p.sentence)) theirs.push(p);
   }
-  // A request answers to what was asked just before the owner's reply, in
-  // somebody else's turn.
-  const first = theirs[0]?.turn ?? -1;
-  const request = placed.filter(
-    (p) =>
-      p.turn < first &&
-      index.match(turns[p.turn].speaker) !== ownerId &&
-      (/\?\s*$/.test(p.sentence) || /\b(can|could|would|will) you\b/i.test(p.sentence)),
+  // What's being answered: a request in the turn directly before, from
+  // somebody else. Further back, it's been answered already or moved on from.
+  const isRequest = (p: Located) =>
+    index.match(turns[p.turn].speaker) !== ownerId &&
+    (/\?\s*$/.test(p.sentence) || /\b(can|could|would|will) you\b/i.test(p.sentence));
+  const requestBefore = (turn: number) =>
+    placed.filter((q) => q.turn === turn - 1 && isRequest(q));
+
+  const committing = theirs.filter((p) =>
+    commitsIn({ text: p.sentence, answersRequest: requestBefore(p.turn).length > 0 }, ownerName, false),
   );
-  const said = theirs.map((p) => p.sentence);
-  const committed = theirs.length > 0 && commits(said, request.length > 0, ownerName, false);
+  const asked = [...new Set(committing.flatMap((p) => requestBefore(p.turn)).map((q) => q.sentence))];
   return {
     owner: theirs.length > 0,
     ours,
-    commits: committed,
-    said: said.join(" "),
-    asked: committed ? request.map((p) => p.sentence).join(" ") : "",
+    commits: committing.length > 0,
+    said: theirs.map((p) => p.sentence).join(" "),
+    asked: asked.join(" "),
   };
 }
 

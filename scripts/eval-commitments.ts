@@ -17,7 +17,8 @@
 import "./load-env";
 import { readRecap, readTranscript, type AiActionItem } from "@/lib/ai/summarise";
 import { buildNameIndex } from "@/lib/commitments/owner";
-import { promisedDate, vetActionItems } from "@/lib/commitments/pipeline";
+import { vetActionItems } from "@/lib/commitments/pipeline";
+import { scoreCase, type Expected } from "./eval-score";
 
 const people = [
   { id: "priya", name: "Priya Shah" },
@@ -28,13 +29,8 @@ const team = buildNameIndex(people);
 const names = people.map((p) => p.name);
 const CLIENT = "Northwind";
 
-interface Expected {
-  owner: string;
-  /** Any of these words in the title or task shows it's the right item. */
-  about: string[];
-  /** True when a deadline was given and should come through as a date. */
-  dated?: boolean;
-}
+/** Every call and recap happens on Monday 16 November 2026, so deadlines are exact. */
+const SAID = new Date("2026-11-16T15:00:00Z");
 
 interface Case {
   name: string;
@@ -125,7 +121,7 @@ Thanks for the time today. Next steps:
 
 Best,
 Sam`,
-    expect: [{ owner: "sam", about: ["sequence"], dated: true }],
+    expect: [{ owner: "sam", about: ["sequence"], due: "2026-11-20" }],
   },
 
   // --------------------------------------------------------------- calls
@@ -140,7 +136,7 @@ Priya Shah: Sure, I'll get the updated sequences over to you by Friday.
 Jordan Lee: Perfect, thank you.
 Priya Shah: Anything else on your side before we wrap?
 Jordan Lee: No, that's everything for today.`,
-    expect: [{ owner: "priya", about: ["sequence"], dated: true }],
+    expect: [{ owner: "priya", about: ["sequence"], due: "2026-11-20" }],
   },
   {
     name: "Call: a customer asks, the consultant doesn't agree",
@@ -190,7 +186,7 @@ Sam Ortiz: And I'll handle provisioning the twelve new users in Outreach.
 Jordan Lee: Brilliant, that covers it.
 Priya Shah: We'll reconvene once both are done.`,
     expect: [
-      { owner: "priya", about: ["playbook"], dated: true },
+      { owner: "priya", about: ["playbook"], due: "2026-11-27" },
       { owner: "sam", about: ["provision", "user"] },
     ],
   },
@@ -282,7 +278,7 @@ Thanks for today. Next steps:
 
 Best,
 Sam`,
-    expect: [{ owner: "priya", about: ["report", "template"], dated: true }],
+    expect: [{ owner: "priya", about: ["report", "template"], due: "2026-11-19" }],
   },
   {
     name: "Call: the customer says a consultant will do it; the consultant never agrees",
@@ -306,7 +302,7 @@ Priya Shah: I'll check with Sam on the import timing and get back to you tomorro
 Jordan Lee: Great, thanks.
 Priya Shah: Sam knows that part of the setup best.
 Jordan Lee: Makes sense.`,
-    expect: [{ owner: "priya", about: ["import", "timing", "back"], dated: true }],
+    expect: [{ owner: "priya", about: ["import", "timing", "back"], due: "2026-11-17" }],
   },
   {
     name: "Call: a customer's deadline doesn't become the consultant's",
@@ -417,7 +413,7 @@ Priya Shah: Absolutely, I'll send that over.
 Jordan Lee: Great, thank you.
 Priya Shah: Anything else for this week?
 Jordan Lee: No, that's everything.`,
-    expect: [{ owner: "priya", about: ["report"], dated: true }],
+    expect: [{ owner: "priya", about: ["report"], due: "2026-11-20" }],
   },
   {
     name: "Call: two deliverables, two dates, one sentence",
@@ -430,8 +426,8 @@ Jordan Lee: Perfect, that works for us.
 Priya Shah: Great. Let me know if the team has questions.
 Jordan Lee: Will do.`,
     expect: [
-      { owner: "priya", about: ["sequence"], dated: true },
-      { owner: "priya", about: ["recommendation", "reporting"], dated: true },
+      { owner: "priya", about: ["sequence"], due: "2026-11-17" },
+      { owner: "priya", about: ["recommendation", "reporting"], due: "2026-11-20" },
     ],
   },
 ];
@@ -441,7 +437,7 @@ async function readCase(c: Case): Promise<AiActionItem[]> {
   if (c.kind === "recap") {
     const r = await readRecap(
       c.text,
-      { subject: `${CLIENT} + RevOptics recap`, sentAt: new Date(), sender: by.name, client: CLIENT, team: names },
+      { subject: `${CLIENT} + RevOptics recap`, sentAt: SAID, sender: by.name, client: CLIENT, team: names },
       120_000,
     );
     if (!r.items) throw new Error(r.reason ?? "no reading");
@@ -449,7 +445,7 @@ async function readCase(c: Case): Promise<AiActionItem[]> {
   }
   const r = await readTranscript(
     c.text,
-    { title: `${CLIENT} weekly`, when: new Date(), client: CLIENT, team: names },
+    { title: `${CLIENT} weekly`, when: SAID, client: CLIENT, team: names },
     180_000,
   );
   if (!r.read) throw new Error(r.reason ?? "no reading");
@@ -496,35 +492,14 @@ async function main() {
       senderId: c.kind === "recap" ? c.by : undefined,
     });
 
-    const left = [...c.expect];
-    const extra: string[] = [];
-    for (const o of out.owned) {
-      const hay = `${o.title} ${o.task}`.toLowerCase();
-      const about = (e: Expected) => e.about.some((w) => hay.includes(w.toLowerCase()));
-      const i = left.findIndex((e) => e.owner === o.ownerId && about(e));
-      if (i === -1) {
-        // The right task on the wrong person is its own kind of mistake.
-        const j = left.findIndex(about);
-        if (j !== -1) {
-          wrongOwner += 1;
-          extra.push(`wrong owner: ${o.ownerId} has "${o.title}" (should be ${left[j].owner})`);
-          left.splice(j, 1);
-        } else {
-          falsePositives += 1;
-          extra.push(`shouldn't be there: ${o.ownerId} - ${o.title}`);
-        }
-        continue;
-      }
-      const e = left.splice(i, 1)[0];
-      const dated = promisedDate(o.when, new Date()) !== null;
-      if (Boolean(e.dated) !== dated) {
-        wrongDeadline += 1;
-        extra.push(`deadline ${dated ? "invented" : "missed"}: ${o.title} (when: ${o.when ?? "none"})`);
-      } else {
-        correct += 1;
-      }
-    }
-    falseNegatives += left.length;
+    const score = scoreCase(c.expect, out.owned, SAID);
+    correct += score.correct;
+    falsePositives += score.falsePositives;
+    falseNegatives += score.falseNegatives;
+    wrongOwner += score.wrongOwner;
+    wrongDeadline += score.wrongDeadline;
+    const extra = score.notes;
+    const left = score.missed;
 
     const ok = extra.length === 0 && left.length === 0;
     if (ok) passed += 1;
