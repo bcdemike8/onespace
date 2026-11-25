@@ -6,6 +6,7 @@ import { dayStart } from "@/lib/dates";
 import { isAdmin, requireUser } from "@/lib/auth";
 import { mayDecide, takesTasks } from "@/lib/commitments/permissions";
 import { addTaskOnce } from "@/lib/commitments/accept";
+import { queueSince } from "@/lib/recency";
 import { syncZoom } from "@/lib/zoom/sync";
 
 export type ActionState = { error?: string; ok?: boolean; message?: string };
@@ -283,17 +284,18 @@ export async function rereadTranscriptsAction(
     return { error: "Only an admin can re-read everyone's calls." };
   }
 
-  // The same window the sync writes up. Clearing the marker on a call the
-  // sync will only pass over as too old is churn: two hundred rows rewritten
-  // to say "too old" and nothing read. This asks for exactly what will be
-  // read.
-  const { transcriptWindowSince, transcriptWindowLabel } = await import(
-    "@/lib/zoom/sync"
-  );
-  const [since, window] = await Promise.all([
-    transcriptWindowSince(),
-    transcriptWindowLabel(),
-  ]);
+  // My work's window - the last two weeks, never before 16 November - and
+  // never wider than the sync writes up. Re-reading older calls costs a
+  // Claude reading each and changes nothing anyone sees on My work; it used
+  // to reach back to 31 August.
+  const { transcriptWindowSince } = await import("@/lib/zoom/sync");
+  const [writeups, queue] = await Promise.all([transcriptWindowSince(), queueSince()]);
+  const since = writeups > queue ? writeups : queue;
+  const window = `since ${new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    month: "short",
+    day: "numeric",
+  }).format(since)}`;
 
   const scope = {
     ...(everyone ? {} : { userId: user.id }),

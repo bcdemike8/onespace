@@ -32,7 +32,8 @@ import {
 } from "@/lib/ai/summarise";
 import { buildWeights, matchMeeting, type MatchCandidate } from "@/lib/google/match";
 import { orgTimezone } from "@/lib/google/sync";
-import { recentLabel, recentSince } from "@/lib/recency";
+import { queueSince, recentLabel, recentSince } from "@/lib/recency";
+import { retryWithoutWriteUp } from "@/lib/zoom/retry";
 import { DEFAULT_SYNC_FROM, WINDOW_KEYS, parseWindow, sinceOf } from "@/lib/window";
 
 export const ZOOM_FROM_KEY = WINDOW_KEYS.zoom;
@@ -261,6 +262,8 @@ export async function syncZoom(options?: {
     (projectId ? clientByProject.get(projectId) : null) ?? null;
 
   const from = options?.from ?? (await zoomSyncFrom());
+  // How far back a call without a write-up is retried: My work's window.
+  const retrySince = await queueSince();
   const to = options?.to ?? new Date();
 
   let zoomUsers;
@@ -412,7 +415,11 @@ export async function syncZoom(options?: {
         row.transcriptReadAt !== null &&
         row.summary === null &&
         row.transcriptNote === null;
-      const unread = row.transcriptReadAt === null || readButEmpty;
+      // A recent call read before without a write-up, retried once a day
+      // (lib/zoom/retry) - before this, a call marked read was never looked
+      // at again, and only "Read this call now" could rescue it.
+      const retryNow = retryWithoutWriteUp(row, retrySince);
+      const unread = row.transcriptReadAt === null || readButEmpty || retryNow;
       // A reading that failed in a way worth retrying waits a few hours.
       // Without this a call whose answer won't parse is downloaded and sent
       // to Claude again on every pass of the nightly loop.
