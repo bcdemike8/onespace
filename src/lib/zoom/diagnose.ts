@@ -93,7 +93,7 @@ export async function describeZoomCall(uuid: string): Promise<string> {
   lines.push(
     aiConfigured()
       ? "Claude: connected."
-      : "Claude: not connected on this service. ANTHROPIC_API_KEY needs to be set in Railway on the app service and the cron service both - a transcript still gets read, but by the old pattern rules, and no write-up is stored.",
+      : "Claude: not connected on this service. ANTHROPIC_API_KEY needs to be set in Railway on the app service and the cron service both - until it is, calls get no write-up and no action items.",
   );
 
   return lines.join(" ");

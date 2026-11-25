@@ -5,6 +5,7 @@ import { findThreadIds, getThread, type GmailMessage } from "@/lib/google/gmail"
 import { GoogleApiError, GoogleAuthError, googleConfigured } from "@/lib/google/auth";
 import { buildWeights, matchMeeting, type MatchCandidate } from "@/lib/google/match";
 import { extractRecapItems, looksLikeRecap } from "@/lib/mail/recap";
+import { buildNameIndex, recapOwnership, type NameIndex } from "@/lib/commitments/owner";
 import { dueFor } from "@/lib/when";
 import { backfillDueDates } from "@/lib/commitments/backfill";
 
@@ -106,6 +107,10 @@ export async function syncMail(options?: {
   await backfillDueDates();
 
   const clientByDomain = new Map(domainRows.map((d) => [d.domain, d.clientId]));
+  // Who a recap's "Yaz to set up the sandbox" means. Once per sync.
+  const team = buildNameIndex(
+    await db.user.findMany({ where: { isActive: true }, select: { id: true, name: true } }),
+  );
   const domains = domainRows.map((d) => d.domain);
 
   const people = await db.user.findMany({
@@ -274,7 +279,7 @@ export async function syncMail(options?: {
       }
 
       await saveMessages(rowId, messages, fromUs);
-      const found = await readRecaps(rowId);
+      const found = await readRecaps(rowId, team);
       outcome.recaps += found.recaps;
       outcome.commitments += found.items;
       outcome.threads += 1;
@@ -296,10 +301,18 @@ export async function syncMail(options?: {
  * keep, and putting it on a RevOptics plate would be wrong in both
  * directions - we'd chase work that isn't ours and miss that they owe it.
  */
-async function readRecaps(threadId: string): Promise<{ recaps: number; items: number }> {
+async function readRecaps(
+  threadId: string,
+  team: NameIndex,
+): Promise<{ recaps: number; items: number }> {
   const unread = await db.mailMessage.findMany({
     where: { threadId, fromUs: true, recapReadAt: null },
-    select: { id: true, sentAt: true, body: true, thread: { select: { subject: true } } },
+    select: {
+      id: true,
+      sentAt: true,
+      body: true,
+      thread: { select: { subject: true, userId: true } },
+    },
     orderBy: { sentAt: "asc" },
     take: 50,
   });
@@ -309,7 +322,13 @@ async function readRecaps(threadId: string): Promise<{ recaps: number; items: nu
 
   for (const message of unread) {
     const isRecap = looksLikeRecap(message.thread.subject, message.body);
-    const found = isRecap ? extractRecapItems(message.body) : [];
+    // Each line goes to whoever it names, if they're one of ours, and to the
+    // person who sent the recap otherwise. A line naming somebody who isn't
+    // one of ours is the client's to do, and isn't offered to anyone.
+    const found = (isRecap ? extractRecapItems(message.body) : []).flatMap((item) => {
+      const owner = recapOwnership(team, item.owner, message.thread.userId);
+      return owner ? [{ ...item, ...owner }] : [];
+    });
 
     await db.$transaction(async (tx) => {
       // Marked whether or not it was a recap: a message that isn't one now
@@ -331,6 +350,8 @@ async function readRecaps(threadId: string): Promise<{ recaps: number; items: nu
               text: item.text,
               speaker: item.owner,
               suggestedTask: item.suggestedTask,
+              ownerId: item.ownerId,
+              ownerUnrecognised: item.ownerUnrecognised,
               dueDate: due.date,
               dueStated: due.stated,
             };
