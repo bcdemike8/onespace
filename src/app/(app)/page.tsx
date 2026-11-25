@@ -7,6 +7,7 @@ import {
   dayStart,
   formatMedium,
   relativeDueLabel,
+  timeInZone,
   toISODate,
   today,
   weekEnd,
@@ -25,8 +26,11 @@ import {
 import { LogTimeForm, type LoggableProject } from "@/components/LogTimeForm";
 import { TaskListItem, type TaskListItemData } from "@/components/TaskListItem";
 import { deleteTimeEntryAction } from "@/app/actions/time";
-import { recentSince } from "@/lib/recency";
-import { DayQueue, type QueueCommitment, type QueueProject } from "./DayQueue";
+import { queueSince } from "@/lib/recency";
+import { groupQueue, withoutDecided, type QueueRecord } from "@/lib/commitments/queue";
+import { orgTimezone } from "@/lib/google/sync";
+import { DayQueue } from "./DayQueue";
+import { AwaitingReply, type AwaitingThread } from "./AwaitingReply";
 
 export const dynamic = "force-dynamic";
 
@@ -70,9 +74,9 @@ export default async function MyWorkPage() {
   const user = await requireUser();
   const now = today();
   const lockState = await getLockState();
-  // How far back a suggestion is still worth offering. The same number the
-  // Zoom sync uses to decide how far back a call is worth writing up.
-  const said = await recentSince();
+  // How far back "You said you'd do this" reaches: a fortnight, and never
+  // before the clean start on 16 November. See lib/commitments/queue.
+  const said = await queueSince();
   const weekFrom = weekStart(now);
   const weekTo = weekEnd(now);
 
@@ -87,6 +91,7 @@ export default async function MyWorkPage() {
     pendingCommitments,
     awaitingReply,
     meetingsToLog,
+    decidedCommitments,
   ] = await Promise.all([
       db.task.findMany({
         where: { assigneeId: user.id, status: { not: "DONE" } },
@@ -157,40 +162,49 @@ export default async function MyWorkPage() {
         },
         orderBy: [{ dueDate: "asc" }, { name: "asc" }],
       }),
-      // What recent calls and recaps produced and nobody has said yes or no
-      // to yet. Older than the window and the moment has passed: it either
-      // got done or it didn't, and a stale suggestion is noise.
+      // What this person undertook, on any call or in any recap, and hasn't
+      // said yes or no to yet. Theirs only because they're its recorded
+      // owner - whoever hosted the call or whose mailbox it was in. An item
+      // whose owner couldn't be established is on nobody's list: it stays
+      // on the call's own page, for whoever reads it to decide.
       //
       // Filtered on when it was SAID, not on when the row was written. Those
-      // are the same thing day to day and wildly different after a catch-up
-      // sync, which creates today's rows for calls six weeks old - so the
-      // queue filled with things promised in early August and looked, quite
-      // reasonably, like the app inventing work.
+      // are the same thing day to day and wildly different after a re-read,
+      // which creates today's rows for calls weeks old.
       db.commitment.findMany({
         where: {
           status: "PENDING",
-          OR: [
-            { meeting: { userId: user.id, startsAt: { gte: said } } },
+          AND: [
             {
-              mailMessage: {
-                sentAt: { gte: said },
-                thread: { userId: user.id },
-              },
+              OR: [
+                { meeting: { startsAt: { gte: said } } },
+                { mailMessage: { sentAt: { gte: said } } },
+              ],
             },
+            { ownerId: user.id },
           ],
         },
         orderBy: [{ dueDate: "asc" }, { createdAt: "desc" }],
-        take: 30,
+        // A safety ceiling, not a page size: two weeks of one person's
+        // commitments is a few dozen at most, and every one is shown.
+        take: 500,
         select: {
           id: true,
           text: true,
           suggestedTask: true,
+          detail: true,
           speaker: true,
           source: true,
           dueDate: true,
           dueStated: true,
           meeting: {
-            select: { id: true, title: true, startsAt: true, projectId: true },
+            select: {
+              id: true,
+              title: true,
+              startsAt: true,
+              projectId: true,
+              suggestedProjectId: true,
+            },
           },
           mailMessage: {
             select: {
@@ -205,7 +219,9 @@ export default async function MyWorkPage() {
       db.mailThread.findMany({
         where: { userId: user.id, status: "OPEN", awaitingUs: true },
         orderBy: { lastMessageAt: "asc" },
-        take: 8,
+        // Eight show; the rest sit behind "Show more", so "Clear all" can
+        // reach the whole list and not just the first screenful.
+        take: 50,
         select: {
           id: true,
           subject: true,
@@ -213,13 +229,70 @@ export default async function MyWorkPage() {
           lastFrom: true,
           lastMessageAt: true,
           client: { select: { name: true } },
+          project: { select: { name: true } },
+          // The client's newest message, so it can be read without opening
+          // the thread.
+          messages: {
+            where: { fromUs: false },
+            orderBy: { sentAt: "desc" },
+            take: 1,
+            select: {
+              fromName: true,
+              fromEmail: true,
+              toEmails: true,
+              ccEmails: true,
+              sentAt: true,
+              body: true,
+            },
+          },
         },
       }),
       // Meetings that happened and haven't been turned into time yet.
       db.meeting.count({
         where: { userId: user.id, status: "PENDING", startsAt: { lte: new Date() } },
       }),
+      // What this person already added or dismissed lately, so the same
+      // promise arriving again from another call or recap isn't offered twice.
+      db.commitment.findMany({
+        where: {
+          ownerId: user.id,
+          status: { in: ["ACCEPTED", "DISMISSED"] },
+          createdAt: { gte: addDays(now, -30) },
+        },
+        select: {
+          suggestedTask: true,
+          text: true,
+          meeting: { select: { projectId: true, suggestedProjectId: true } },
+          mailMessage: { select: { thread: { select: { projectId: true } } } },
+        },
+        take: 500,
+      }),
     ]);
+
+  const zone = await orgTimezone();
+  const awaitingThreads: AwaitingThread[] = awaitingReply.map((thread) => {
+    const last = thread.messages[0];
+    return {
+      id: thread.id,
+      subject: thread.subject,
+      from: thread.lastFromName || thread.lastFrom,
+      clientName: thread.client?.name ?? null,
+      projectName: thread.project?.name ?? null,
+      waitingDays: Math.floor(
+        (now.getTime() - dayStart(thread.lastMessageAt).getTime()) / DAY_MS,
+      ),
+      preview: last
+        ? {
+            fromName: last.fromName,
+            fromEmail: last.fromEmail,
+            to: last.toEmails,
+            cc: last.ccEmails,
+            sentLabel: `${formatMedium(last.sentAt)} · ${timeInZone(last.sentAt, zone)}`,
+            body: last.body,
+          }
+        : null,
+    };
+  });
 
   const ownedIds = ownedProjects.map((p) => p.id);
   const [ownedMinutes, ownedOpen] = await Promise.all([
@@ -261,28 +334,55 @@ export default async function MyWorkPage() {
     assigneeName: null,
   }));
 
-  const queue: QueueCommitment[] = pendingCommitments.map((c) => {
+  const queueRecords: QueueRecord[] = pendingCommitments.flatMap((c) => {
     const meeting = c.meeting;
     const mail = c.mailMessage;
-    return {
-      id: c.id,
-      text: c.text,
-      suggestedTask: c.suggestedTask,
-      speaker: c.speaker,
-      source: c.source,
-      dueDate: c.dueDate ? toISODate(c.dueDate) : null,
-      dueStated: c.dueStated,
-      originLabel: meeting
-        ? `${meeting.title} · ${formatMedium(dayStart(meeting.startsAt))}`
-        : mail
-          ? `${mail.thread.subject} · ${formatMedium(dayStart(mail.sentAt))}`
-          : "Source removed",
-      originHref: meeting ? "/meetings" : mail ? `/inbox/${mail.thread.id}` : null,
-      projectId: meeting?.projectId ?? mail?.thread.projectId ?? null,
-    };
+    if (!meeting && !mail) return [];
+    const saidAt = meeting ? meeting.startsAt : mail!.sentAt;
+    return [
+      {
+        id: c.id,
+        title: c.suggestedTask,
+        quote: c.text,
+        detail: c.detail,
+        source: c.source,
+        // A date only if one was actually given. Older items carry a
+        // calculated three-working-day date; it isn't shown as if promised.
+        dueDate: c.dueStated ? c.dueDate : null,
+        dueStated: c.dueStated,
+        saidAt,
+        originKey: meeting ? `m:${meeting.id}` : `t:${mail!.thread.id}`,
+        originLabel: meeting
+          ? `${meeting.title} · ${formatMedium(dayStart(meeting.startsAt))}`
+          : `${mail!.thread.subject} · ${formatMedium(dayStart(mail!.sentAt))}`,
+        originHref: meeting ? `/meetings/${meeting.id}` : `/inbox/${mail!.thread.id}`,
+        // Filed, or failing that what the matcher suggested - the person can
+        // change it before adding, and it decides which group it sits in.
+        projectId: meeting
+          ? (meeting.projectId ?? meeting.suggestedProjectId)
+          : mail!.thread.projectId,
+      },
+    ];
   });
 
-  const queueProjects: QueueProject[] = projects.map((p) => ({
+  const decided = decidedCommitments.map((d) => ({
+    title: d.suggestedTask,
+    quote: d.text,
+    projectId:
+      d.meeting?.projectId ??
+      d.meeting?.suggestedProjectId ??
+      d.mailMessage?.thread.projectId ??
+      null,
+  }));
+
+  const queueGroups = groupQueue(
+    withoutDecided(queueRecords, decided),
+    new Map(
+      projects.map((p) => [p.id, { name: p.name, clientName: p.client?.name ?? null }]),
+    ),
+  );
+
+  const queueProjects = projects.map((p) => ({
     id: p.id,
     name: p.name,
     clientName: p.client?.name ?? null,
@@ -333,54 +433,9 @@ export default async function MyWorkPage() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">
-          <DayQueue items={queue} projects={queueProjects} />
+          <DayQueue groups={queueGroups} projects={queueProjects} />
 
-          {awaitingReply.length > 0 ? (
-            <section className="mb-6">
-              <div className="mb-3 flex items-baseline justify-between">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-600">
-                  Waiting on your reply
-                </h2>
-                <span className="text-xs text-ink-500 tnum">
-                  {awaitingReply.length}
-                </span>
-              </div>
-              <ul className="card divide-y divide-ink-100">
-                {awaitingReply.map((thread) => {
-                  const waitingDays = Math.floor(
-                    (now.getTime() - dayStart(thread.lastMessageAt).getTime()) / DAY_MS,
-                  );
-                  return (
-                    <li key={thread.id} className="px-4 py-2.5">
-                      <Link
-                        href={`/inbox/${thread.id}`}
-                        className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 hover:text-brand-700"
-                      >
-                        <span className="text-sm font-medium text-ink-900">
-                          {thread.subject}
-                        </span>
-                        <span className="text-xs text-ink-500">
-                          {thread.lastFromName || thread.lastFrom}
-                          {thread.client ? ` · ${thread.client.name}` : ""}
-                        </span>
-                        <span
-                          className={`ml-auto text-xs tnum ${
-                            waitingDays >= 2 ? "font-medium text-warn-700" : "text-ink-500"
-                          }`}
-                        >
-                          {waitingDays === 0
-                            ? "today"
-                            : waitingDays === 1
-                              ? "1 day"
-                              : `${waitingDays} days`}
-                        </span>
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
-          ) : null}
+          <AwaitingReply threads={awaitingThreads} />
 
           {meetingsToLog > 0 ? (
             <p className="mb-6 rounded-lg border border-ink-200 bg-ink-50 px-4 py-2.5 text-sm text-ink-600">

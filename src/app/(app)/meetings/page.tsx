@@ -93,6 +93,7 @@ export default async function MeetingsPage({
             atSeconds: true,
             suggestedTask: true,
             fromSummary: true,
+            ownerUnrecognised: true,
           },
         },
       },
@@ -308,8 +309,8 @@ export default async function MeetingsPage({
           has rather than what was set when it was built. */}
       {zoomConfigured() && !aiConfigured() ? (
         <p className="mb-4 rounded-lg bg-warn-50 px-3 py-2 text-xs text-warn-700">
-          Claude isn&apos;t connected on this service, so calls are being
-          scanned with the old pattern rules and no write-ups are stored. Set
+          Claude isn&apos;t connected on this service, so calls get no
+          write-ups and no action items. Set
           ANTHROPIC_API_KEY in Railway on the app service and the cron service
           both, redeploy, then use Re-read transcripts.
         </p>

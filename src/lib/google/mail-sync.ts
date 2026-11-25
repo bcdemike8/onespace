@@ -4,9 +4,16 @@ import { dayStart } from "@/lib/dates";
 import { findThreadIds, getThread, type GmailMessage } from "@/lib/google/gmail";
 import { GoogleApiError, GoogleAuthError, googleConfigured } from "@/lib/google/auth";
 import { buildWeights, matchMeeting, type MatchCandidate } from "@/lib/google/match";
-import { extractRecapItems, looksLikeRecap } from "@/lib/mail/recap";
-import { dueFor } from "@/lib/when";
-import { backfillDueDates } from "@/lib/commitments/backfill";
+import { looksLikeRecap, ownWords } from "@/lib/mail/recap";
+import { buildNameIndex, type NameIndex } from "@/lib/commitments/owner";
+import {
+  promisedDate,
+  recapSender,
+  vetActionItems,
+  type Person,
+} from "@/lib/commitments/pipeline";
+import { sameUndertaking } from "@/lib/commitments/queue";
+import { aiConfigured, readRecap } from "@/lib/ai/summarise";
 
 export const MAIL_FROM_KEY = "google.mailFrom";
 export const DEFAULT_MAIL_FROM = "2026-08-01";
@@ -101,11 +108,24 @@ export async function syncMail(options?: {
   });
   if (domainRows.length === 0) return outcome;
 
-  // Commitments found before dates existed have none. Once per sync, not
-  // once per thread, and cheap enough to leave running.
-  await backfillDueDates();
 
   const clientByDomain = new Map(domainRows.map((d) => [d.domain, d.clientId]));
+  // Who a recap's "Marcus will build the dashboard" means. Once per sync.
+  const ours = await db.user.findMany({
+    where: { isActive: true },
+    select: { id: true, name: true, email: true },
+    orderBy: { name: "asc" },
+  });
+  const team: RecapTeam = {
+    index: buildNameIndex(ours),
+    names: ours.map((u) => u.name),
+    people: ours.map((u) => ({ id: u.id, name: u.name })),
+    byEmail: new Map(ours.map((u) => [u.email.toLowerCase(), u])),
+    // Claude takes seconds per recap. A sync runs inside one web request,
+    // so it reads what fits and leaves the rest for the next sync.
+    reads: RECAP_READS_PER_SYNC,
+    until: Date.now() + RECAP_SECONDS_PER_SYNC * 1000,
+  };
   const domains = domainRows.map((d) => d.domain);
 
   const people = await db.user.findMany({
@@ -274,7 +294,7 @@ export async function syncMail(options?: {
       }
 
       await saveMessages(rowId, messages, fromUs);
-      const found = await readRecaps(rowId);
+      const found = await readRecaps(rowId, team);
       outcome.recaps += found.recaps;
       outcome.commitments += found.items;
       outcome.threads += 1;
@@ -284,22 +304,53 @@ export async function syncMail(options?: {
   return outcome;
 }
 
+/** Who's who, and how much reading this sync has left. */
+interface RecapTeam {
+  index: NameIndex;
+  names: string[];
+  people: Person[];
+  /** Active OneSpace people by email - how a message's sender is known. */
+  byEmail: Map<string, { id: string; name: string }>;
+  reads: number;
+  until: number;
+}
+
+const RECAP_READS_PER_SYNC = 8;
+const RECAP_SECONDS_PER_SYNC = 90;
+const RECAP_READ_MS = 40_000;
+
 /**
- * Action items out of the recaps in a thread.
+ * RevOptics' action items out of the recaps in a thread.
  *
- * A recap is the most considered statement of what was agreed that exists -
- * the consultant wrote it after the call, having thought about it. Read once
- * per message, marked, and never read again: re-reading would raise the same
- * items after somebody dismissed them.
+ * Only mail we sent, and only what it says a RevOptics person will do. A
+ * recap usually lists the client's next steps - "Create the field on the Lead
+ * object" - and those are theirs to keep, not ours: Claude reads the email
+ * and keeps only what the sender, a named colleague, or "our side" took on.
+ * Pattern rules used to do this line by line and couldn't tell the two apart;
+ * on a hard-wrapped email they also cut items into fragments.
  *
- * Only mail we sent. A client's own "next steps" list is their commitment to
- * keep, and putting it on a RevOptics plate would be wrong in both
- * directions - we'd chase work that isn't ours and miss that they owe it.
+ * Each message is read once and marked. One Claude couldn't read - a timeout,
+ * a quota - is left unread and tried again on the next sync.
  */
-async function readRecaps(threadId: string): Promise<{ recaps: number; items: number }> {
+async function readRecaps(
+  threadId: string,
+  team: RecapTeam,
+): Promise<{ recaps: number; items: number }> {
   const unread = await db.mailMessage.findMany({
     where: { threadId, fromUs: true, recapReadAt: null },
-    select: { id: true, sentAt: true, body: true, thread: { select: { subject: true } } },
+    select: {
+      id: true,
+      sentAt: true,
+      body: true,
+      fromEmail: true,
+      thread: {
+        select: {
+          subject: true,
+          userId: true,
+          client: { select: { name: true } },
+        },
+      },
+    },
     orderBy: { sentAt: "asc" },
     take: 50,
   });
@@ -307,40 +358,119 @@ async function readRecaps(threadId: string): Promise<{ recaps: number; items: nu
   let recaps = 0;
   let items = 0;
 
+  const markRead = (id: string) =>
+    db.mailMessage.update({ where: { id }, data: { recapReadAt: new Date() } });
+
   for (const message of unread) {
-    const isRecap = looksLikeRecap(message.thread.subject, message.body);
-    const found = isRecap ? extractRecapItems(message.body) : [];
+    // Marked read whether or not it was a recap: a message that isn't one
+    // now never will be, and re-testing every message on every sync is work
+    // that grows with the mailbox.
+    if (!looksLikeRecap(message.thread.subject, message.body)) {
+      await markRead(message.id);
+      continue;
+    }
+
+    // Whose words these are: the person who actually sent this message,
+    // not whoever's mailbox it was found in. A colleague's recap that you
+    // were copied on is theirs. And it's read once, from the sender's own
+    // mailbox - the copy in yours is passed over, or the same email would be
+    // read twice and its items offered twice.
+    const sender = recapSender(message.fromEmail, message.thread.userId, team.byEmail);
+    if (!sender) {
+      await markRead(message.id);
+      continue;
+    }
+
+    // Not connected, or this sync's reading time is spent: left unread, so
+    // the next sync reads it. Never marked read without having been read.
+    if (!aiConfigured()) continue;
+    const left = team.until - Date.now();
+    if (team.reads <= 0 || left < 10_000) continue;
+    team.reads -= 1;
+
+    const text = ownWords(message.body).join("\n");
+    let read;
+    try {
+      read = await readRecap(
+        text,
+        {
+          subject: message.thread.subject,
+          sentAt: message.sentAt,
+          sender: sender.name,
+          client: message.thread.client?.name ?? null,
+          team: team.names,
+        },
+        Math.min(RECAP_READ_MS, left),
+      );
+    } catch (e) {
+      // An API error or a timeout: left unread, tried again next sync.
+      console.error("Couldn't read a recap with Claude:", e);
+      continue;
+    }
+    if (read.items === null) {
+      // An answer that didn't parse is tried again; one Claude declined, or
+      // cut off for length, would only come back the same way.
+      if (!read.retry) await markRead(message.id);
+      continue;
+    }
+
+    // The same checks as a call. In an email the owner has to be the sender
+    // or named in it, and anything whose owner can't be established is
+    // dropped: an email has no page of its own to hold it for someone.
+    const vetted = vetActionItems(read.items, team.index, team.people, {
+      kind: "email",
+      text,
+      presentIds: new Set([sender.id]),
+      senderId: sender.id,
+    });
 
     await db.$transaction(async (tx) => {
-      // Marked whether or not it was a recap: a message that isn't one now
-      // never will be, and re-testing every message on every sync is work
-      // that grows with the mailbox.
       await tx.mailMessage.update({
         where: { id: message.id },
         data: { recapReadAt: new Date() },
       });
-      if (found.length > 0) {
-        await tx.commitment.createMany({
-          data: found.map((item) => {
-            // Anchored to the day the recap went out, so "by Friday" in a
-            // mail from last week means that Friday.
-            const due = dueFor(item.text, message.sentAt);
-            return {
-              mailMessageId: message.id,
-              source: "RECAP_EMAIL" as const,
-              text: item.text,
-              speaker: item.owner,
-              suggestedTask: item.suggestedTask,
-              dueDate: due.date,
-              dueStated: due.stated,
-            };
-          }),
-        });
-      }
+      if (vetted.owned.length === 0) return;
+
+      // A message read again keeps what somebody already decided about it:
+      // nothing already a task or dismissed comes back, reworded or not.
+      const decided = await tx.commitment.findMany({
+        where: { mailMessageId: message.id, status: { in: ["ACCEPTED", "DISMISSED"] } },
+        select: { suggestedTask: true, text: true },
+      });
+      const fresh = vetted.owned.filter(
+        (item) =>
+          !decided.some((d) =>
+            sameUndertaking(
+              { title: item.title, quote: item.quote },
+              { title: d.suggestedTask, quote: d.text },
+            ),
+          ),
+      );
+      if (fresh.length === 0) return;
+
+      await tx.commitment.createMany({
+        data: fresh.map((item) => {
+          // Only a deadline that was actually written, read against the day
+          // the recap went out. None written, none stored.
+          const due = promisedDate(item.when, message.sentAt);
+          return {
+            mailMessageId: message.id,
+            source: "RECAP_EMAIL" as const,
+            text: item.quote,
+            speaker: item.owner,
+            suggestedTask: item.title.slice(0, 200),
+            detail: item.task,
+            ownerId: item.ownerId,
+            ownerUnrecognised: false,
+            dueDate: due,
+            dueStated: due !== null,
+          };
+        }),
+      });
+      items += fresh.length;
     });
 
-    if (isRecap) recaps += 1;
-    items += found.length;
+    recaps += 1;
   }
 
   return { recaps, items };

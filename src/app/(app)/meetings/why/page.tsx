@@ -5,6 +5,10 @@ import { dayStart, formatMedium, timeInZone, toISODate } from "@/lib/dates";
 import { orgTimezone, calendarWindowLabel } from "@/lib/google/sync";
 import { explainDay, type ExplainedEvent } from "@/lib/google/explain";
 import { PageHeader } from "@/components/ui";
+import { aiConfigured } from "@/lib/ai/summarise";
+import { zoomConfigured } from "@/lib/zoom/client";
+import { queueSince } from "@/lib/recency";
+import { callHealth } from "@/lib/zoom/retry";
 
 /**
  * Which build this app is, shown where somebody is already debugging.
@@ -58,7 +62,8 @@ export default async function WhyPage({
   const admin = await requireAdmin();
   const params = await searchParams;
 
-  const [people, zone, window, lastRead] = await Promise.all([
+  const since = await queueSince();
+  const [people, zone, window, lastRead, lastZoomRead, recentCalls] = await Promise.all([
     db.user.findMany({
       where: { isActive: true },
       select: { id: true, name: true, email: true },
@@ -70,7 +75,27 @@ export default async function WhyPage({
     // about whether the scheduled job is running, and until now it lived
     // only in a cron log nobody keeps.
     db.meeting.aggregate({ _max: { syncedAt: true } }),
+    // When a Zoom call was last read - the scheduled job's other half, and
+    // the one "You said you'd do this" depends on.
+    db.meeting.aggregate({
+      where: { zoomUuid: { not: null } },
+      _max: { transcriptReadAt: true },
+    }),
+    db.meeting.findMany({
+      where: { startsAt: { gte: since, lte: new Date() } },
+      select: {
+        userId: true,
+        zoomUuid: true,
+        startsAt: true,
+        transcriptReadAt: true,
+        transcriptFailedAt: true,
+        summarisedAt: true,
+        transcriptNote: true,
+      },
+    }),
   ]);
+  const health = callHealth(recentCalls, people).filter((h) => h.calls > 0);
+  const zoomRead = lastZoomRead._max.transcriptReadAt;
 
   const who = params.who && people.some((p) => p.id === params.who)
     ? params.who
@@ -123,6 +148,78 @@ export default async function WhyPage({
           <dd className="text-ink-900">{BUILD || "unknown"}</dd>
         </div>
       </dl>
+
+      {/* Are calls being read? What "You said you'd do this" on everyone's
+          My work depends on - so it can be checked here, without Railway. */}
+      <section className="card mb-4 p-4 text-sm">
+        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-ink-600">
+          Zoom write-ups
+        </h2>
+        <dl className="mb-4 grid gap-x-8 gap-y-2 sm:grid-cols-3">
+          <div>
+            <dt className="text-xs text-ink-500">A Zoom call was last read</dt>
+            <dd
+              className={
+                zoomRead && Date.now() - zoomRead.getTime() < 72 * 3_600_000
+                  ? "text-good-700"
+                  : "text-bad-700"
+              }
+              title="Red after three days: the scheduled job may not be running, or nobody has had a recorded call since."
+            >
+              {ago(zoomRead)}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs text-ink-500">Claude connected</dt>
+            <dd className={aiConfigured() ? "text-ink-900" : "text-bad-700"}>
+              {aiConfigured() ? "Yes" : "No - ANTHROPIC_API_KEY isn't set, so nothing is written up"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs text-ink-500">Zoom connected</dt>
+            <dd className={zoomConfigured() ? "text-ink-900" : "text-bad-700"}>
+              {zoomConfigured() ? "Yes" : "No - the ZOOM_* settings aren't set"}
+            </dd>
+          </div>
+        </dl>
+        {health.length === 0 ? (
+          <p className="text-ink-500">No client calls since {formatMedium(dayStart(since))}.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="text-ink-500">
+                <tr>
+                  <th className="py-1 pr-3 font-medium">Since {formatMedium(dayStart(since))}</th>
+                  <th className="py-1 pr-3 font-medium tnum">Client calls</th>
+                  <th className="py-1 pr-3 font-medium tnum">Written up</th>
+                  <th className="py-1 pr-3 font-medium tnum">Waiting</th>
+                  <th className="py-1 pr-3 font-medium tnum">No write-up</th>
+                  <th className="py-1 pr-3 font-medium tnum">Not on their Zoom</th>
+                  <th className="py-1 font-medium">Commonest reason for no write-up</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-ink-100">
+                {health.map((h) => (
+                  <tr key={h.id}>
+                    <td className="py-1.5 pr-3 text-ink-900">{h.name}</td>
+                    <td className="py-1.5 pr-3 tnum">{h.calls}</td>
+                    <td className="py-1.5 pr-3 tnum">{h.writtenUp}</td>
+                    <td className="py-1.5 pr-3 tnum">{h.waiting}</td>
+                    <td className={`py-1.5 pr-3 tnum ${h.noWriteUp ? "text-warn-700" : ""}`}>{h.noWriteUp}</td>
+                    <td className="py-1.5 pr-3 tnum">{h.notOnZoom}</td>
+                    <td className="py-1.5 text-ink-600">{h.topReason ?? "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="mt-2 text-ink-500">
+              &ldquo;Not on their Zoom&rdquo; means the call was hosted on someone else&apos;s Zoom (a
+              client&apos;s, a partner&apos;s, a colleague&apos;s) or wasn&apos;t a Zoom call, so there&apos;s
+              nothing of theirs to read. Calls with no write-up are retried automatically, once a day.
+            </p>
+          </div>
+        )}
+      </section>
 
       <form className="card mb-4 flex flex-wrap items-end gap-3 p-4" action="/meetings/why">
         <div>

@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { DEFAULT_SYNC_FROM, WINDOW_KEYS, labelOf, parseWindow, sinceOf } from "@/lib/window";
+import { QUEUE_DAYS_DEFAULT, QUEUE_WINDOW_KEY, queueStart } from "@/lib/commitments/queue";
 
 /**
  * How recent something has to be to still be worth doing anything about.
@@ -37,4 +38,18 @@ export async function recentSince(): Promise<Date> {
  */
 export async function recentLabel(): Promise<string> {
   return labelOf(await window());
+}
+
+/**
+ * How far back My work's "You said you'd do this" reaches.
+ *
+ * Separate from the write-up window above on purpose: how far back calls get
+ * summarised is a question about the record, this one is about what is still
+ * worth a consultant's attention this week. A fortnight by default, never
+ * before the clean start in QUEUE_FLOOR. An admin can set the AppSetting
+ * `mywork.queueWindow` to another number of days, or to a date.
+ */
+export async function queueSince(now: Date = new Date()): Promise<Date> {
+  const row = await db.appSetting.findUnique({ where: { key: QUEUE_WINDOW_KEY } });
+  return queueStart(parseWindow(row?.value, QUEUE_DAYS_DEFAULT), now);
 }

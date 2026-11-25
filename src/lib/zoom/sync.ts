@@ -14,13 +14,15 @@ import {
 } from "@/lib/zoom/client";
 import { pickTranscript, type TranscriptPick } from "@/lib/zoom/files";
 import { readFromZoomSummary } from "@/lib/zoom/zoom-summary";
+import { parseVtt } from "@/lib/zoom/commitments";
+import { buildNameIndex, type NameIndex } from "@/lib/commitments/owner";
 import {
-  extractCommitments,
-  fromNextSteps,
-  parseVtt,
-  type Commitment,
-} from "@/lib/zoom/commitments";
-import { dueFor } from "@/lib/when";
+  promisedDate,
+  promisedWhen,
+  vetActionItems,
+  type Person,
+} from "@/lib/commitments/pipeline";
+import { planReading } from "@/lib/commitments/reread";
 import {
   aiConfigured,
   readTranscript,
@@ -28,13 +30,16 @@ import {
   type AiActionItem,
   type AiRead,
 } from "@/lib/ai/summarise";
-import { backfillDueDates } from "@/lib/commitments/backfill";
 import { buildWeights, matchMeeting, type MatchCandidate } from "@/lib/google/match";
 import { orgTimezone } from "@/lib/google/sync";
-import { recentLabel, recentSince } from "@/lib/recency";
+import { queueSince, recentLabel, recentSince } from "@/lib/recency";
+import { retryWithoutWriteUp } from "@/lib/zoom/retry";
 import { DEFAULT_SYNC_FROM, WINDOW_KEYS, parseWindow, sinceOf } from "@/lib/window";
 
 export const ZOOM_FROM_KEY = WINDOW_KEYS.zoom;
+
+/** How long a reading that failed waits before the sync tries it again. */
+const RETRY_AFTER_MS = 6 * 60 * 60 * 1000;
 export const DEFAULT_ZOOM_FROM = DEFAULT_SYNC_FROM;
 
 /** How far back Zoom is read. A date, or a number of days - see lib/window. */
@@ -214,7 +219,6 @@ export async function syncZoom(options?: {
   // Commitments found before dates existed have none. Reading them out of
   // the sentence costs nothing and is the difference between the day view
   // working on the first run and every row reading "no date given".
-  await backfillDueDates();
 
   const people = await db.user.findMany({
     where: { isActive: true, ...(options?.userId ? { id: options.userId } : {}) },
@@ -228,7 +232,6 @@ export async function syncZoom(options?: {
     allUsers.map((u) => u.email.split("@")[1]?.toLowerCase()).filter(Boolean) as string[],
   );
   const named = await peopleMatcher();
-  const isOurs = named.isOurs;
 
   const clientByDomain = new Map(
     (
@@ -259,6 +262,8 @@ export async function syncZoom(options?: {
     (projectId ? clientByProject.get(projectId) : null) ?? null;
 
   const from = options?.from ?? (await zoomSyncFrom());
+  // How far back a call without a write-up is retried: My work's window.
+  const retrySince = await queueSince();
   const to = options?.to ?? new Date();
 
   let zoomUsers;
@@ -410,7 +415,18 @@ export async function syncZoom(options?: {
         row.transcriptReadAt !== null &&
         row.summary === null &&
         row.transcriptNote === null;
-      const unread = row.transcriptReadAt === null || readButEmpty;
+      // A recent call read before without a write-up, retried once a day
+      // (lib/zoom/retry) - before this, a call marked read was never looked
+      // at again, and only "Read this call now" could rescue it.
+      const retryNow = retryWithoutWriteUp(row, retrySince);
+      const unread = row.transcriptReadAt === null || readButEmpty || retryNow;
+      // A reading that failed in a way worth retrying waits a few hours.
+      // Without this a call whose answer won't parse is downloaded and sent
+      // to Claude again on every pass of the nightly loop.
+      const failedRecently =
+        row.transcriptReadAt === null &&
+        row.transcriptFailedAt !== null &&
+        Date.now() - row.transcriptFailedAt.getTime() < RETRY_AFTER_MS;
 
       if (unread && startsAt < tooOldBefore) {
         // Checked before anything is asked of Zoom, so passing over a
@@ -425,28 +441,23 @@ export async function syncZoom(options?: {
           },
         });
         outcome.tooOld += 1;
+      } else if (unread && failedRecently) {
+        outcome.retryable += 1;
       } else if (unread && deadline - Date.now() < MIN_READ_MS) {
         // Not just "is there time left" but "is there enough". Starting a
         // read with eight seconds to go spends the download and gets nothing
         // for it, and the call is left exactly as it was - the worst of both.
         outcome.transcriptsLeft += 1;
       } else if (unread) {
-        if (readButEmpty) {
-          // Whatever the earlier read offered came from the weaker rules and
-          // is about to be offered again by a better reader. Clear the ones
-          // nobody has ruled on, exactly as the per-call button does, so the
-          // queue doesn't end up holding both readings of the same call.
-          await db.commitment.deleteMany({
-            where: { meetingId: row.id, status: "PENDING" },
-          });
-        }
         const found = await readCommitments(
           zm.uuid,
-          isOurs,
+          named,
+          onTheCall(row!, named),
           {
             title: row!.title,
             when: row!.startsAt,
             client: clientOf(row!.projectId ?? row!.suggestedProjectId),
+            team: named.names,
           },
           // Never more than what is left of the request's own budget.
           Math.min(budget.callMs, Math.max(5_000, deadline - Date.now())),
@@ -462,7 +473,6 @@ export async function syncZoom(options?: {
             },
             found,
             zone,
-            named,
           );
           // The budget exists to bound how long the model spends, so only a
           // real read counts against it. A call with no recording costs one
@@ -490,58 +500,57 @@ export async function syncZoom(options?: {
  * Who on the call is one of ours, and which one.
  *
  * Transcript speaker names are Zoom display names, which rarely match a
- * OneSpace record exactly. Matching on the full name and on first-plus-last
- * catches "Brianna Dunbar-DeMike" and "Brianna DeMike" alike.
+ * OneSpace record exactly. The matching itself - full name, first-plus-last,
+ * a first name only one of ours has - lives in lib/commitments/owner, where
+ * it can be tested.
  */
 export interface People {
-  /** Is this speaker one of ours? */
-  isOurs: (speaker: string | null) => boolean;
-  /** Which of ours, when the name is one we know. */
-  idFor: (speaker: string | null) => string | null;
-}
-
-/** Every way a transcript might write one person's name. */
-function keysFor(name: string): string[] {
-  const n = name.toLowerCase().trim().replace(/\s*\(.*\)$/, "");
-  const parts = n.split(/\s+/);
-  return parts.length > 1 ? [n, `${parts[0]} ${parts[parts.length - 1]}`] : [n];
+  /** Which of ours a name refers to - id, null when ambiguous, undefined when nobody. */
+  index: NameIndex;
+  /** Everyone's full name, so Claude can name an owner exactly. */
+  names: string[];
+  /** Active OneSpace people. */
+  people: Person[];
+  /** Which of ours an email address belongs to. */
+  byEmail: Map<string, string>;
 }
 
 async function peopleMatcher(): Promise<People> {
   const users = await db.user.findMany({
     where: { isActive: true },
-    select: { id: true, name: true },
+    select: { id: true, name: true, email: true },
+    orderBy: { name: "asc" },
   });
-
-  // name -> id, except where two people share a name. A wrong assignment is
-  // worse than none, so an ambiguous name resolves to nobody.
-  const byName = new Map<string, string | null>();
-  for (const u of users) {
-    // Deduped per person first. A two-word name produces the same string
-    // twice - "yazmin ortega" is both the full name and first-plus-last -
-    // and without this the second pass sees the first and calls the person
-    // ambiguous with themselves, so every ordinary name resolved to nobody.
-    for (const key of new Set(keysFor(u.name))) {
-      byName.set(key, byName.has(key) ? null : u.id);
-    }
-  }
-
-  const lookup = (speaker: string | null): string | null | undefined => {
-    if (!speaker) return undefined;
-    for (const key of keysFor(speaker)) {
-      if (byName.has(key)) return byName.get(key);
-    }
-    return undefined;
-  };
-
   return {
-    // Anyone not recognised is treated as the other side, which is the safe
-    // way round - a client's promise wrongly landing on a RevOptics to-do
-    // list is worse than one of ours being missed.
-    isOurs: (speaker) => lookup(speaker) !== undefined,
-    idFor: (speaker) => lookup(speaker) ?? null,
+    index: buildNameIndex(users),
+    names: users.map((u) => u.name),
+    people: users.map((u) => ({ id: u.id, name: u.name })),
+    byEmail: new Map(users.map((u) => [u.email.toLowerCase(), u.id])),
   };
 }
+
+/**
+ * The OneSpace people known to have been on a call: its host, and anyone
+ * invited by email. Speakers are added once the transcript is read.
+ */
+function onTheCall(
+  meeting: { userId: string; attendees: Prisma.JsonValue },
+  people: People,
+): Set<string> {
+  const ids = new Set<string>([meeting.userId]);
+  if (Array.isArray(meeting.attendees)) {
+    for (const a of meeting.attendees) {
+      const email =
+        a && typeof a === "object" && "email" in a && typeof a.email === "string"
+          ? a.email.toLowerCase()
+          : null;
+      const id = email ? people.byEmail.get(email) : undefined;
+      if (id) ids.add(id);
+    }
+  }
+  return ids;
+}
+
 
 /**
  * Write what a read produced onto the meeting.
@@ -559,12 +568,7 @@ async function storeRead(
   },
   found: Read,
   zone: string,
-  people: People,
 ): Promise<void> {
-  // Where a task would go, if one is made. A call nobody has filed has
-  // nowhere to put a task, so its action items stay suggestions.
-  const projectId = meeting.projectId ?? meeting.suggestedProjectId ?? null;
-
   await db.$transaction(async (tx) => {
     await tx.meeting.update({
       where: { id: meeting.id },
@@ -576,6 +580,9 @@ async function storeRead(
         // the thing blocking it had been fixed.
         transcriptReadAt: found.retry ? undefined : new Date(),
         transcriptNote: found.note ?? null,
+        // Set while a failure is waiting to be tried again, so the sync
+        // spaces the attempts out; cleared by any reading that settles it.
+        transcriptFailedAt: found.retry ? new Date() : null,
         // The summary is what replaces the transcript. It is the only
         // durable record of the call OneSpace keeps.
         summary: found.ai ? renderSummary(found.ai.read) : undefined,
@@ -601,94 +608,60 @@ async function storeRead(
       },
     });
 
-    if (found.commitments.length === 0) return;
+    // A reading that didn't happen - failed, nothing to read, or only Zoom's
+    // own summary (which never yields items) - changes no items. Clearing
+    // them first, as this used to, lost every waiting item on the call
+    // whenever a re-read then failed.
+    if (found.retry || !found.ai || found.fromSummary) return;
 
-    // What somebody has already ruled on for this call.
-    //
-    // A re-read clears the pending suggestions and nothing else, so anything
-    // accepted or dismissed is a decision that still stands. Reading the
-    // call again must not make the same task twice, must not re-offer as a
-    // suggestion something that is already a task, and must not turn a
-    // dismissal back into work - "not a task" is an answer, and a re-read is
-    // not a licence to overrule it.
-    const decided = new Set(
-      (
-        await tx.commitment.findMany({
-          where: {
-            meetingId: meeting.id,
-            status: { in: ["ACCEPTED", "DISMISSED"] },
-          },
-          select: { suggestedTask: true },
-        })
-      ).map((c) => c.suggestedTask.trim().toLowerCase()),
+    // Merge with what's stored: only the host's own and unidentified items
+    // are replaced; a colleague's waiting commitment and every decision stay
+    // as they are, and nothing is offered twice. See lib/commitments/reread.
+    const stored = await tx.commitment.findMany({
+      where: { meetingId: meeting.id },
+      select: { id: true, ownerId: true, status: true, suggestedTask: true, text: true },
+    });
+    const plan = planReading(
+      stored.map((s) => ({ ...s, title: s.suggestedTask, quote: s.text })),
+      found.commitments,
+      meeting.userId,
     );
+    if (plan.remove.length > 0) {
+      await tx.commitment.deleteMany({
+        where: { id: { in: plan.remove }, status: "PENDING" },
+      });
+    }
 
     // "by Friday" is read against the day of the call, not against today: a
     // promise made last Tuesday means that Friday, and reading it now would
     // push the deadline out every sync.
     const said = dayInZone(meeting.startsAt, zone);
-    const saidOn = meeting.startsAt.toISOString().slice(0, 10);
 
-    for (const c of found.commitments) {
-      // Where a reader isolated the timing phrase, parse that - "by Friday"
-      // alone cannot be misread, while the sentence it sat in carries other
-      // numbers and dates that can.
-      const due = dueFor(c.when ?? c.text, said);
-      const source = found.ai
-        ? ("AI_SUMMARY" as const)
-        : found.fromSummary
-          ? ("ZOOM_SUMMARY" as const)
-          : ("TRANSCRIPT" as const);
+    for (const c of plan.add) {
+      // Only a deadline that was actually given - Claude's isolated timing
+      // phrase, read against the day of the call. No phrase, no date: a
+      // calculated one would look on My work like a promise to the customer.
+      const due = promisedDate(c.when ?? null, said);
 
-      const base = {
-        meetingId: meeting.id,
-        source,
-        text: c.text,
-        speaker: c.speaker,
-        atSeconds: c.atSeconds,
-        suggestedTask: c.suggestedTask,
-        dueDate: due.date,
-        dueStated: due.stated,
-        fromSummary: found.fromSummary,
-      };
-
-      // Straight into somebody's tasks, where there is no doubt about who
-      // owes it or which project it belongs to.
-      //
-      // Only from Claude's reading: the old pattern rules produce too much
-      // rubbish to put on a real to-do list unasked. Named owner if the
-      // transcript named one of ours, otherwise whoever's call it is - the
-      // same person the manual button would have assigned it to.
-      const key = c.suggestedTask.trim().toLowerCase();
-      if (decided.has(key)) continue;
-
-      const assigneeId = people.idFor(c.speaker) ?? meeting.userId;
-      const autoTask =
-        // Truthy, not "not null": the rules path leaves ai undefined rather
-        // than null, and undefined !== null let rule-scraped sentences onto
-        // real to-do lists.
-        Boolean(found.ai) && projectId !== null;
-
-      if (!autoTask) {
-        await tx.commitment.create({ data: base });
-        continue;
-      }
-
-      const task = await tx.task.create({
+      // Never a task on its own. Every item waits on My work for the person
+      // who undertook it to say yes or no: a suggestion costs a click, a
+      // wrong task on a project plan costs trust in the whole feature.
+      await tx.commitment.create({
         data: {
-          projectId,
-          name: c.suggestedTask.slice(0, 200),
-          assigneeId,
-          dueDate: due.date,
-          // The sentence and where it was said, so anyone wondering where
-          // this came from can check rather than guess.
-          description: `From the call on ${saidOn}: "${c.text}"`,
+          meetingId: meeting.id,
+          source: "AI_SUMMARY",
+          text: c.text,
+          speaker: c.speaker,
+          atSeconds: c.atSeconds,
+          suggestedTask: c.suggestedTask.slice(0, 200),
+          detail: c.detail ?? null,
+          ownerId: c.ownerId,
+          ownerUnrecognised: c.ownerUnrecognised,
+          dueDate: due,
+          dueStated: due !== null,
+          fromSummary: false,
         },
       });
-      await tx.commitment.create({
-        data: { ...base, status: "ACCEPTED", taskId: task.id },
-      });
-      decided.add(key);
     }
   });
 }
@@ -717,6 +690,7 @@ export async function readMeetingNow(meetingId: string): Promise<string> {
       zoomUuid: true,
       projectId: true,
       suggestedProjectId: true,
+      attendees: true,
       project: { select: { client: { select: { name: true } } } },
     },
   });
@@ -730,19 +704,16 @@ export async function readMeetingNow(meetingId: string): Promise<string> {
   summaryNote = null;
   const zone = await orgTimezone();
   const people = await peopleMatcher();
-  const isOurs = people.isOurs;
-
-  await db.commitment.deleteMany({
-    where: { meetingId: meeting.id, status: "PENDING" },
-  });
 
   const found = await readCommitments(
     meeting.zoomUuid,
-    isOurs,
+    people,
+    onTheCall(meeting, people),
     {
       title: meeting.title,
       when: meeting.startsAt,
       client: meeting.project?.client?.name ?? null,
+      team: people.names,
     },
     BUDGET.interactive.callMs,
   );
@@ -757,16 +728,12 @@ export async function readMeetingNow(meetingId: string): Promise<string> {
     },
     found,
     zone,
-    people,
   );
 
   if (found.ai) {
     return `Read by Claude. ${found.ai.read.sections.length} sections, ${found.commitments.length} thing${found.commitments.length === 1 ? "" : "s"} you said you'd do.`;
   }
   if (found.note) return found.note;
-  if (found.commitments.length > 0) {
-    return `No write-up, but the old pattern rules found ${found.commitments.length} commitment${found.commitments.length === 1 ? "" : "s"}.`;
-  }
   return summaryNote ?? "Nothing to read on this call.";
 }
 
@@ -871,8 +838,65 @@ async function participantEmails(uuid: string): Promise<string[]> {
   }
 }
 
-/** A commitment, plus the timing phrase when a reader pulled one out. */
-type Found = Commitment & { when?: string | null };
+/**
+ * Claude's action items for one call, through the same checks as every other
+ * source (lib/commitments/pipeline): RevOptics', one named owner who was on
+ * the call or is named in it, and a quote that is really in the transcript.
+ * Whose it is but can't be established is kept for the call's own page, and
+ * never put on a personal list.
+ */
+function callItems(
+  items: AiActionItem[],
+  cues: ReturnType<typeof parseVtt>,
+  text: string,
+  people: People,
+  present: Set<string>,
+): Found[] {
+  const there = new Set(present);
+  for (const cue of cues) {
+    const id = people.index.match(cue.speaker);
+    if (id) there.add(id);
+  }
+  const vetted = vetActionItems(items, people.index, people.people, {
+    kind: "call",
+    text,
+    presentIds: there,
+  });
+  const found = (i: AiActionItem, ownerId: string | null): Found => ({
+    text: i.quote,
+    speaker: i.owner,
+    atSeconds: 0,
+    suggestedTask: i.title,
+    when: i.when,
+    detail: i.task,
+    ownerId,
+    ownerUnrecognised: ownerId === null,
+  });
+  return [
+    ...vetted.owned.map((i) => found(i, i.ownerId)),
+    ...vetted.unidentified.map(({ item }) =>
+      found({ ...item, when: promisedWhen(item.when, item.quote) }, null),
+    ),
+  ];
+}
+
+/** An action item ready to store: what was said, and who undertook it. */
+interface Found {
+  /** The sentence as said. */
+  text: string;
+  /** The owner's name as Claude gave it. */
+  speaker: string | null;
+  atSeconds: number;
+  /** The short title. */
+  suggestedTask: string;
+  /** The timing phrase, when the reader pulled one out. */
+  when?: string | null;
+  /** The full instruction behind the title. */
+  detail?: string | null;
+  /** Null, with ownerUnrecognised, when whose it is couldn't be established. */
+  ownerId: string | null;
+  ownerUnrecognised: boolean;
+}
 
 interface Read {
   recordingUrl: string | null;
@@ -929,8 +953,10 @@ const note = (reason: string) => {
  */
 async function readCommitments(
   uuid: string,
-  isOurs: (speaker: string | null) => boolean,
-  context: { title: string; when: Date; client: string | null },
+  people: People,
+  /** OneSpace people known to be on the call: host and invitees. */
+  present: Set<string>,
+  context: { title: string; when: Date; client: string | null; team?: string[] },
   /** How long the model may take on this one call. */
   timeoutMs: number,
 ): Promise<Read> {
@@ -991,8 +1017,10 @@ async function readCommitments(
     const cues = parseVtt(file.text);
 
     let whyNoWriteUp: string | null = null;
+    let attemptRetry = false;
     try {
-      const attempt = await readTranscript(plainText(cues), context, timeoutMs);
+      const text = plainText(cues);
+      const attempt = await readTranscript(text, context, timeoutMs);
       if (attempt.read) {
         const read = attempt.read;
         return {
@@ -1002,18 +1030,11 @@ async function readCommitments(
           retry: false,
           didRead: true,
           ai: { read, model: read.model, items: read.actionItems },
-          // Only ours become suggested tasks. The client's own undertakings
-          // are in the summary, where they belong - they are worth knowing
-          // and they are not RevOptics work.
-          commitments: read.actionItems
-            .filter((i) => i.ours)
-            .map((i) => ({
-              text: i.quote || i.task,
-              speaker: i.owner,
-              atSeconds: 0,
-              suggestedTask: i.task,
-              when: i.when,
-            })),
+          // Only ours, and only with a named owner. The client's own
+          // undertakings are in the summary, where they belong - worth
+          // knowing, not RevOptics work. An owner Claude named but OneSpace
+          // can't place goes to the host, marked so they can hand it on.
+          commitments: callItems(read.actionItems, cues, text, people, present),
         };
       }
       // No write-up, and now we know why rather than falling through in
@@ -1021,6 +1042,7 @@ async function readCommitments(
       // transcript read fine, the old rules ran, and the meeting showed
       // the same empty panel as a call that was never recorded.
       whyNoWriteUp = attempt.reason;
+      attemptRetry = attempt.retry;
       if (whyNoWriteUp) note(whyNoWriteUp);
     } catch (e) {
       // A quota or key problem should be visible, not quietly degrade every
@@ -1032,17 +1054,18 @@ async function readCommitments(
       return { ...nothing(message, true), recordingUrl };
     }
 
-    // The old pattern rules. A poor substitute, but they are what there is.
+    // No write-up, so no action items - never guessed ones from pattern
+    // rules. Whether it's tried again depends on why: Claude not connected
+    // yet, or an answer that didn't parse, comes round again on a later sync
+    // (not straight away - see transcriptFailedAt); a transcript too short to
+    // read, too long, or declined would only give the same answer.
     return {
       recordingUrl,
-      commitments: extractCommitments(cues, isOurs),
+      commitments: [],
       fromSummary: false,
       note: whyNoWriteUp,
-      // Rule-scraped is second best, but it is read. Re-reading on every
-      // sync would raise every dismissed commitment again - the way back is
-      // Re-read transcripts, which clears the pending ones first.
-      retry: false,
-      didRead: true,
+      retry: attemptRetry,
+      didRead: !attemptRetry,
     };
   }
 
@@ -1054,9 +1077,10 @@ async function readCommitments(
     if (zoomWrite) {
       return {
         recordingUrl,
-        commitments: summary?.next_steps?.length
-          ? fromNextSteps(summary.next_steps)
-          : [],
+        // Zoom's next steps are kept in its write-up and never become
+        // action items: they mix the client's to-dos in with ours and name
+        // nobody, so there's no telling whose they are.
+        commitments: [],
         fromSummary: true,
         // Zoom's summary is a write-up. It used to be mined for next steps
         // and thrown away, which left "no write-up" on a call Zoom had

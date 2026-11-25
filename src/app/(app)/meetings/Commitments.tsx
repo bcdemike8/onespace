@@ -15,6 +15,8 @@ export interface CommitmentRow {
   atSeconds: number | null;
   suggestedTask: string;
   fromSummary: boolean;
+  /** Whose it is couldn't be established; it's on nobody's My work. */
+  ownerUnrecognised: boolean;
 }
 
 const stamp = (s: number) =>
@@ -45,7 +47,7 @@ export function Commitments({
           Said on the call
         </h4>
         <span className="text-xs text-ink-500">
-          {items.length} thing{items.length === 1 ? "" : "s"} you said you&apos;d do
+          {items.length} commitment{items.length === 1 ? "" : "s"} from this call
         </span>
         {recordingUrl ? (
           <a
@@ -112,6 +114,14 @@ function CommitmentItem({
             {item.atSeconds !== null ? <span>at {stamp(item.atSeconds)}</span> : null}
           </>
         )}
+        {item.ownerUnrecognised ? (
+          <span
+            className="text-warn-700"
+            title="It isn't on anyone's My work. Making it a task puts it on the host's."
+          >
+            ⚠ owner not identified
+          </span>
+        ) : null}
         <button
           type="button"
           onClick={() => setShowSaid((v) => !v)}
