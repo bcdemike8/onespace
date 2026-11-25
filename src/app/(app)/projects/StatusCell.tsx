@@ -40,6 +40,7 @@ export function StatusCell({
   health,
   note,
   subtitle,
+  subtitleTone,
   today,
 }: {
   projectId: string;
@@ -48,6 +49,8 @@ export function StatusCell({
   note: string | null;
   /** The "as of …" line under the chip, already formatted by the page. */
   subtitle: string;
+  /** Colours the subtitle when it's an alert, e.g. an update that's owed. */
+  subtitleTone?: "warn" | "bad";
   today: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -63,7 +66,17 @@ export function StatusCell({
         className="-mx-1 rounded px-1 py-0.5 text-left transition-colors hover:bg-ink-100"
       >
         <HealthChip health={health} />
-        <div className="mt-1 text-xs text-ink-500">{subtitle}</div>
+        <div
+          className={`mt-1 text-xs ${
+            subtitleTone === "bad"
+              ? "font-medium text-bad-700"
+              : subtitleTone === "warn"
+                ? "font-medium text-warn-700"
+                : "text-ink-500"
+          }`}
+        >
+          {subtitle}
+        </div>
       </button>
 
       {open ? (
