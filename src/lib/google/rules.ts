@@ -194,3 +194,55 @@ export function externalDomainsIn(
     ),
   ];
 }
+
+/**
+ * Where internal time goes, when there is an obvious answer.
+ *
+ * A meeting with no client in it has no client project to point at, and
+ * asking someone to find the right one in a list of thirty every Monday is
+ * how a timesheet stops getting filled in. Most teams keep exactly one
+ * project with no client against it — RevOptics' own — and when that is
+ * true it is unambiguously the answer. When it isn't true, guessing would
+ * be worse than asking, so this returns null and the person picks.
+ */
+export function soleInternalProject<
+  T extends { id: string; name: string; clientId: string | null },
+>(projects: T[]): T | null {
+  const internal = projects.filter((p) => p.clientId === null);
+  return internal.length === 1 ? internal[0] : null;
+}
+
+/**
+ * Why a meeting with no client in it is on your list anyway, and what to do
+ * with it. Shown on the card, so it has to read as an instruction rather
+ * than an apology.
+ */
+export function internalReason(
+  externalDomains: string[],
+  suggestedProjectName: string | null,
+): string {
+  const head =
+    externalDomains.length === 0
+      ? "Nobody outside RevOptics was in the invite, so this is internal time."
+      : `No client has ${externalDomains.join(" or ")} as an email domain, so there's nobody to bill it to yet.`;
+  const tail = suggestedProjectName
+    ? ` Suggested against ${suggestedProjectName} — the only project with no client on it.`
+    : " Pick where the hours belong.";
+  // Deliberately a statement about the default, not about a checkbox: on a
+  // non-billable project the card shows no checkbox at all, and promising
+  // one that isn't there is worse than saying nothing.
+  return `${head}${tail} Billable is off to start with.`;
+}
+
+/**
+ * Whose calendar keeps the meetings that have no client in them.
+ *
+ * Everyone who fills in a timesheet does: they're accounting for every hour
+ * of their week, and an internal call is an hour they spent. Admins don't —
+ * their calendar is mostly internal and they aren't billing from it, so for
+ * them those meetings stay off the list and go on the "why isn't my meeting
+ * here" report instead, which is where an admin actually wants them.
+ */
+export function keepsClientlessMeetings(role: string): boolean {
+  return role !== "ADMIN";
+}

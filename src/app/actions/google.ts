@@ -131,9 +131,14 @@ export async function acceptMeetingAction(
     return { error: e instanceof Error ? e.message : "That period is closed." };
   }
 
-  const billableOverride =
-    formData.get("billable") === null ? undefined : parsed.data.billable === "on";
-  const rates = await resolveRates(meeting.userId, parsed.data.projectId, billableOverride);
+  // An unticked checkbox submits nothing at all, so its absence IS the
+  // answer rather than the absence of one. Reading it as "no opinion" and
+  // falling back to the project default meant unticking Billable did
+  // nothing: every accepted meeting was logged billable whatever the box
+  // said. The card always renders the box unless the project is
+  // non-billable, and there resolveRates forces false anyway.
+  const billable = formData.get("billable") === "on";
+  const rates = await resolveRates(meeting.userId, parsed.data.projectId, billable);
 
   // One transaction: an entry without its link would be re-suggested on the
   // next sync and booked twice.

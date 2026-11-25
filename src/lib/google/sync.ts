@@ -9,7 +9,13 @@ import {
   sinceOf,
 } from "@/lib/window";
 import { asMeeting, listRawEvents, notAMeeting } from "@/lib/google/calendar";
-import { externalDomainsIn, internalDomains } from "@/lib/google/rules";
+import {
+  externalDomainsIn,
+  internalDomains,
+  internalReason,
+  keepsClientlessMeetings,
+  soleInternalProject,
+} from "@/lib/google/rules";
 import { GoogleApiError, GoogleAuthError, googleConfigured } from "@/lib/google/auth";
 import {
   buildWeights,
@@ -263,10 +269,19 @@ export async function syncCalendars(options?: {
 
   const people = await db.user.findMany({
     where: { isActive: true, ...(options?.userId ? { id: options.userId } : {}) },
-    select: { id: true, name: true, email: true },
+    select: { id: true, name: true, email: true, role: true },
     orderBy: { name: "asc" },
   });
   if (people.length === 0) return outcome;
+
+  // Where a meeting with no client in it is suggested, when there's an
+  // obvious answer. Read once: it's the same for everybody on the run.
+  const internalProject = soleInternalProject(
+    await db.project.findMany({
+      where: { status: { in: ["ACTIVE", "ON_HOLD"] } },
+      select: { id: true, name: true, clientId: true },
+    }),
+  );
 
   const ctx = await matchContext();
   const {
@@ -347,33 +362,11 @@ export async function syncCalendars(options?: {
 
       const externalDomains = externalDomainsIn(m.attendees, ourDomains);
 
-      // The rule: no client in the room, no suggestion. Anything already
-      // stored for it is cleared out, so mapping a domain later and
-      // re-syncing brings its meetings straight back - nothing here is a
-      // decision you're stuck with.
-      if (!externalDomains.some((d) => clientByDomain.has(d))) {
-        await db.meeting.deleteMany({
-          where: { userId: person.id, googleId: m.googleId, status: "PENDING" },
-        });
-        outcome.skipped += 1;
+      const noClient = !externalDomains.some((d) => clientByDomain.has(d));
 
-        // By name, always. The loop below files it under a domain, and a
-        // meeting with no external guests has no domain to be filed under —
-        // which is how one used to vanish leaving nothing behind at all.
-        skipped.push({
-          userId: person.id,
-          googleId: m.googleId,
-          title: m.title,
-          startsAt: m.startsAt,
-          code: externalDomains.length === 0 ? "all-internal" : "no-client",
-          reason:
-            externalDomains.length === 0
-              ? "Nobody outside RevOptics was in the invite, so there is no client to bill it to."
-              : `No client has ${externalDomains.join(" or ")} as an email domain.`,
-          guests: m.attendees.map((a) => a.email),
-          externalDomains,
-        });
-
+      // Either way the admin wants to know which outside domains keep
+      // turning up: that list is how a client gets mapped in the first place.
+      if (noClient) {
         for (const d of externalDomains) {
           if (quiet.has(d) && !archivedByDomain.has(d)) continue;
           const seen = unrecognised.get(d) ?? {
@@ -390,10 +383,52 @@ export async function syncCalendars(options?: {
           seen.people.add(person.name);
           unrecognised.set(d, seen);
         }
+      }
+
+      // An admin's calendar is mostly internal and they aren't filling in a
+      // timesheet from it, so for them the old rule holds: no client in the
+      // room, no suggestion, and a line on the "why isn't my meeting here"
+      // list saying so. Anything already stored is cleared out, so mapping a
+      // domain later and re-syncing brings its meetings straight back.
+      //
+      // Everybody else keeps them. They track every hour, and an internal
+      // meeting is still an hour — it just isn't a billable one.
+      if (noClient && !keepsClientlessMeetings(person.role)) {
+        await db.meeting.deleteMany({
+          where: { userId: person.id, googleId: m.googleId, status: "PENDING" },
+        });
+        outcome.skipped += 1;
+
+        // By name, always. A meeting with no external guests has no domain
+        // to be filed under — which is how one used to vanish leaving
+        // nothing behind at all.
+        skipped.push({
+          userId: person.id,
+          googleId: m.googleId,
+          title: m.title,
+          startsAt: m.startsAt,
+          code: externalDomains.length === 0 ? "all-internal" : "no-client",
+          reason:
+            externalDomains.length === 0
+              ? "Nobody outside RevOptics was in the invite, so there is no client to bill it to."
+              : `No client has ${externalDomains.join(" or ")} as an email domain.`,
+          guests: m.attendees.map((a) => a.email),
+          externalDomains,
+        });
         continue;
       }
 
-      const match = matchMeeting(
+      const match = noClient
+        ? {
+            clientId: null,
+            projectId: internalProject?.id ?? null,
+            taskId: null,
+            reason: internalReason(externalDomains, internalProject?.name ?? null),
+            // Never confident: internal time is the person's call, not a
+            // match, and the card says "Internal" rather than "Suggested".
+            confidence: 0,
+          }
+        : matchMeeting(
         {
           title: m.title,
           externalDomains,
@@ -408,7 +443,7 @@ export async function syncCalendars(options?: {
       // was never created. Saying which client it is turns a dead end into
       // one obvious next step.
       let reason = match.reason;
-      if (!match.projectId) {
+      if (!noClient && !match.projectId) {
         const named = [
           ...new Set(
             externalDomains
@@ -421,7 +456,10 @@ export async function syncCalendars(options?: {
         }
       }
 
-      if (match.projectId) outcome.matched += 1;
+      // "Matched" means matched to a client. Pointing internal time at the
+      // internal project isn't a match, and counting it as one would make
+      // the sync's own report flatter than the truth.
+      if (!noClient && match.projectId) outcome.matched += 1;
 
       const existing = await db.meeting.findUnique({
         where: { userId_googleId: { userId: person.id, googleId: m.googleId } },
@@ -449,6 +487,7 @@ export async function syncCalendars(options?: {
         // directly; the shape is GoogleAttendee[] and read back as such.
         attendees: m.attendees as unknown as Prisma.InputJsonValue,
         externalDomains,
+        noClient,
         suggestedClientId: match.clientId,
         suggestedProjectId: match.projectId,
         projectId: match.projectId,

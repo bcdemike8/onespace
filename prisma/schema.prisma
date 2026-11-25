@@ -1325,6 +1325,15 @@ model Meeting {
   /// matcher works from, and what makes an internal meeting recognisable.
   externalDomains String[]
 
+  /// Nobody from a client was in the room — either no outside guests at all,
+  /// or outside guests on domains no client claims.
+  ///
+  /// Admins' calendars drop these; everyone else's keeps them, because the
+  /// team logs every hour and internal time is still time. It is the reason
+  /// the Billable box starts unticked: an hour nobody is paying for should
+  /// take a deliberate click to become one that someone is.
+  noClient Boolean @default(false)
+
   status SuggestionStatus @default(PENDING)
 
   /// What the matcher proposed, and in one line why. The reason is shown to

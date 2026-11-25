@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { asMeeting, notAMeeting, type RawEvent } from "@/lib/google/rules";
+import {
+  asMeeting,
+  internalReason,
+  keepsClientlessMeetings,
+  notAMeeting,
+  soleInternalProject,
+  type RawEvent,
+} from "@/lib/google/rules";
 
 /**
  * The two meetings Brianna sent, as Google returns them.
@@ -208,4 +215,31 @@ test("external domains are lowercased, de-duplicated and free of our own", () =>
 test("case in the client mapping doesn't matter", () => {
   const ours = internalDomains(["x@Sikich.com"], ["SIKICH.COM"]);
   assert.equal(ours.has("sikich.com"), false);
+});
+
+test("the one project with no client is where internal time goes", () => {
+  const p = (id: string, clientId: string | null) => ({ id, name: id, clientId });
+  assert.equal(soleInternalProject([p("RevOptics", null), p("D2L", "c1")])?.id, "RevOptics");
+  // Two of them is not an answer, it's a guess.
+  assert.equal(soleInternalProject([p("RevOptics", null), p("Marketing", null)]), null);
+  assert.equal(soleInternalProject([p("D2L", "c1")]), null);
+  assert.equal(soleInternalProject([]), null);
+});
+
+test("an internal meeting says why it's here and what it costs", () => {
+  const all = internalReason([], "RevOptics");
+  assert.match(all, /Nobody outside RevOptics was in the invite/);
+  assert.match(all, /Suggested against RevOptics/);
+  assert.match(all, /Billable is off to start with/);
+
+  // Outside guests, but on a domain no client claims.
+  const unknown = internalReason(["acme.com", "vendor.io"], null);
+  assert.match(unknown, /acme\.com or vendor\.io/);
+  assert.match(unknown, /Pick where the hours belong/);
+  assert.ok(!unknown.includes("Suggested against"));
+});
+
+test("everyone but an admin keeps the meetings with no client in them", () => {
+  assert.equal(keepsClientlessMeetings("MEMBER"), true);
+  assert.equal(keepsClientlessMeetings("ADMIN"), false);
 });

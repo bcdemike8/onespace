@@ -70,6 +70,7 @@ export default async function MeetingsPage({
         minutes: true,
         attendees: true,
         externalDomains: true,
+        noClient: true,
         suggestedProjectId: true,
         taskId: true,
         matchReason: true,
@@ -203,6 +204,7 @@ export default async function MeetingsPage({
         durationValue: durationValue(m.actualMinutes ?? m.minutes),
         attendees,
         externalDomains: m.externalDomains,
+        noClient: m.noClient,
         suggestedProjectId: m.suggestedProjectId,
         suggestedTaskId: m.taskId,
         matchReason: m.matchReason,
@@ -223,6 +225,10 @@ export default async function MeetingsPage({
     });
 
   const upcoming = pending.length - rows.length;
+  // Everyone but an admin now gets their internal meetings too, so the count
+  // jumped. Saying how many have no client behind them makes that legible
+  // rather than alarming — and they're the ones nobody is paying for.
+  const noClient = rows.filter((r) => r.noClient).length;
   // The one number that answers "is the Claude summarising working at all",
   // without opening seventy-five meetings to find out.
   const written = rows.filter((r) => r.summary).length;
@@ -249,7 +255,9 @@ export default async function MeetingsPage({
         subtitle={
           rows.length === 0
             ? "Your calendar, waiting to become time entries."
-            : `${rows.length} meeting${rows.length === 1 ? "" : "s"} to deal with · ${written} with a write-up.`
+            : `${rows.length} meeting${rows.length === 1 ? "" : "s"} to deal with${
+                noClient > 0 ? ` · ${noClient} with no client` : ""
+              } · ${written} with a write-up.`
         }
         actions={<SyncButton admin={admin} zoom={zoomConfigured()} />}
       />

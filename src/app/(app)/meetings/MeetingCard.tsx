@@ -27,6 +27,8 @@ export interface MeetingRow {
   durationValue: string;
   attendees: { email: string; name: string | null }[];
   externalDomains: string[];
+  /** Nobody from a client was in the room, so nothing here is billable yet. */
+  noClient: boolean;
   suggestedProjectId: string | null;
   suggestedTaskId: string | null;
   matchReason: string | null;
@@ -71,6 +73,7 @@ export function MeetingCard({
   const tasks = project?.tasks ?? [];
   const nonBillable = project?.billingType === "NON_BILLABLE";
   const sure = meeting.confidence >= CONFIDENT;
+  const internal = meeting.noClient && meeting.externalDomains.length === 0;
 
   // Changing project invalidates whatever task was picked under the old one.
   const chooseProject = (id: string) => {
@@ -134,10 +137,25 @@ export function MeetingCard({
 
         <span
           className={`chip shrink-0 ${
-            sure ? "bg-good-50 text-good-700" : "bg-warn-50 text-warn-700"
+            meeting.noClient
+              ? "bg-ink-100 text-ink-600"
+              : sure
+                ? "bg-good-50 text-good-700"
+                : "bg-warn-50 text-warn-700"
           }`}
+          title={
+            meeting.noClient
+              ? "No client was in the invite, so this starts as unbillable time"
+              : undefined
+          }
         >
-          {sure ? "Suggested" : "Needs a look"}
+          {meeting.noClient
+            ? internal
+              ? "Internal"
+              : "No client"
+            : sure
+              ? "Suggested"
+              : "Needs a look"}
         </span>
       </div>
 
@@ -236,7 +254,12 @@ export function MeetingCard({
 
             {!nonBillable ? (
               <label className="ml-1 inline-flex items-center gap-1.5 text-xs text-ink-600">
-                <input type="checkbox" name="billable" defaultChecked className="rounded" />
+                <input
+                  type="checkbox"
+                  name="billable"
+                  defaultChecked={!meeting.noClient}
+                  className="rounded"
+                />
                 Billable
               </label>
             ) : (

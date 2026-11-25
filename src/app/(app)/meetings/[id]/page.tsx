@@ -147,6 +147,7 @@ export default async function MeetingPage({
     durationValue: durationValue(meeting.actualMinutes ?? meeting.minutes),
     attendees: attendees.map((a) => ({ email: a.email ?? "", name: a.name ?? null })),
     externalDomains: meeting.externalDomains,
+    noClient: meeting.noClient,
     suggestedProjectId: meeting.suggestedProjectId,
     suggestedTaskId: meeting.taskId,
     matchReason: meeting.matchReason,
