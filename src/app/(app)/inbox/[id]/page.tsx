@@ -6,6 +6,7 @@ import { formatMedium, timeInZone } from "@/lib/dates";
 import { orgTimezone } from "@/lib/google/sync";
 import { reopenMailAction } from "@/app/actions/mail";
 import { SubmitButton } from "@/components/SubmitButton";
+import { CreateTaskFromMail } from "@/components/CreateTaskFromMail";
 import { FileToProject, type ProjectOption } from "./FileToProject";
 import { ReplyBox } from "./ReplyBox";
 
@@ -32,7 +33,7 @@ export default async function ThreadPage({
   if (!thread) notFound();
   if (thread.userId !== user.id && !isAdmin(user)) notFound();
 
-  const [zone, projects] = await Promise.all([
+  const [zone, projects, people] = await Promise.all([
     orgTimezone(),
     db.project.findMany({
       where: { status: { in: ["ACTIVE", "ON_HOLD"] } },
@@ -47,6 +48,11 @@ export default async function ThreadPage({
           select: { id: true, name: true },
         },
       },
+    }),
+    db.user.findMany({
+      where: { isActive: true },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
     }),
   ]);
 
@@ -94,6 +100,9 @@ export default async function ThreadPage({
       </div>
 
       <FileToProject
+        // Remounted when the filing changes underneath it - a task made from
+        // this email links the thread to it, and the picker should show that.
+        key={`${thread.projectId ?? ""}:${thread.taskId ?? ""}`}
         threadId={thread.id}
         projects={options}
         projectId={thread.projectId}
@@ -148,6 +157,17 @@ export default async function ThreadPage({
           address.
         </p>
       )}
+
+      <div className="card mt-4 p-4">
+        <h2 className="mb-2 text-sm font-semibold text-ink-800">Needs doing?</h2>
+        <CreateTaskFromMail
+          threadId={thread.id}
+          subject={thread.subject}
+          project={thread.project}
+          people={people}
+          currentUserId={user.id}
+        />
+      </div>
     </div>
   );
 }

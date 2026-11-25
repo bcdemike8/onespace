@@ -236,7 +236,7 @@ export default async function MyWorkPage() {
           lastFrom: true,
           lastMessageAt: true,
           client: { select: { name: true } },
-          project: { select: { name: true } },
+          project: { select: { id: true, name: true } },
           // The client's newest message, so it can be read without opening
           // the thread.
           messages: {
@@ -276,7 +276,17 @@ export default async function MyWorkPage() {
       }),
     ]);
 
-  const zone = await orgTimezone();
+  const [zone, people] = await Promise.all([
+    orgTimezone(),
+    // For the assignee picker on "Create task" in the email preview.
+    awaitingReply.length > 0
+      ? db.user.findMany({
+          where: { isActive: true },
+          orderBy: { name: "asc" },
+          select: { id: true, name: true },
+        })
+      : Promise.resolve([]),
+  ]);
   const awaitingThreads: AwaitingThread[] = awaitingReply.map((thread) => {
     const last = thread.messages[0];
     return {
@@ -284,7 +294,7 @@ export default async function MyWorkPage() {
       subject: thread.subject,
       from: thread.lastFromName || thread.lastFrom,
       clientName: thread.client?.name ?? null,
-      projectName: thread.project?.name ?? null,
+      project: thread.project,
       waitingDays: Math.floor(
         (now.getTime() - dayStart(thread.lastMessageAt).getTime()) / DAY_MS,
       ),
@@ -442,7 +452,7 @@ export default async function MyWorkPage() {
         <div className="lg:col-span-2">
           <DayQueue groups={queueGroups} projects={queueProjects} />
 
-          <AwaitingReply threads={awaitingThreads} />
+          <AwaitingReply threads={awaitingThreads} people={people} currentUserId={user.id} />
 
           {meetingsToLog > 0 ? (
             <p className="mb-6 rounded-lg border border-ink-200 bg-ink-50 px-4 py-2.5 text-sm text-ink-600">

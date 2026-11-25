@@ -5,6 +5,7 @@ import { useActionState, useState } from "react";
 import { clearAwaitingMailAction, markMailDoneAction } from "@/app/actions/mail";
 import { SubmitButton } from "@/components/SubmitButton";
 import { ErrorNote } from "@/components/ui";
+import { CreateTaskFromMail, type Assignable } from "@/components/CreateTaskFromMail";
 
 type State = { error?: string; ok?: boolean; message?: string };
 
@@ -14,8 +15,8 @@ export interface AwaitingThread {
   from: string;
   clientName: string | null;
   waitingDays: number;
-  /** Filed to a project, so time can be booked against it. */
-  projectName: string | null;
+  /** Filed to a project, so time can be booked and tasks made against it. */
+  project: { id: string; name: string } | null;
   /** The client's newest message, for the preview. */
   preview: {
     fromName: string | null;
@@ -42,7 +43,15 @@ const waitingLabel = (days: number) =>
  * list can be cleared at once. Opening the thread is still one click away
  * for the ones that do need an answer.
  */
-export function AwaitingReply({ threads }: { threads: AwaitingThread[] }) {
+export function AwaitingReply({
+  threads,
+  people,
+  currentUserId,
+}: {
+  threads: AwaitingThread[];
+  people: Assignable[];
+  currentUserId: string;
+}) {
   const [open, setOpen] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [clearState, clearAction] = useActionState(clearAwaitingMailAction, {} as State);
@@ -88,6 +97,8 @@ export function AwaitingReply({ threads }: { threads: AwaitingThread[] }) {
           <Row
             key={thread.id}
             thread={thread}
+            people={people}
+            currentUserId={currentUserId}
             expanded={open === thread.id}
             onToggle={() => setOpen((cur) => (cur === thread.id ? null : thread.id))}
           />
@@ -109,10 +120,14 @@ export function AwaitingReply({ threads }: { threads: AwaitingThread[] }) {
 
 function Row({
   thread,
+  people,
+  currentUserId,
   expanded,
   onToggle,
 }: {
   thread: AwaitingThread;
+  people: Assignable[];
+  currentUserId: string;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -204,7 +219,7 @@ function Row({
               <SubmitButton pendingLabel="…" className="btn-secondary btn-sm">
                 Mark done
               </SubmitButton>
-              {thread.projectName ? (
+              {thread.project ? (
                 <>
                   <label className="inline-flex items-center gap-1.5 text-xs text-ink-600">
                     <input type="checkbox" name="logTime" className="rounded" />
@@ -216,10 +231,20 @@ function Row({
                     aria-label="Time spent reading"
                     placeholder="5m"
                   />
-                  <span className="text-xs text-ink-500">to {thread.projectName}</span>
+                  <span className="text-xs text-ink-500">to {thread.project.name}</span>
                 </>
               ) : null}
             </form>
+          </div>
+
+          <div className="mt-3 border-t border-ink-200 pt-3">
+            <CreateTaskFromMail
+              threadId={thread.id}
+              subject={thread.subject}
+              project={thread.project}
+              people={people}
+              currentUserId={currentUserId}
+            />
           </div>
         </div>
       ) : null}

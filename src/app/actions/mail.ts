@@ -6,11 +6,12 @@ import { db } from "@/lib/db";
 import { isAdmin, requireUser } from "@/lib/auth";
 import { resolveRates } from "@/lib/rates";
 import { assertUnlocked } from "@/lib/lock";
-import { dayInZone } from "@/lib/dates";
+import { dayInZone, dayStart, formatMedium } from "@/lib/dates";
 import { parseDuration } from "@/lib/format";
 import { sendReply } from "@/lib/google/gmail";
 import { syncMail } from "@/lib/google/mail-sync";
 import { orgTimezone } from "@/lib/google/sync";
+import { appUrl } from "@/lib/app-url";
 
 export type ActionState = { error?: string; ok?: boolean; message?: string };
 
@@ -331,4 +332,101 @@ export async function clearAwaitingMailAction(
   });
   refresh();
   return { ok: true, message: `Cleared ${r.count} thread${r.count === 1 ? "" : "s"}.` };
+}
+
+// ------------------------------------------------------------------- tasks
+
+const taskFromMailSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().trim().min(1, "Give the task a name.").max(300),
+  assigneeId: z.string().trim().optional().nullable(),
+  dueDate: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "That due date didn't make sense.")
+    .optional()
+    .or(z.literal(""))
+    .nullable(),
+  notes: z.string().trim().max(4000).optional().nullable(),
+});
+
+/**
+ * Turn a client email into a task on the project it's filed to.
+ *
+ * Recap emails already produce action items on their own; this is for the
+ * plain "can you send X by Friday?" that never would. The task lands at the
+ * end of the project's unsectioned list, carries a link back to the email,
+ * and the thread is linked to it - so time logged from the thread afterwards
+ * goes against the task, not just the project.
+ */
+export async function createTaskFromMailAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const parsed = taskFromMailSchema.safeParse({
+    id: formData.get("id"),
+    name: formData.get("name"),
+    assigneeId: formData.get("assigneeId"),
+    dueDate: formData.get("dueDate"),
+    notes: formData.get("notes"),
+  });
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+  const d = parsed.data;
+
+  let thread;
+  try {
+    ({ thread } = await ownThread(d.id));
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "You can't change that." };
+  }
+  if (!thread.projectId) {
+    return { error: "File this email to a project before making a task from it." };
+  }
+
+  let assigneeId: string | null = d.assigneeId || null;
+  if (assigneeId) {
+    const assignee = await db.user.findFirst({
+      where: { id: assigneeId, isActive: true },
+      select: { id: true },
+    });
+    if (!assignee) return { error: "That person isn't on the team any more." };
+  }
+
+  // Who asked, and when, so whoever picks the task up can find the request
+  // without hunting through the inbox.
+  const asked = [...thread.messages].reverse().find((m) => !m.fromUs) ?? null;
+  const source = [
+    `From email: ${thread.subject}`,
+    asked
+      ? `${asked.fromName || asked.fromEmail}, ${formatMedium(asked.sentAt)}`
+      : null,
+    `${appUrl()}/inbox/${thread.id}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const description = d.notes ? `${d.notes}\n\n${source}` : source;
+
+  const last = await db.task.findFirst({
+    where: { projectId: thread.projectId, sectionId: null, parentId: null },
+    orderBy: { orderIndex: "desc" },
+    select: { orderIndex: true },
+  });
+
+  const task = await db.task.create({
+    data: {
+      projectId: thread.projectId,
+      name: d.name,
+      description,
+      assigneeId,
+      dueDate: d.dueDate ? dayStart(d.dueDate) : null,
+      orderIndex: (last?.orderIndex ?? -1) + 1,
+    },
+    select: { id: true },
+  });
+
+  await db.mailThread.update({ where: { id: thread.id }, data: { taskId: task.id } });
+
+  refresh();
+  revalidatePath(`/projects/${thread.projectId}`, "layout");
+  return { ok: true, message: "Task created." };
 }
