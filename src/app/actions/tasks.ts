@@ -199,6 +199,28 @@ export async function setTaskStatusAction(formData: FormData) {
   refresh(task.projectId);
 }
 
+/**
+ * Move a task's due date - or take it off - without opening the task. The
+ * reschedule button on My work. An empty date clears it.
+ */
+export async function setTaskDueDateAction(formData: FormData): Promise<ActionState> {
+  await requireUser();
+  const id = String(formData.get("id") ?? "");
+  const raw = String(formData.get("dueDate") ?? "").trim();
+
+  if (raw && !/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return { error: "That isn't a date." };
+  }
+
+  const task = await db.task.findUnique({ where: { id }, select: { projectId: true } });
+  if (!task) return { error: "That task no longer exists." };
+
+  await db.task.update({ where: { id }, data: { dueDate: toDate(raw) } });
+
+  refresh(task.projectId);
+  return { ok: true };
+}
+
 export async function setTaskAssigneeAction(formData: FormData) {
   await requireUser();
   const id = String(formData.get("id") ?? "");

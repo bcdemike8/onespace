@@ -3,8 +3,9 @@ import type { TaskStatus } from "@prisma/client";
 import { startTimerAction } from "@/app/actions/time";
 import { toggleTaskDoneAction } from "@/app/actions/tasks";
 import { formatHours } from "@/lib/format";
-import { relativeDueLabel, today } from "@/lib/dates";
+import { relativeDueLabel, toISODate, today } from "@/lib/dates";
 import { TaskStatusChip } from "@/components/ui";
+import { TaskDueDateButton } from "@/components/TaskDueDateButton";
 
 export interface TaskListItemData {
   id: string;
@@ -28,17 +29,20 @@ export function TaskListItem({
   showProject = true,
   showAssignee = false,
   timerRunning = false,
+  canReschedule = false,
 }: {
   task: TaskListItemData;
   showProject?: boolean;
   showAssignee?: boolean;
   timerRunning?: boolean;
+  /** Show "Change date" beside the timer button. */
+  canReschedule?: boolean;
 }) {
   const done = task.status === "DONE";
   const overdue = !done && task.dueDate && task.dueDate < today();
 
   return (
-    <li className="flex items-start gap-3 px-4 py-3">
+    <li className="flex flex-wrap items-start gap-3 px-4 py-3 sm:flex-nowrap">
       <form action={toggleTaskDoneAction} className="pt-0.5">
         <input type="hidden" name="id" value={task.id} />
         <button
@@ -96,6 +100,16 @@ export function TaskListItem({
           </span>
         </div>
       </div>
+
+      {!done && canReschedule ? (
+        <div className="shrink-0">
+          <TaskDueDateButton
+            taskId={task.id}
+            taskName={task.name}
+            dueDate={task.dueDate ? toISODate(task.dueDate) : null}
+          />
+        </div>
+      ) : null}
 
       {!done ? (
         <form action={startTimerAction} className="shrink-0">
