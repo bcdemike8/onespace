@@ -304,3 +304,31 @@ export async function reopenMailAction(formData: FormData): Promise<void> {
   await db.mailThread.update({ where: { id }, data: { status: "OPEN" } });
   refresh();
 }
+
+/**
+ * Clear the "Waiting on your reply" list on My work: every open thread in
+ * this person's own mailbox whose last word is the client's, marked done in
+ * one go. Nothing is logged. A thread comes back on its own the next time
+ * the client writes, so this only says "nothing owed on what's here now".
+ *
+ * Scoped to the ids that were on screen when the button was pressed, so a
+ * sync landing in between can't clear mail the person never saw.
+ */
+export async function clearAwaitingMailAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+  const ids = formData
+    .getAll("id")
+    .map((v) => String(v))
+    .filter(Boolean);
+  if (ids.length === 0) return { error: "There was nothing to clear." };
+
+  const r = await db.mailThread.updateMany({
+    where: { id: { in: ids }, userId: user.id, status: "OPEN", awaitingUs: true },
+    data: { status: "DONE" },
+  });
+  refresh();
+  return { ok: true, message: `Cleared ${r.count} thread${r.count === 1 ? "" : "s"}.` };
+}
