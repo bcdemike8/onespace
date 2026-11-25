@@ -42,7 +42,16 @@ const RANGES: { value: string; label: string; days: number | null }[] = [
   { value: "14", label: "Last 2 weeks", days: 14 },
   { value: "30", label: "Last 30 days", days: 30 },
   { value: "all", label: "All", days: null },
+  // The same record as All, between two days you pick.
+  { value: "dates", label: "Dates", days: null },
 ];
+
+/** A YYYY-MM-DD from the query string as a timesheet day, or null. */
+function parseDay(raw: string | undefined): Date | null {
+  if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const d = new Date(`${raw}T00:00:00Z`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
 
 function durationValue(minutes: number): string {
   if (minutes % 60 === 0) return String(minutes / 60);
@@ -54,7 +63,14 @@ function durationValue(minutes: number): string {
 export default async function MeetingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ who?: string; range?: string; weeks?: string; removed?: string }>;
+  searchParams: Promise<{
+    who?: string;
+    range?: string;
+    weeks?: string;
+    removed?: string;
+    from?: string;
+    to?: string;
+  }>;
 }) {
   const user = await requireUser();
   const admin = isAdmin(user);
@@ -76,19 +92,12 @@ export default async function MeetingsPage({
   // record of every call, week by week, logged or not. It reads back a few
   // weeks at a time, because a year of seven people's calendars is not a
   // list anybody scrolls.
+  // Dates is the same record, between two days you pick.
   const isAll = range.days === null;
+  const isDates = range.value === "dates";
   const weeksShown = Math.min(Math.max(Number(params.weeks) || 8, 1), 104);
   // Removed meetings - blocks, appointments - are out of All unless asked for.
   const showRemoved = isAll && params.removed === "1";
-  const hrefFor = (next: { who?: boolean; range?: string; removed?: boolean }) => {
-    const q = new URLSearchParams();
-    if (next.who ?? everyone) q.set("who", "all");
-    const r = next.range ?? range.value;
-    if (r !== RANGES[0].value) q.set("range", r);
-    if (r === "all" && (next.removed ?? showRemoved)) q.set("removed", "1");
-    const qs = q.toString();
-    return qs ? `/meetings?${qs}` : "/meetings";
-  };
 
   const [zone, lock, calendarWindow, writeUpWindow] = await Promise.all([
     orgTimezone(),
@@ -96,10 +105,46 @@ export default async function MeetingsPage({
     calendarWindowLabel(),
     recentLabel(),
   ]);
+  // The Dates window: what was asked for, kept between the tab's start date
+  // and today, the right way round. Two weeks to today when nothing is set.
+  const todayDay = today(zone);
+  const clampDay = (d: Date) => (d < startDay ? startDay : d > todayDay ? todayDay : d);
+  let datesFrom = clampDay(parseDay(params.from) ?? addDays(todayDay, -13));
+  let datesTo = clampDay(parseDay(params.to) ?? todayDay);
+  if (datesFrom > datesTo) [datesFrom, datesTo] = [datesTo, datesFrom];
+
+  const hrefFor = (next: {
+    who?: boolean;
+    range?: string;
+    removed?: boolean;
+    from?: Date;
+    to?: Date;
+  }) => {
+    const q = new URLSearchParams();
+    if (next.who ?? everyone) q.set("who", "all");
+    const r = next.range ?? range.value;
+    if (r !== RANGES[0].value) q.set("range", r);
+    if (r === "dates") {
+      q.set("from", toISODate(next.from ?? datesFrom));
+      q.set("to", toISODate(next.to ?? datesTo));
+    }
+    if ((r === "all" || r === "dates") && (next.removed ?? showRemoved)) q.set("removed", "1");
+    const qs = q.toString();
+    return qs ? `/meetings?${qs}` : "/meetings";
+  };
+
   // Never further back than the week the start date falls in.
   const requestedFrom = addDays(weekStart(today(zone)), -7 * (weeksShown - 1));
-  const allFromDay =
-    requestedFrom < weekStart(startDay) ? weekStart(startDay) : requestedFrom;
+  const allFromDay = isDates
+    ? datesFrom
+    : requestedFrom < weekStart(startDay)
+      ? weekStart(startDay)
+      : requestedFrom;
+  // The last day the record shows: today for All, the chosen end for Dates.
+  const allToDay = isDates ? datesTo : todayDay;
+  const recordUntil = new Date(
+    Math.min(Date.now(), addDays(allToDay, 2).getTime()),
+  );
   const notRemoved = { OR: [{ setAside: null }, { setAside: { not: "REMOVED" as const } }] };
 
   const [
@@ -186,7 +231,7 @@ export default async function MeetingsPage({
     db.meeting.findMany({
       where: {
         ...(everyone ? {} : { userId: user.id }),
-        startsAt: { gte: addDays(allFromDay, -1), lte: new Date() },
+        startsAt: { gte: addDays(allFromDay, -1), lte: recordUntil },
         ...(showRemoved ? {} : notRemoved),
       },
       orderBy: [{ startsAt: "desc" }],
@@ -281,7 +326,9 @@ export default async function MeetingsPage({
     db.meeting.count({
       where: {
         setAside: "REMOVED",
-        startsAt: { gte: startBound },
+        startsAt: isDates
+          ? { gte: addDays(datesFrom, -1), lte: recordUntil }
+          : { gte: startBound },
         ...(everyone ? {} : { userId: user.id }),
       },
     }),
@@ -357,7 +404,7 @@ export default async function MeetingsPage({
   const notedDays = new Set<string>();
   for (const m of history) {
     const day = dayInZone(m.startsAt, zone);
-    if (day < allFromDay || day < startDay) continue;
+    if (day < allFromDay || day < startDay || day > allToDay) continue;
     const monday = weekStart(day);
     const key = toISODate(monday);
     let week = weekGroups.get(key);
@@ -410,10 +457,10 @@ export default async function MeetingsPage({
     waiting: shown.filter((r) => r.status === "PENDING").length,
   };
   const moreHref =
-    earlier > 0
+    earlier > 0 && !isDates
       ? `${hrefFor({ range: "all" })}&weeks=${weeksShown + 8}`
       : null;
-  const removedHref = hrefFor({ range: "all", removed: !showRemoved });
+  const removedHref = hrefFor({ removed: !showRemoved });
 
 
   // The backlog control only shows when something of yours is older than the
@@ -456,7 +503,11 @@ export default async function MeetingsPage({
         title="Meetings"
         subtitle={
           isAll
-            ? `Every meeting since ${formatMedium(startDay)}, week by week · ${allCounts.logged} logged${
+            ? `${
+                isDates
+                  ? `Every meeting from ${formatMedium(datesFrom)} to ${formatMedium(datesTo)}`
+                  : `Every meeting since ${formatMedium(startDay)}, week by week`
+              } · ${allCounts.logged} logged${
                 allCounts.manual > 0 ? ` · ${allCounts.manual} manually logged` : ""
               } · ${allCounts.internal} internal · ${allCounts.notBillable} not billable${
                 allCounts.cleared > 0 ? ` · ${allCounts.cleared} cleared` : ""
@@ -555,6 +606,70 @@ export default async function MeetingsPage({
           ))}
         </div>
       </div>
+
+      {/* A plain GET form, so the chosen dates live in the URL: a link to
+          "the week of the 10th" can be bookmarked or sent to someone. */}
+      {isDates ? (
+        <div className="mb-4 flex flex-wrap items-end gap-x-3 gap-y-2 rounded-lg border border-ink-200 bg-white px-4 py-3 text-sm">
+          <form method="get" action="/meetings" className="flex flex-wrap items-end gap-3">
+            <input type="hidden" name="range" value="dates" />
+            {everyone ? <input type="hidden" name="who" value="all" /> : null}
+            {showRemoved ? <input type="hidden" name="removed" value="1" /> : null}
+            <label className="grid gap-1 text-xs text-ink-500">
+              From
+              <input
+                type="date"
+                name="from"
+                defaultValue={toISODate(datesFrom)}
+                min={toISODate(startDay)}
+                max={toISODate(todayDay)}
+                className="input w-auto py-1 text-sm"
+              />
+            </label>
+            <label className="grid gap-1 text-xs text-ink-500">
+              To
+              <input
+                type="date"
+                name="to"
+                defaultValue={toISODate(datesTo)}
+                min={toISODate(startDay)}
+                max={toISODate(todayDay)}
+                className="input w-auto py-1 text-sm"
+              />
+            </label>
+            <button type="submit" className="btn-secondary btn-sm">
+              Apply
+            </button>
+          </form>
+          <div className="flex flex-wrap items-center gap-1 text-xs">
+            {[
+              { label: "This week", from: weekStart(todayDay), to: todayDay },
+              {
+                label: "Last week",
+                from: addDays(weekStart(todayDay), -7),
+                to: addDays(weekStart(todayDay), -1),
+              },
+              {
+                label: "This month",
+                from: new Date(Date.UTC(todayDay.getUTCFullYear(), todayDay.getUTCMonth(), 1)),
+                to: todayDay,
+              },
+            ].map((p) => (
+              <Link
+                key={p.label}
+                href={hrefFor({ from: clampDay(p.from), to: clampDay(p.to) })}
+                className="btn-ghost btn-sm"
+              >
+                {p.label}
+              </Link>
+            ))}
+          </div>
+          <p className="w-full text-xs text-ink-500">
+            Every call in those days, whatever became of it. Meetings start on{" "}
+            {formatMedium(startDay)}.
+          </p>
+        </div>
+      ) : null}
 
       <ClearBacklog
         show={hasBacklog}
