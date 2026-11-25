@@ -7,6 +7,7 @@ import {
   dayInZone,
   dayStart,
   formatMedium,
+  formatShort,
   relativeDueLabel,
   timeInZone,
   toISODate,
@@ -26,6 +27,7 @@ import {
 } from "@/components/ui";
 import { LogTimeForm, type LoggableProject } from "@/components/LogTimeForm";
 import { TaskListItem, type TaskListItemData } from "@/components/TaskListItem";
+import { CappedList } from "@/components/CappedList";
 import { deleteTimeEntryAction } from "@/app/actions/time";
 import { queueSince } from "@/lib/recency";
 import { groupQueue, withoutDecided, type QueueRecord } from "@/lib/commitments/queue";
@@ -40,39 +42,52 @@ import { recentClientMeetingsWhere } from "@/lib/meetings/waiting";
 export const dynamic = "force-dynamic";
 
 /**
- * The three horizons a consultant actually plans in: today, the next few
- * days, the rest of the week.
+ * The horizons a consultant actually plans in: today, the next few days, the
+ * rest of the week, and a look at the week after.
  *
  * Rolling windows rather than calendar weeks. "The next seven days" is what
  * somebody means on a Thursday; "the rest of this week" on a Thursday is a
  * day and a half and hides everything that matters. Overdue rides with today
  * because that is when it needs doing.
+ *
+ * "After that" stops at two weeks out. Anything further is planning, not
+ * this week's work - it lives on the project, and is only counted here.
  */
 function bucketTasks(tasks: TaskListItemData[], now = today()) {
   const inThree = addDays(now, 3);
   const inSeven = addDays(now, 7);
+  const horizon = addDays(now, 14);
 
   const todayOrLate: TaskListItemData[] = [];
   const soon: TaskListItemData[] = [];
   const thisWeek: TaskListItemData[] = [];
   const later: TaskListItemData[] = [];
   const undated: TaskListItemData[] = [];
+  let beyond = 0;
 
   for (const task of tasks) {
     if (!task.dueDate) undated.push(task);
     else if (task.dueDate <= now) todayOrLate.push(task);
     else if (task.dueDate <= inThree) soon.push(task);
     else if (task.dueDate <= inSeven) thisWeek.push(task);
-    else later.push(task);
+    else if (task.dueDate <= horizon) later.push(task);
+    else beyond += 1;
   }
 
-  return [
-    { title: "Today", tasks: todayOrLate, tone: "warn" as const },
-    { title: "Next three days", tasks: soon, tone: "default" as const },
-    { title: "Rest of the week", tasks: thisWeek, tone: "default" as const },
-    { title: "After that", tasks: later, tone: "default" as const },
-    { title: "No date on them", tasks: undated, tone: "default" as const },
+  const groups = [
+    { title: "Today", tasks: todayOrLate, tone: "warn" as const, hint: null },
+    { title: "Next three days", tasks: soon, tone: "default" as const, hint: null },
+    { title: "Rest of the week", tasks: thisWeek, tone: "default" as const, hint: null },
+    {
+      title: "After that",
+      tasks: later,
+      tone: "default" as const,
+      hint: `${formatShort(addDays(inSeven, 1))} – ${formatShort(horizon)}`,
+    },
+    { title: "No date on them", tasks: undated, tone: "default" as const, hint: null },
   ].filter((g) => g.tasks.length > 0);
+
+  return { groups, beyond, horizon };
 }
 
 export default async function MyWorkPage() {
@@ -447,7 +462,7 @@ export default async function MyWorkPage() {
     clientName: p.client?.name ?? null,
   }));
 
-  const groups = bucketTasks(tasks, now);
+  const { groups, beyond, horizon } = bucketTasks(tasks, now);
   const overdueCount = tasks.filter((t) => t.dueDate && t.dueDate < now).length;
 
   const loggableProjects: LoggableProject[] = projects.map((p) => ({
@@ -631,14 +646,14 @@ export default async function MyWorkPage() {
             My tasks
           </h2>
 
-          {groups.length === 0 ? (
+          {groups.length === 0 && beyond === 0 ? (
             <EmptyState
               title="Nothing assigned to you right now."
               body="Tasks assigned to you across every project show up here, sorted by what's due first."
               action={{ href: "/projects", label: "Browse projects" }}
             />
           ) : (
-            <div className="space-y-5">
+            <div className="space-y-4">
               {groups.map((group) => (
                 <section key={group.title} className="card overflow-hidden">
                   <div className="flex items-center justify-between border-b border-ink-200 bg-ink-50 px-4 py-2">
@@ -648,22 +663,35 @@ export default async function MyWorkPage() {
                       }`}
                     >
                       {group.title}
+                      {group.hint ? (
+                        <span className="ml-2 font-normal normal-case tracking-normal text-ink-500">
+                          {group.hint}
+                        </span>
+                      ) : null}
                     </h3>
                     <span className="text-xs text-ink-500 tnum">
                       {group.tasks.length}
                     </span>
                   </div>
-                  <ul className="divide-y divide-ink-100">
+                  <CappedList visible={5} className="divide-y divide-ink-100">
                     {group.tasks.map((task) => (
                       <TaskListItem
                         key={task.id}
                         task={task}
                         timerRunning={Boolean(timer)}
+                        canReschedule
                       />
                     ))}
-                  </ul>
+                  </CappedList>
                 </section>
               ))}
+
+              {beyond > 0 ? (
+                <p className="text-xs text-ink-500">
+                  {beyond} more {beyond === 1 ? "task is" : "tasks are"} due after{" "}
+                  {formatShort(horizon)} — not shown here. They&apos;re on their projects.
+                </p>
+              ) : null}
             </div>
           )}
         </div>
