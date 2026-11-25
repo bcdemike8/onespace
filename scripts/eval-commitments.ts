@@ -11,7 +11,7 @@
  * would reach each consultant's My work with what should.
  *
  * Needs ANTHROPIC_API_KEY (in .env or the environment). Costs roughly one
- * call write-up per case - about twenty-five. Reads nothing from the database.
+ * call write-up per case - about thirty. Reads nothing from the database.
  * Every name and company here is made up; this file is in a public repository.
  */
 import "./load-env";
@@ -391,6 +391,48 @@ Following up on today. I spoke with Jordan, and his team will configure the Regi
 Thanks,
 Priya`,
     expect: [],
+  },
+  {
+    name: "Call: natural acceptance - 'That's on me' / 'Leave that with me'",
+    kind: "call",
+    by: "priya",
+    text: `
+Jordan Lee: Who's updating the persona tiers in the sequences?
+Priya Shah: That's on me. I'll have them updated before the training.
+Jordan Lee: And can someone send the admin guide to Ethan?
+Sam Ortiz: Leave that with me.
+Jordan Lee: Perfect, thanks both.`,
+    expect: [
+      { owner: "priya", about: ["persona", "sequence"] },
+      { owner: "sam", about: ["admin guide", "guide"] },
+    ],
+  },
+  {
+    name: "Call: a deadline asked for and plainly accepted",
+    kind: "call",
+    by: "priya",
+    text: `
+Jordan Lee: Can you send the updated pipeline report by Friday? Leadership wants it for Monday.
+Priya Shah: Absolutely, I'll send that over.
+Jordan Lee: Great, thank you.
+Priya Shah: Anything else for this week?
+Jordan Lee: No, that's everything.`,
+    expect: [{ owner: "priya", about: ["report"], dated: true }],
+  },
+  {
+    name: "Call: two deliverables, two dates, one sentence",
+    kind: "call",
+    by: "priya",
+    text: `
+Jordan Lee: What's coming from your side next?
+Priya Shah: I'll send the updated sequences tomorrow and the reporting recommendations by Friday.
+Jordan Lee: Perfect, that works for us.
+Priya Shah: Great. Let me know if the team has questions.
+Jordan Lee: Will do.`,
+    expect: [
+      { owner: "priya", about: ["sequence"], dated: true },
+      { owner: "priya", about: ["recommendation", "reporting"], dated: true },
+    ],
   },
 ];
 

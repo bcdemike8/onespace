@@ -261,17 +261,19 @@ export function namedAsDoer(name: string, text: string): boolean {
 }
 
 /**
- * Words that take something on, in the speaker's own voice: "I'll...",
- * "I'm going to...", "I can take care of that", "leave it with me", "will
- * do". Not "I" on its own - "I spoke with Ethan, and his team will configure
- * the field" is the sender describing the customer's work, not committing to
- * any.
+ * How a commitment is recognised in the owner's own words.
+ *
+ * Not by a list of approved phrasings. Claude reads the conversation and
+ * decides that something was taken on; on a call the transcript says who
+ * said it. What's checked here is the opposite: whether the owner's words
+ * plainly show it *wasn't* a commitment - turned down, only being looked
+ * into, already done, somebody else's work, or just a question. So "That's
+ * on me", "Leave that with me" and "Consider it done" are accepted the same
+ * as "I'll send it", and "I can't take that on" is not.
+ *
+ * A bare yes - "Sure", "Absolutely", "Consider it done" - commits only in
+ * answer to a request, because on its own it says what was agreed to.
  */
-const TAKES_IT_ON =
-  /\b(i'?ll|i will|i'?m going to|i am going to|i'?m gonna|i can (take|handle|do|own|get|send|share|look|set|build|put|run|grab|sort|pick|work|follow|reach|update|fix|configure|draft|schedule|book)|i'?m on it|i'?ll own|i own|i'?m taking|i'?m handling|let me (take|handle|get|send|own|grab|sort)|leave it with me|i'?ve got (it|this|that)|will do|on it)\b/;
-
-/** A short yes that only commits in answer to a request. */
-const AGREES = /^(sure|yes|yep|yeah|absolutely|of course|definitely|no problem|happy to|sounds good|ok|okay|will do)\b/;
 
 /** Turning it down. */
 const DECLINES =
@@ -279,31 +281,73 @@ const DECLINES =
 
 /** Only finding out, with nothing promised back: "I'll see whether that's possible". */
 const ONLY_EXPLORING =
-  /\b(see (whether|if)|check (whether|if) (it'?s|that'?s|this is|it is|that is) possible|think about|consider|look at whether)\b/;
+  /\b(see (whether|if)|check (whether|if) (it'?s|that'?s|this is|it is|that is) possible|think about|consider (whether|if|doing)|look at whether)\b/;
+
+/**
+ * A commitment with a hedge on it: "I'll try to get it to you by Friday".
+ * Still a commitment - but the timing isn't promised, so no date is.
+ */
+const HEDGED = /\b(try to|try and|might|maybe|hopefully|not sure|should be able|aim to|if (i|we) can)\b/;
 
 /** ...unless the result is promised back to the customer. */
 const REPORTS_BACK =
   /\b(let (you|them|him|her) know|get back to|come back to|report back|share (my |the )?(findings|results|answer)|send (you )?(my |the )?(findings|results|answer)|follow up with)\b/;
+
+/** Something said about the future: what makes "already sent" not the whole story. */
+const AHEAD =
+  /\b(i'?ll|i will|will|going to|gonna|i can|let me|on it|on me|with me|i'?ve got|consider it done)\b/;
+
+/** Work reported as done, with nothing still to do. */
+const ALREADY_DONE =
+  /\b(already|i'?ve (sent|done|shared|completed|updated|fixed|built|finished|set up|configured)|i (sent|did|shared|completed|updated|fixed|built|finished|spoke|talked|mentioned|confirmed|met|discussed|reviewed|checked))\b/;
+
+/** Somebody else doing it: "his team will configure the field". */
+const SOMEONE_ELSE =
+  /\b(you|your team|your side|they|their team|his team|her team|he|she|the customer|the client)( will|'ll| are going to| is going to| can| should| need to)\b/;
+
+/** The speaker - or writer - talking about themselves. */
+const SELF = /\b(i|i'?ll|i'?m|i'?ve|i'?d|me|my|mine)\b/;
+
+/** Just a yes. */
+const ONLY_AGREES =
+  /^(sure|yes|yep|yeah|absolutely|of course|definitely|no problem|happy to|sounds good|ok|okay|will do|you got it|consider it done|done|on it|perfect|great)\b[\s,.!]*(thanks|thank you|will do|on it)?[\s.!]*$/;
 
 /** Clauses of one sentence: "I can't today, but I'll send it Friday" is two. */
 function clausesOf(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/[’‘]/g, "'")
-    .split(/[;,]\s*but\s+|\s+but\s+|;\s*/)
+    .split(/[;,]\s*but\s+|\s+but\s+|;\s*|,\s*and\s+/)
     .map((c) => c.trim())
     .filter(Boolean);
 }
 
-/** Does this part commit to doing something, rather than decline or wonder? */
-function commits(part: string, answersRequest: boolean, ownerName: string | null): boolean {
-  return clausesOf(part).some((c) => {
-    if (DECLINES.test(c)) return false;
-    if (ONLY_EXPLORING.test(c) && !REPORTS_BACK.test(c)) return false;
-    if (TAKES_IT_ON.test(c)) return true;
-    if (ownerName && namedAsDoer(ownerName, c)) return true;
-    return answersRequest && AGREES.test(c);
-  });
+/**
+ * Does this part commit, rather than decline, wonder, report or ask?
+ *
+ * `aboutSelf` is for email, where there's no speaker label: the clause has to
+ * be the writer talking about themselves, or naming the colleague who'll do
+ * it. On a call the speaker label has already established that.
+ */
+function commits(
+  sentences: string[],
+  answersRequest: boolean,
+  ownerName: string | null,
+  aboutSelf: boolean,
+): boolean {
+  return sentences
+    .filter((s) => !/\?\s*$/.test(s))
+    .flatMap(clausesOf)
+    .some((c) => {
+      if (DECLINES.test(c)) return false;
+      if (ONLY_EXPLORING.test(c) && !REPORTS_BACK.test(c)) return false;
+      if (ALREADY_DONE.test(c) && !AHEAD.test(c.replace(/\balready\b.*$/, ""))) return false;
+      if (SOMEONE_ELSE.test(c) && !/\bi('ll| will| can|'m going to)\b/.test(c)) return false;
+      const named = ownerName !== null && namedAsDoer(ownerName, c);
+      if (aboutSelf && !named && !SELF.test(c)) return false;
+      if (ONLY_AGREES.test(c)) return answersRequest;
+      return true;
+    });
 }
 
 /**
@@ -314,18 +358,16 @@ function commits(part: string, answersRequest: boolean, ownerName: string | null
  * part of the quote is what they said themselves, plus anything a RevOptics
  * colleague said naming them as the one doing it ("Sam will..."); a customer
  * saying "Sam will sort it" doesn't count, and "I'll ask Sam about it" isn't
- * Sam's. In an email it's the sender's own commitments ("I'll..."), or the
+ * Sam's. In an email it's the sender writing about themselves, or the
  * colleague the sender names as doing it.
  *
- * Then that part has to commit: "I'll send it tomorrow", "I can take care of
- * that", or "Sure" in answer to a request - not "I can't take care of
- * that", not "I already sent it", not "I'll see whether that's possible"
- * unless the answer is promised back.
+ * Then that part has to commit - see `commits` above.
  *
  * "ours" when a RevOptics person said or wrote any of the quote, so a quote
  * that's entirely the customer's can be told apart from one that names the
- * wrong one of us. "said" is the owner's part, which is where a promised
- * deadline has to be.
+ * wrong one of us. "said" is the owner's part. "asked" is the request their
+ * answer accepted, when it was a plain yes rather than a "let me see" - a
+ * deadline in it ("by Friday?" - "Absolutely") was agreed to.
  */
 export function quoteSupports(
   quote: string,
@@ -333,18 +375,18 @@ export function quoteSupports(
   ownerName: string,
   source: SourceEvidence,
   index: NameIndex,
-): { owner: boolean; ours: boolean; commits: boolean; said: string } {
+): { owner: boolean; ours: boolean; commits: boolean; said: string; asked: string } {
   if (source.kind === "email") {
     const theirs = sentencesOf(quote).filter((s) => {
       const c = s.toLowerCase().replace(/[’‘]/g, "'");
-      return (ownerId === source.senderId && TAKES_IT_ON.test(c)) || namedAsDoer(ownerName, s);
+      return (ownerId === source.senderId && SELF.test(c)) || namedAsDoer(ownerName, s);
     });
-    const said = theirs.join(" ");
     return {
       owner: theirs.length > 0,
       ours: true,
-      commits: theirs.length > 0 && commits(said, false, ownerName),
-      said,
+      commits: theirs.length > 0 && commits(theirs, false, ownerName, true),
+      said: theirs.join(" "),
+      asked: "",
     };
   }
 
@@ -358,16 +400,23 @@ export function quoteSupports(
     ours = true;
     if (id === ownerId || namedAsDoer(ownerName, p.sentence)) theirs.push(p);
   }
-  const said = theirs.map((p) => p.sentence).join(" ");
-  // "Sure" commits only in answer to a request - a question asked, before
-  // it, in somebody else's turn.
+  // A request answers to what was asked just before the owner's reply, in
+  // somebody else's turn.
   const first = theirs[0]?.turn ?? -1;
-  const answersRequest = placed.some((p) => p.turn < first && /\?\s*$/.test(p.sentence));
+  const request = placed.filter(
+    (p) =>
+      p.turn < first &&
+      index.match(turns[p.turn].speaker) !== ownerId &&
+      (/\?\s*$/.test(p.sentence) || /\b(can|could|would|will) you\b/i.test(p.sentence)),
+  );
+  const said = theirs.map((p) => p.sentence);
+  const committed = theirs.length > 0 && commits(said, request.length > 0, ownerName, false);
   return {
     owner: theirs.length > 0,
     ours,
-    commits: theirs.length > 0 && commits(said, answersRequest, ownerName),
-    said,
+    commits: committed,
+    said: said.join(" "),
+    asked: committed ? request.map((p) => p.sentence).join(" ") : "",
   };
 }
 
@@ -393,6 +442,65 @@ export function promisedWhen(when: string | null, quote: string): string | null 
     return null;
   }
   return phrase;
+}
+
+/** Words that say when, as opposed to what. */
+const TIMING =
+  /\b(today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|eod|eow|end of|by the|next week|this week|weekend|month|january|february|march|april|may|june|july|august|september|october|november|december|\d{1,2}(st|nd|rd|th)?)\b/;
+
+/** Verbs and filler every title shares, so they say nothing about which deliverable. */
+const GENERIC =
+  /^(send|share|get|give|provide|deliver|update|updated|draft|create|build|prepare|put|together|over|set|run|review|follow|confirm|schedule|book|new|revised|final|their|team)$/;
+
+function deliverableWords(text: string): Set<string> {
+  return new Set(
+    normalText(text)
+      .split(" ")
+      .filter((w) => w.length > 2 && !GENERIC.test(w) && !DANGLING.has(w))
+      .map((w) => (w.length > 3 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w)),
+  );
+}
+
+/**
+ * The promised deadline for one item, or none.
+ *
+ * Whose words it can come from:
+ *  - the owner's own - "I'll send it by Friday";
+ *  - or the request they plainly accepted - "Can you send it by Friday?"
+ *    "Absolutely" - as long as they didn't name a time of their own.
+ * Not when the acceptance was hedged ("I'll try to..."): a commitment, but
+ * not to that date.
+ *
+ * And when one sentence carries two deliverables with two dates - "the
+ * sequences tomorrow and the recommendations by Friday" - the date has to
+ * sit with this item's deliverable, not the other one.
+ */
+function agreedWhen(
+  item: Candidate,
+  support: { said: string; asked: string },
+): string | null {
+  const said = support.said.toLowerCase().replace(/[’‘]/g, "'");
+  if (HEDGED.test(said)) return null;
+
+  const own = promisedWhen(item.when, support.said);
+  if (own) {
+    // Only parts that commit count: "I can't do it today, but I'll send it
+    // tomorrow" has one date that's promised and one that isn't.
+    const parts = said
+      .split(/,?\s+and\s+|;\s*|,\s+|\s+but\s+/)
+      .filter((p) => TIMING.test(p) && !DECLINES.test(p));
+    if (parts.length < 2) return own;
+    // Several dates in the owner's words: this one must share a deliverable
+    // word with the item's title.
+    const phrase = normalText(own);
+    const part = parts.find((p) => ` ${normalText(p)} `.includes(` ${phrase} `));
+    const theirs = deliverableWords(item.title);
+    const near = part ? [...deliverableWords(part)].some((w) => theirs.has(w)) : false;
+    return near ? own : null;
+  }
+
+  if (support.asked && !TIMING.test(said)) return promisedWhen(item.when, support.asked);
+  return null;
 }
 
 /**
@@ -477,9 +585,7 @@ export function vetActionItems<T extends Candidate>(
       out.rejected.push({ item, reason: "declined, already done, or not a commitment" });
       continue;
     }
-    // A deadline counts only if it's in the owner's own words - not the
-    // customer's half of the quote, not another person's sentence.
-    out.owned.push({ ...item, ownerId: id, when: promisedWhen(item.when, support.said) });
+    out.owned.push({ ...item, ownerId: id, when: agreedWhen(item, support) });
   }
 
   return out;

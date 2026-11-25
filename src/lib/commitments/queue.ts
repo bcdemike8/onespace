@@ -68,13 +68,28 @@ function contentWords(text: string): Set<string> {
   );
 }
 
-function compare(a: string, b: string): { shared: number; overlap: number } {
+/**
+ * Words every task title has - the verb, mostly - so sharing them says
+ * nothing about whether two titles are the same deliverable.
+ */
+const ACTION_WORDS = new Set([
+  "send", "share", "get", "give", "provide", "deliver", "updat", "draft",
+  "create", "build", "prepare", "put", "together", "set", "run", "review",
+  "follow", "confirm", "schedule", "book", "new", "revis", "final", "team",
+]);
+
+function compare(a: string, b: string): { shared: number; things: number; overlap: number } {
   const x = contentWords(a);
   const y = contentWords(b);
-  if (x.size === 0 || y.size === 0) return { shared: 0, overlap: 0 };
+  if (x.size === 0 || y.size === 0) return { shared: 0, things: 0, overlap: 0 };
   let shared = 0;
-  for (const w of x) if (y.has(w)) shared += 1;
-  return { shared, overlap: shared / (x.size + y.size - shared) };
+  let things = 0;
+  for (const w of x) {
+    if (!y.has(w)) continue;
+    shared += 1;
+    if (!ACTION_WORDS.has(w)) things += 1;
+  }
+  return { shared, things, overlap: shared / (x.size + y.size - shared) };
 }
 
 /**
@@ -85,9 +100,13 @@ function compare(a: string, b: string): { shared: number; overlap: number } {
  * row), and against what the person already added or dismissed.
  *
  * Same when the titles are the same, or nearly all the same words. Or when
- * the quotes are mostly the same words AND the titles share at least two -
- * one sentence can hold two promises ("I'll send the deck and book the
- * training"), and the shared quote alone mustn't make them one.
+ * the quotes are mostly the same words AND the titles share at least two
+ * words about the thing itself, not the verb - one sentence can hold two
+ * promises ("the sequences tomorrow and the recommendations by Friday"),
+ * and "Send Northwind the..." in both titles mustn't make them one. The
+ * customer's name can be one of the two, so a re-worded "Send Acme the
+ * sequence spec" still matches "Share the revised sequence specification
+ * with Acme".
  */
 export function sameUndertaking(
   a: { title: string; quote?: string | null },
@@ -97,7 +116,7 @@ export function sameUndertaking(
   const titles = compare(a.title, b.title);
   if (titles.overlap >= 0.8) return true;
   if (a.quote && b.quote && compare(a.quote, b.quote).overlap >= 0.6) {
-    return titles.shared >= 2;
+    return titles.things >= 2 && titles.overlap >= 0.25;
   }
   return false;
 }

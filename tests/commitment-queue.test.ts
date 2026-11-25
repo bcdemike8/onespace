@@ -102,6 +102,16 @@ test("a call and its recap, worded a little differently, are one promise", () =>
   );
 });
 
+test("two deliverables from one sentence stay two, though the titles share the client and verb", () => {
+  const quote = "I'll send the updated sequences tomorrow and the reporting recommendations by Friday.";
+  assert.ok(
+    !sameUndertaking(
+      { title: "Send Northwind the updated sequences", quote },
+      { title: "Send Northwind the reporting recommendations", quote },
+    ),
+  );
+});
+
 test("one word apart in what's delivered is two promises", () => {
   assert.ok(
     !sameUndertaking(

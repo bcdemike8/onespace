@@ -563,3 +563,109 @@ test("the customer's deadline in the same quote isn't the consultant's", () => {
   assert.equal(out.owned[0]?.ownerId, "sam");
   assert.equal(out.owned[0]?.when, null);
 });
+
+// ---------------------------------------- natural acceptance, not a phrasebook
+
+const askReport = "Can you send the updated report?";
+const acceptReport = (answer: string, ask = askReport, when: string | null = null) =>
+  vetActionItems(
+    [item({ title: "Send Northwind the updated report", task: "Send Northwind the updated report.", quote: `${ask} ${answer}`, when })],
+    team,
+    people,
+    { kind: "call", text: `\nJordan Lee: ${ask}\nPriya Shah: ${answer}\nJordan Lee: Thanks.`, presentIds: new Set(["priya"]) },
+  );
+
+for (const answer of [
+  "That's on me.",
+  "I've got that.",
+  "Leave that with me.",
+  "Consider it done.",
+  "Absolutely, I'll handle it.",
+  "Sure, I can get that over to you.",
+  "Absolutely.",
+  "Will do.",
+]) {
+  test(`'${answer}' in answer to a request is a commitment`, () => {
+    assert.equal(acceptReport(answer).owned[0]?.ownerId, "priya");
+  });
+}
+
+test("'Consider it done.' answering nothing commits to nothing", () => {
+  const out = vetActionItems(
+    [item({ quote: "Consider it done." })],
+    team,
+    people,
+    { kind: "call", text: "\nJordan Lee: The mapping looks good.\nPriya Shah: Consider it done.", presentIds: new Set(["priya"]) },
+  );
+  assert.equal(out.owned.length, 0);
+});
+
+test("'Leave the mapping with me.' in a recap is the sender's", () => {
+  const text = "Hi Jordan,\n\nLeave the field mapping with me - I'll have it to you by Friday.\n\nThanks";
+  const out = vetActionItems(
+    [item({ quote: "Leave the field mapping with me - I'll have it to you by Friday.", when: "by Friday" })],
+    team,
+    people,
+    { kind: "email", text, presentIds: new Set(["priya"]), senderId: "priya" },
+  );
+  assert.equal(out.owned[0]?.ownerId, "priya");
+  assert.equal(out.owned[0]?.when, "by Friday");
+});
+
+// ------------------------------------------------ deadlines in the request
+
+const fridayAsk = "Can you send the updated report by Friday?";
+
+test("a deadline in the customer's request, plainly accepted, is promised", () => {
+  const out = acceptReport("Absolutely, I'll send that over.", fridayAsk, "by Friday");
+  assert.equal(out.owned[0]?.when, "by Friday");
+});
+
+test("'I'll see whether I can do that by Friday' isn't a Friday promise", () => {
+  const out = acceptReport("I'll see whether I can do that by Friday.", fridayAsk, "by Friday");
+  assert.ok(out.owned.length === 0 || out.owned[0].when === null);
+});
+
+test("'I'll try to get it over by Friday' is a commitment, but not to Friday", () => {
+  const out = acceptReport("I'll try to get it over to you by Friday.", fridayAsk, "by Friday");
+  assert.equal(out.owned[0]?.ownerId, "priya");
+  assert.equal(out.owned[0]?.when, null);
+});
+
+test("a time the consultant names themselves wins over the one asked for", () => {
+  const out = acceptReport("I'll send it on Monday.", fridayAsk, "by Friday");
+  assert.equal(out.owned[0]?.when, null);
+  assert.equal(acceptReport("I'll send it on Monday.", fridayAsk, "on Monday").owned[0]?.when, "on Monday");
+});
+
+// -------------------------------------------- two deliverables, one sentence
+
+const twoThings = "I'll send the updated sequences tomorrow and the reporting recommendations by Friday.";
+const twoThingsCall = {
+  kind: "call" as const,
+  text: `\nJordan Lee: What's next from your side?\nPriya Shah: ${twoThings}\nJordan Lee: Great.`,
+  presentIds: new Set(["priya"]),
+};
+
+test("two deliverables in one sentence are two commitments, each with its own date", () => {
+  const out = vetActionItems(
+    [
+      item({ title: "Send Northwind the updated sequences", task: "Send Northwind the updated sequences.", quote: twoThings, when: "tomorrow" }),
+      item({ title: "Send Northwind the reporting recommendations", task: "Send Northwind the reporting recommendations.", quote: twoThings, when: "by Friday" }),
+    ],
+    team,
+    people,
+    twoThingsCall,
+  );
+  assert.deepEqual(out.owned.map((o) => o.when), ["tomorrow", "by Friday"]);
+});
+
+test("...and the other deliverable's date is never attached to this one", () => {
+  const out = vetActionItems(
+    [item({ title: "Send Northwind the updated sequences", task: "Send Northwind the updated sequences.", quote: twoThings, when: "by Friday" })],
+    team,
+    people,
+    twoThingsCall,
+  );
+  assert.equal(out.owned[0]?.when, null);
+});

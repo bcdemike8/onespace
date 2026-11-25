@@ -198,9 +198,13 @@ FOR EACH ITEM
 - task: what has to be done, for which client, and anything it depends on,
   in full sentences - enough to act on without the source.
 - when: the deadline for this RevOptics task, exactly as it was stated in the
-  quote - "by Friday" - or null. Not the customer's own deadline, not the
-  date of the meeting, and null for anything vague ("next week", "soon", "in
-  a few days"). Never infer one.
+  quote - "by Friday" - or null. A date the client asked for counts when the
+  RevOptics person plainly agreed ("Can you send it by Friday?" -
+  "Absolutely"); not when they hedged ("I'll see if I can"). Never the
+  deadline of the client's own task, never the date of the meeting, and null
+  for anything vague ("next week", "soon", "in a few days"). When one
+  sentence promises two things with two dates, give each item its own date.
+  Never infer one.
 - quote: the exact words from the source that show the owner taking it on -
   their own words of acceptance, or a RevOptics colleague assigning it to
   them by name. For an accepted request, include the request and the
