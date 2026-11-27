@@ -124,6 +124,9 @@ export default async function MyWorkPage() {
           project: {
             select: { id: true, name: true, client: { select: { name: true } } },
           },
+          // Marking a task done closes its open subtasks too, so the button
+          // needs to know how many there are to say so before it does.
+          _count: { select: { subtasks: { where: { status: { not: "DONE" } } } } },
         },
         orderBy: [{ dueDate: "asc" }, { orderIndex: "asc" }],
         take: 200,
@@ -406,6 +409,7 @@ export default async function MyWorkPage() {
     projectName: t.project.name,
     clientName: t.project.client?.name ?? null,
     assigneeName: null,
+    openSubtasks: t._count.subtasks,
   }));
 
   const queueRecords: QueueRecord[] = pendingCommitments.flatMap((c) => {

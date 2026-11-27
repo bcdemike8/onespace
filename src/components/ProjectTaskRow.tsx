@@ -5,8 +5,8 @@ import {
   moveTaskAction,
   setTaskAssigneeAction,
   setTaskStatusAction,
-  toggleTaskDoneAction,
 } from "@/app/actions/tasks";
+import { TaskDoneCheckbox } from "@/components/TaskDoneCheckbox";
 import { AddSubtaskButton } from "@/components/AddSubtaskButton";
 import { AutoSubmitSelect } from "@/components/AutoSubmitSelect";
 import { formatHours } from "@/lib/format";
@@ -59,21 +59,12 @@ export function ProjectTaskRow({
         task.depth > 0 ? "border-l-2 border-ink-200 bg-ink-50/40 pl-9" : "pl-4"
       }`}
     >
-      <form action={toggleTaskDoneAction} className="shrink-0">
-        <input type="hidden" name="id" value={task.id} />
-        <button
-          type="submit"
-          aria-label={done ? `Reopen ${task.name}` : `Complete ${task.name}`}
-          className={`flex items-center justify-center rounded border text-[11px] leading-none transition-colors ${
-            done
-              ? "border-good-500 bg-good-500 text-white"
-              : "border-ink-300 bg-white text-transparent hover:border-good-500"
-          }`}
-          style={{ height: "1.125rem", width: "1.125rem" }}
-        >
-          ✓
-        </button>
-      </form>
+      <TaskDoneCheckbox
+        taskId={task.id}
+        taskName={task.name}
+        done={done}
+        openSubtasks={task.openSubtasks}
+      />
 
       <div className="min-w-[12rem] flex-1">
         <div

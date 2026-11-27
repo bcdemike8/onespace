@@ -19,11 +19,13 @@ export interface TaskListItemData {
   projectName: string;
   clientName: string | null;
   assigneeName: string | null;
+  /** Open subtasks, which marking this task done also closes. */
+  openSubtasks?: number;
 }
 
 /**
- * One row in any task list. The checkbox, the timer button and the link to
- * the project are the three things people actually do from here.
+ * One row in any task list. Mark done, the timer button and the link to the
+ * project are the three things people actually do from here.
  */
 export function TaskListItem({
   task,
@@ -47,7 +49,10 @@ export function TaskListItem({
 
   return (
     <li className="flex flex-wrap items-start gap-3 px-4 py-3 sm:flex-nowrap">
-      <TaskDoneCheckbox taskId={task.id} taskName={task.name} done={done} />
+      {/* A finished task keeps the tick box, to reopen it. An open one is
+          finished with the labelled button on the right instead: a bare box
+          read as "select", and nobody could tell what ticking it did. */}
+      {done ? <TaskDoneCheckbox taskId={task.id} taskName={task.name} done /> : null}
 
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
@@ -132,6 +137,16 @@ export function TaskListItem({
             ▶ Start timer
           </SubmitButton>
         </form>
+      ) : null}
+
+      {!done ? (
+        <TaskDoneCheckbox
+          taskId={task.id}
+          taskName={task.name}
+          done={false}
+          openSubtasks={task.openSubtasks ?? 0}
+          variant="button"
+        />
       ) : null}
     </li>
   );
