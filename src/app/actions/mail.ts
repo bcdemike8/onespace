@@ -332,3 +332,34 @@ export async function clearAwaitingMailAction(
   refresh();
   return { ok: true, message: `Cleared ${r.count} thread${r.count === 1 ? "" : "s"}.` };
 }
+
+/**
+ * "Clear all" on the Inbox tab: every thread listed under the current
+ * filters, marked done in one go. Unlike the My work version it takes
+ * "You replied last" threads too - those are the ones most often finished.
+ *
+ * Scoped to the ids that were on screen, and to the person's own mailbox
+ * unless they're an admin looking at everyone's.
+ */
+export async function clearInboxAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+  const ids = formData
+    .getAll("id")
+    .map((v) => String(v))
+    .filter(Boolean);
+  if (ids.length === 0) return { error: "There was nothing to clear." };
+
+  const r = await db.mailThread.updateMany({
+    where: {
+      id: { in: ids },
+      status: "OPEN",
+      ...(isAdmin(user) ? {} : { userId: user.id }),
+    },
+    data: { status: "DONE" },
+  });
+  refresh();
+  return { ok: true, message: `Cleared ${r.count} thread${r.count === 1 ? "" : "s"}.` };
+}

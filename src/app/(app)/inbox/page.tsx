@@ -16,6 +16,7 @@ import {
 import { EmptyState, PageHeader } from "@/components/ui";
 import { MailSyncButton } from "./MailSyncButton";
 import { ProjectFilter, ReplyFilterTabs } from "./InboxFilters";
+import { ClearAllButton, InboxRow } from "./InboxRowActions";
 
 export const dynamic = "force-dynamic";
 
@@ -212,6 +213,20 @@ export default async function InboxPage({
             Clear
           </Link>
         ) : null}
+        {!showDone ? (
+          <span className="ml-auto">
+            <ClearAllButton
+              ids={threads.map((t) => t.id)}
+              label={
+                reply === "waiting"
+                  ? "waiting-on-you"
+                  : reply === "replied"
+                    ? "you-replied-last"
+                    : "listed"
+              }
+            />
+          </span>
+        ) : null}
       </div>
 
       {filtered && threads.length > 0 ? (
@@ -241,10 +256,10 @@ export default async function InboxPage({
       ) : (
         <ul className="card divide-y divide-ink-100">
           {threads.map((t) => (
-            <li key={t.id}>
+            <InboxRow key={t.id} id={t.id} done={showDone}>
               <Link
                 href={`/inbox/${t.id}`}
-                className="block px-4 py-3 transition-colors hover:bg-ink-50"
+                className="block px-4 py-3"
               >
                 <div className="flex flex-wrap items-baseline gap-2">
                   {t.awaitingUs ? (
@@ -290,7 +305,7 @@ export default async function InboxPage({
                   ) : null}
                 </div>
               </Link>
-            </li>
+            </InboxRow>
           ))}
         </ul>
       )}
